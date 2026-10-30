@@ -3,7 +3,7 @@ import { journeyProblems } from "@petrina/core";
 import { requiredAcceptanceFixture, failing } from "../../fixtures/required-acceptance.js";
 
 for (const changes of [false, true]) it(`bounds failing acceptance with changed code ${changes}, keeps one finding, and resets the allowance only for your change request`, async () => {
-  const f = requiredAcceptanceFixture();
+  const f = await requiredAcceptanceFixture();
   try {
     f.configure({ checks: [failing()], changeOnRepair: changes });
     f.task.approveDelivery = true;
@@ -28,7 +28,7 @@ for (const changes of [false, true]) it(`bounds failing acceptance with changed 
 });
 
 for (const tester of ["blocked", "no-evidence"] as const) it(`keeps ${tester} acceptance checks unverified and prevents an unchanged retry or low-risk auto-ship`, async () => {
-  const f = requiredAcceptanceFixture();
+  const f = await requiredAcceptanceFixture();
   try {
     const reason = tester === "blocked" ? "The Claude Code weekly limit prevents opening a live session." : "The agent did not record how it verified this item.";
     f.configure({ checks: [{ text: "People see the greeting on the welcome page", result: tester === "blocked" ? "blocked" : "pass", ...(tester === "blocked" ? { reason } : {}) }] });

@@ -30,7 +30,7 @@ describe("every role's contract", () => {
         await owner.run(engine, async () => {
           const added = engine.addRole(ROLE_STARTS.find(entry => entry.id === "security")!.draft);
           const context = new Context(engine, { pendingPoints: async () => [] });
-          const current = structuredClone(task) as import("../../../src/kernel.js").MTask;
+          const current = structuredClone(task) as import("../../../src/kernel.js").RuntimeTask;
           restoreRepositoryState(current);
           current.queued = [];
           current.sourcePointers = [];
@@ -77,7 +77,7 @@ describe("every role's contract", () => {
       try {
         await owner.run(engine, async () => {
           const context = new Context(engine, { pendingPoints: async () => [] });
-          const current = structuredClone(task) as import("../../../src/kernel.js").MTask;
+          const current = structuredClone(task) as import("../../../src/kernel.js").RuntimeTask;
           restoreRepositoryState(current);
           current.queued = [];
           current.sourcePointers = [];

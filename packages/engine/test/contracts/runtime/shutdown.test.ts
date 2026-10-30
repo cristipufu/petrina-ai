@@ -1,3 +1,4 @@
+import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
 import type { AgentSession } from "@petrina/orchestrator";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { ScriptedAgents } from "../../scripted-agents.js";
@@ -7,24 +8,24 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { setImmediate } from "node:timers/promises";
 import { Engine } from "../../engine.js";
-import { removeDir, tempDir } from "../../fixtures.js";
+import { tempDir } from "../../fixtures.js";
 import { SLOW } from "@petrina/test-support/slow";
-
-const roots: string[] = [];
-afterAll(() => roots.forEach(removeDir));
+const engineCases = engineCaseFixtures();
+afterAll(() => engineCases.close());
 const gate = () => {
   let release!: () => void;
   const promise = new Promise<void>(resolve => { release = resolve; });
   return { promise, release };
 };
-
 for (const kind of ["background", "copy", "nested"] as const) it(`shutdown waits for owned ${kind} file handling before its caller removes the fixture`, async () => {
-  const root = tempDir("shutdown-ownership-"); roots.push(root);
-  const engine = new Engine(join(root, "data"));
+  return engineCases.use("shutdown-ownership-", async caseOwner => {
+  const root = caseOwner.root;
+  const engine = caseOwner.open(join(root, "data"), {});
   const first = gate(), next = gate(), enteredNext = gate();
+  caseOwner.onStop(() => { first.release(); next.release(); });
   let stopping: Promise<void> | undefined, settled = false;
   try {
-    await engine.waitUntilReady();
+    await caseOwner.run(engine, async () => { await engine.waitUntilReady(); });
     await Promise.all([...engine.backgroundWork]);
     const file = join(root, "finished.txt");
     const work = first.promise.then(async () => {
@@ -54,15 +55,17 @@ for (const kind of ["background", "copy", "nested"] as const) it(`shutdown waits
     expect(readFileSync(file, "utf8")).toBe("finished");
     expect(engine.backgroundWork.size).toBe(0);
     expect(engine.copyCleanups.size).toBe(0);
-  } finally { first.release(); next.release(); await stopping; await engine.shutdown(); }
+  } finally { first.release(); next.release(); await stopping; await caseOwner.stop(engine); }
+  });
 }, 30_000 * SLOW);
-
 it("keeps a background failure available to its caller and still waits for a separate cleanup owner", async () => {
-  const root = tempDir("shutdown-failed-owner-"); roots.push(root);
-  const engine = new Engine(join(root, "data")), failed = gate(), held = gate();
+  return engineCases.use("shutdown-failed-owner-", async caseOwner => {
+  const root = caseOwner.root;
+  const engine = caseOwner.open(join(root, "data"), {}), failed = gate(), held = gate();
+  caseOwner.onStop(() => { failed.release(); held.release(); });
   let stopping: Promise<void> | undefined, settled = false;
   try {
-    await engine.waitUntilReady(); await Promise.all([...engine.backgroundWork]);
+    await caseOwner.run(engine, async () => { await engine.waitUntilReady(); }); await Promise.all([...engine.backgroundWork]);
     const failure = new Error("The owned cleanup failed");
     const result = engine.trackWork(failed.promise.then(() => { throw failure; })).catch(error => error);
     engine.trackWork(held.promise.then(() => { writeFileSync(join(root, "finished.txt"), "finished"); }));
@@ -72,9 +75,9 @@ it("keeps a background failure available to its caller and still waits for a sep
     held.release(); await stopping;
     expect(readFileSync(join(root, "finished.txt"), "utf8")).toBe("finished");
     expect(engine.backgroundWork.size).toBe(0);
-  } finally { failed.release(); held.release(); await stopping; await engine.shutdown(); }
+  } finally { failed.release(); held.release(); await stopping; await caseOwner.stop(engine); }
+  });
 }, 30_000 * SLOW);
-
 // These sessions have no native actor. Their controlled stop replies exercise the actual Engine consumer;
 // the original ScriptedSession stops remain independent cleanup authority after every subject assertion.
 const controlledClosers = new Set<() => Promise<void>>();

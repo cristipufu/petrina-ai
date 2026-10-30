@@ -1,4 +1,4 @@
-import { assignedProducts, endAgentStep, JOURNEY_WORDS as W, noteReproduction, openStep, refreshProofs, restorationReason, sameVersions } from "@petrina/core";
+import { assignedProducts, endAgentStep, JOURNEY_WORDS, noteReproduction, openStep, refreshProofs, restorationReason, sameVersions } from "@petrina/core";
 import type { RepositoryContext } from "./repository-context.js";
 import type { AcceptanceRoutingInput } from "./ports/acceptance.js";
 import type { AcceptanceResultHost, AcceptanceResultInput } from "./ports/acceptance-results.js";
@@ -82,8 +82,8 @@ export class AcceptanceResults {
       ? `${blocked.length} acceptance check${blocked.length === 1 ? "" : "s"} could not be verified${failed.length ? `; ${failed.length} failed` : ""}`
       : failed.length ? `${failed.length} acceptance check${failed.length === 1 ? "" : "s"} failed` : staleRun ? "Acceptance passed on an earlier version; the final code still needs acceptance testing" : result.summary, roleId, by);
     endAgentStep(task, {
-      outcome: restored && !blocked.length ? "Could not be verified" : unverified ? `${blocked.length} ${blocked.length === 1 ? "check" : "checks"} could not be verified${failed.length ? `; ${failed.length} failed` : ""}` : W.checks(failed.length, result.checks.length),
-      reason: restored ? restored.products.length ? "Petrina undid changes during acceptance testing" : "Petrina could not confirm what its cleanup undid" : unverified ? "acceptance not fully verified" : failed.length ? W.checksFailed(failed.length) : staleRun ? "the code changed during acceptance testing; final acceptance is still pending" : W.checksPassed,
+      outcome: restored && !blocked.length ? "Could not be verified" : unverified ? `${blocked.length} ${blocked.length === 1 ? "check" : "checks"} could not be verified${failed.length ? `; ${failed.length} failed` : ""}` : JOURNEY_WORDS.checks(failed.length, result.checks.length),
+      reason: restored ? restored.products.length ? "Petrina undid changes during acceptance testing" : "Petrina could not confirm what its cleanup undid" : unverified ? "acceptance not fully verified" : failed.length ? JOURNEY_WORDS.checksFailed(failed.length) : staleRun ? "the code changed during acceptance testing; final acceptance is still pending" : JOURNEY_WORDS.checksPassed,
     }, this.host.now());
     for (const answer of proofAnswers) {
       const request = task.proofRequests!.find(request => request.id === answer.id)!;

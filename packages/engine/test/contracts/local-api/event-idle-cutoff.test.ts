@@ -1,13 +1,12 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { SLOW } from "../../support.js";
 import { createWorkflowEventFixtures } from "../../fixtures/workflow-event-native.js";
-
-const { served, close, stopServer } = createWorkflowEventFixtures();
+const { served, close, use } = createWorkflowEventFixtures();
 afterAll(close);
-
 describe("waits over the local connection, MCP and the terminal", () => {
 it("holds one quiet wait open past the server's idle cutoff and completes without reconnecting", async () => {
-    const { e, server, client, taskId } = await served();
+  return use("petrina-events-", async caseOwner => {
+    const { e, client, taskId , stopServer} = await served(caseOwner);
     const fetched = globalThis.fetch;
     let requests = 0;
     globalThis.fetch = ((...args: Parameters<typeof fetch>) => { requests++; return fetched(...args); }) as typeof fetch;
@@ -23,7 +22,8 @@ it("holds one quiet wait open past the server's idle cutoff and completes withou
       expect(e.events.waiting).toBe(0);
     } finally {
       globalThis.fetch = fetched;
-      await stopServer(server);
+      await stopServer();
     }
-  }, 60_000 * SLOW);
+  });
+}, 60_000 * SLOW);
 });

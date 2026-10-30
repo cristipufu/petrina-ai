@@ -1,22 +1,29 @@
+import { afterAll } from "bun:test";
+import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
 import { expect, it } from "bun:test";
 import { join } from "node:path";
 import { type CheckId } from "@petrina/core";
-import { Engine } from "../../engine.js";
 import { executionFor } from "@petrina/orchestrator";
 import { freshBuilderRethink } from "../../../src/roles.js";
-import { Fakes, git, makeProduct, removeDir, tempDir } from "../../fixtures.js";
+import { Fakes, createProductRepository } from "../../fixtures.js";
+import { fakeAgentSessions } from "../../fixtures/fake-agent-sessions.js";
+import { privateAgentToolProbe } from "../../scripted-probes.js";
+const engineCases = engineCaseFixtures();
+afterAll(() => engineCases.close());
+
 
 
 
 it("starts one late rethink, then continues that Builder for unchanged and reopened same-round repairs", async () => {
-  const root = tempDir("petrina-repair-conversation-");
+  return engineCases.use("petrina-repair-conversation-", async caseOwner => {
+  const root = caseOwner.root;
   const fakes = new Fakes(join(root, "fake")); fakes.scenario({ builder: "plain", reopen: "resume" });
-  const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), fakes.dir], toolPath: () => process.execPath });
+  const engine = caseOwner.open(join(root, "data"), { agentCommand: () => [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), fakes.dir], startAgentSession: fakeAgentSessions(fakes), toolPath: () => process.execPath, toolProbe: privateAgentToolProbe() });
   try {
     engine.schedule = () => {};
     engine.s.setup!.checks = engine.s.tools.map(tool => ({ id: tool.id as CheckId, status: "ready" }));
     engine.s.tools.forEach(tool => { tool.status = "ready"; });
-    const repo = await makeProduct(root), base = await git(repo, "rev-parse", "HEAD");
+    const { path: repo, initialSha: base } = await createProductRepository(root, { origin: "none" });
     engine.s.products.push({ id: "p", name: "Product", path: repo, repo: "local/product", tone: "blue" });
     const id = engine.addTask({ productId: "p", title: "Repair once", description: "Original repair request", backlog: true });
     const task = engine.task(id)!, scope = executionFor(task);
@@ -24,13 +31,13 @@ it("starts one late rethink, then continues that Builder for unchanged and reope
     const stage = { id: "build", kind: "do" as const, roleId: "builder", title: "Build", profileIds: ["sol-high"] };
     task.plan = { rationale: "Controlled repairs", plannerProfileId: "sol-high", stages: [stage, { id: "review", kind: "review-chain", roleId: "code-reviewer", title: "Review", profileIds: ["grok-high"] }] };
     task.stageIndex = 0;
-    const turn = async (fixing: boolean) => {
+    const turn = async (fixing: boolean) => caseOwner.run(engine, async () => {
       task.stageIndex = 0;
       task.fixing = fixing;
       await engine["work"].runDo(scope, stage, new AbortController().signal);
       engine.finishStep(scope);
       return task.journey!.at(-1)!.agentInputs!.at(-1)!;
-    };
+    });
     const first = await turn(false);
     task.rounds.review = 4;
     const rethink = await turn(true);
@@ -57,5 +64,7 @@ it("starts one late rethink, then continues that Builder for unchanged and reope
     task.fixing = true;
     expect(freshBuilderRethink(task, scope.work.builderSession, stage.id, "astra-xhigh")).toBe(true);
     expect(freshBuilderRethink(task, scope.work.builderSession, "another-stage", "sol-high")).toBe(true);
-  } finally { await engine.shutdown(); removeDir(root); }
+  } finally { await caseOwner.stop(engine);  }
+
+  });
 });

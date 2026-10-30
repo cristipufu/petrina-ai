@@ -53,7 +53,7 @@ export function reviewEvidenceFixtures() {
   async function finish(f: Fixture) {
     return f.owner.run(f.engine, async () => {
       settle(f);
-      endAgentStep(f.task, { outcome: f.engine["reviews"]["raised"](f.task), reason: "Review finished" }, Date.now());
+      endAgentStep(f.task, { outcome: f.engine["reviews"]["workflow"].raised(f.task), reason: "Review finished" }, Date.now());
       f.engine.commit(f.task);
       const coordination = new Coordination(f.engine);
       const events = (await coordination.call("watch.events", { taskIds: [f.task.id], from: "oldest", timeoutMs: 0 })).events as WorkflowEvent[];

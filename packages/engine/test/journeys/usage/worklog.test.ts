@@ -1,12 +1,16 @@
+import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
+import { registerFixtureRoot } from "@petrina/test-support/fixture-retention";
+import { removeFixtureRoot } from "@petrina/test-support/fixture-roots";
 import { expectRejection } from "@petrina/test-support/rejections";
 // The work log, end to end: a real engine with the fake agent reporting usage and settings the
 // way Claude Code and Codex do, and the product list that never hands an id out again.
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test";
+import { afterAll, describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+
 import { join } from "node:path";
 import type { State, Task, WorkTurn } from "@petrina/core";
+import * as gitOps from "@petrina/repositories/git";
 
 
 
@@ -16,35 +20,21 @@ import { Store } from "@petrina/storage/store";
 
 import { WorkLog } from "@petrina/storage/worklog";
 import type { CodexScript } from "../../../../agent-runtime/test/fixtures/fake-codex.js";
-import { git, removeDir, SLOW, testBrowserRoot, waitFor } from "../../fixtures.js";
+import { createProductRepository, SLOW, testBrowserRoot, waitFor } from "../../fixtures.js";
+import { privateAgentToolProbe } from "../../scripted-probes.js";
+import { installSharedWorkflowFastPaths } from "../../fixtures/shared-preparation.js";
 
 const fake = join(import.meta.dir, "../..", "fake-agent.ts");
 const fakeCodex = join(import.meta.dir, "../..", "../../agent-runtime/test/fixtures/fake-codex.ts");
-const temp = mkdtempSync(join(tmpdir(), "petrina-worklog-"));
-const data = join(temp, "data");
-// The stand-in Codex app-server's answer, and its log of every request it gets.
-const codexDir = join(temp, "codex");
-mkdirSync(codexDir);
-writeFileSync(join(codexDir, "codex.json"), JSON.stringify({ primary: { usedPercent: 16, windowDurationMins: 10_080, resetsAt: Math.round(Date.now() / 1000) + 5 * 86_400 } } satisfies CodexScript));
-// Each profile's agent behaves like its own tool: Claude Code or Codex. The stand-ins count as the tools'
-// installed apps whatever this machine has, so every engine here, restarts included, reads Codex's usage
-// from the stand-in app-server and never from a real Codex or account.
-const options = { agentCommand: (profile: { toolId: string }) => [process.execPath, fake, `--tool=${profile.toolId}`], toolPath: () => fake, usageCommands: { codex: [process.execPath, fakeCodex, codexDir] } };
-
-// Conversations started here keep their browsers, in this file's own browser folder.
-const browsers = testBrowserRoot();
-afterAll(() => { removeDir(temp); removeDir(browsers); });
-
-
 async function makeRepo(parent: string, file = "README.md"): Promise<string> {
+  const { path: clone } = await createProductRepository(join(parent, "repo-seed"), { origin: "none" });
   const repo = join(parent, "repo");
-  mkdirSync(repo, { recursive: true });
-  await git(repo, "init", "-q", "-b", "main");
-  await git(repo, "config", "user.email", "test@example.com");
-  await git(repo, "config", "user.name", "Test");
-  writeFileSync(join(repo, file), "# Demo\n");
-  await git(repo, "add", ".");
-  await git(repo, "commit", "-q", "-m", "init");
+  renameSync(clone, repo);
+  if (file !== "README.md") {
+    rmSync(join(repo, "README.md"), { force: true });
+    writeFileSync(join(repo, file), "# Demo\n");
+    await gitOps.commitChanges(repo, "init");
+  }
   return repo;
 }
 
@@ -59,6 +49,28 @@ async function until(engine: Engine, done: (state: State) => boolean, respond: (
   }
 }
 
+
+const engineCases = engineCaseFixtures();
+afterAll(() => engineCases.close());
+
+describe("The work log of a real engine", () => {
+  it("takes a task from the queue to a commit on main, asking the coordinator along the way", async () => {
+    return engineCases.use("petrina-worklog-", async caseOwner => {
+const temp = caseOwner.root;
+const data = join(temp, "data");
+// The stand-in Codex app-server's answer, and its log of every request it gets.
+const codexDir = join(temp, "codex");
+mkdirSync(codexDir);
+writeFileSync(join(codexDir, "codex.json"), JSON.stringify({ primary: { usedPercent: 16, windowDurationMins: 10_080, resetsAt: Math.round(Date.now() / 1000) + 5 * 86_400 } } satisfies CodexScript));
+// Each profile's agent behaves like its own tool: Claude Code or Codex. The stand-ins count as the tools'
+// installed apps whatever this machine has, so every engine here, restarts included, reads Codex's usage
+// from the stand-in app-server and never from a real Codex or account.
+const options = { agentCommand: (profile: { toolId: string }) => [process.execPath, fake, `--tool=${profile.toolId}`], toolPath: () => fake, toolProbe: privateAgentToolProbe(), usageCommands: { codex: [process.execPath, fakeCodex, codexDir] } };
+
+// Conversations started here keep their browsers, in this file's own browser folder.
+const browsers = testBrowserRoot();
+registerFixtureRoot(browsers);
+caseOwner.afterBody(async () => { await caseOwner.stopAll(); removeFixtureRoot(browsers); });
 async function codexUsageRead(engine: Engine): Promise<void> {
   expect(engine.getState().tools.find((tool) => tool.id === "codex")?.status, "the stand-in Codex counts as installed").toBe("ready");
   const reader = engine.usageCoordinator.readers.get("codex");
@@ -81,21 +93,21 @@ function readLog<T>(read: (log: WorkLog) => T): T {
     db.close();
   }
 }
-describe("The work log of a real engine", () => {
-  let repo = "";
-  beforeAll(async () => { repo = await makeRepo(temp); });
-  let engine = new Engine(data, options);
-  let taskId = "";
-  let productId = "";
-  const permissionWait = 600;
 
-  // A replaced engine is still stopping its agents while the test reads its successor. Drain those
-  // stops when the test ends, however it ends: a file ending mid-stop leaves paused agents behind.
-  const replaced: Promise<void>[] = [];
-  afterEach(() => Promise.all(replaced.splice(0)));
-  afterAll(() => engine.shutdown());
-
-  it("takes a task from the queue to a commit on main, asking the coordinator along the way", async () => {
+    const repo = await makeRepo(temp);
+    const openEngine = () => installSharedWorkflowFastPaths(caseOwner.open(data, options));
+    let engine = openEngine();
+    let taskId = "", productId = "";
+    const permissionWait = 600;
+    const replaced: Promise<void>[] = [];
+    const settleReplaced = async () => {
+      const settled = await Promise.allSettled(replaced.splice(0));
+      const errors = settled.flatMap(result => result.status === "rejected" ? [result.reason] : []);
+      if (errors.length === 1) throw errors[0];
+      if (errors.length) throw new AggregateError(errors, "Replaced work-log Engines did not all stop");
+    };
+    // takes a task from the queue to a commit on main, asking the coordinator along the way
+    const scenario1 = async () => {
     productId = await engine.addProduct(repo);
     engine.setProductDelivery(productId, "local", true);
     taskId = engine.addTask({ productId, title: "Add a greeting", description: "A friendly greeting file.", kind: "feature" });
@@ -126,13 +138,14 @@ describe("The work log of a real engine", () => {
     expect(task.timeline.some((entry) => entry.text === "You approved the design")).toBe(true);
     expect(task.timeline.some((entry) => entry.text === "You approved the delivery")).toBe(true);
     // The work is on main, with the permission granted.
-    expect(await git(repo, "show", "main:greeting.txt")).toBe("Hello (with left-pad)");
+    expect(readFileSync(join(repo, "greeting.txt"), "utf8").trim()).toBe("Hello (with left-pad)");
     expect(task.findings.some((finding) => finding.severity === "suggestion")).toBe(true);
     await until(engine, (state) => !!state.tasks.find((entry) => entry.id === taskId)?.cleanup?.removedAt, () => undefined);
     expect(existsSync(task.worktree!)).toBe(false);
-  });
+  };
 
-  it("writes one work-log entry per agent turn, with what was asked and what ran", () => {
+    // writes one work-log entry per agent turn, with what was asked and what ran
+    const scenario2 = async () => {
     const turns = readLog((log) => log.turns({ taskId }));
     const of = (roleId: string) => turns.filter((turn) => turn.roleId === roleId);
     expect(turns.every((turn) => turn.end === "finished" && turn.productId === productId && turn.workMs !== undefined && turn.endedAt! >= turn.startedAt)).toBe(true);
@@ -153,9 +166,10 @@ describe("The work log of a real engine", () => {
     }
     // The builder asked for sol at xhigh; this Codex doesn't offer them, so it kept its own default.
     expect(of("builder")[0]).toMatchObject({ toolId: "codex", modelAsked: "gpt-6.1-sol", effortAsked: "xhigh", modelRan: "gpt-6.1", effortRan: "medium", fixing: false });
-  });
+  };
 
-  it("keeps Claude Code's per-model breakdown as reported, counted once, with no helper figure", () => {
+    // keeps Claude Code's per-model breakdown as reported, counted once, with no helper figure
+    const scenario3 = async () => {
     const { turns, lines } = readLog((log) => ({ turns: log.turns({ taskId }), lines: log.lines({ taskId }) }));
     const architect = turns.filter((turn) => turn.roleId === "architect")[1]!;
     const own = lines.filter((line) => line.turnId === architect.id);
@@ -167,9 +181,10 @@ describe("The work log of a real engine", () => {
     expect(architect.tokens).toMatchObject({ input: 190, cacheRead: 1740, cacheWrite: 30, output: 90, total: 2050 });
     expect(architect.mainOnly).toBe(false);
     for (const line of own) expect(Object.keys(line).sort()).toEqual(["cacheRead", "cacheWrite", "input", "model", "output", "total", "turnId"]);
-  });
+  };
 
-  it("records a turn with no usage, Codex helpers and reroutes, a fallback, and leaves the permission wait out", () => {
+    // records a turn with no usage, Codex helpers and reroutes, a fallback, and leaves the permission wait out
+    const scenario4 = async () => {
     const { turns, lines } = readLog((log) => ({ turns: log.turns({ taskId }), lines: log.lines({ taskId }) }));
     const reviewer = turns.find((turn) => turn.roleId === "design-reviewer")!;
     expect(reviewer.tokens).toBeUndefined();
@@ -183,9 +198,10 @@ describe("The work log of a real engine", () => {
     expect(opusReview).toMatchObject({ profileId: "opus-high", modelRan: "opus", modelChangedTo: "Sonnet 5.5" });
     expect(codexReview).toMatchObject({ profileId: "sol-high", modelChangedTo: "gpt-6.1-mini" });
     expect(lines.find((line) => line.turnId === codexReview.id)).toMatchObject({ model: "gpt-6.1", changed: true });
-  });
+  };
 
-  it("logs the moments: stages, design rounds, verdicts, questions and the delivery", () => {
+    // logs the moments: stages, design rounds, verdicts, questions and the delivery
+    const scenario5 = async () => {
     const moments = readLog((log) => log.moments({ taskId }));
     const kinds = (kind: string) => moments.filter((moment) => moment.kind === kind);
     expect(kinds("stage-start").length).toBe(kinds("stage-end").length);
@@ -202,9 +218,10 @@ describe("The work log of a real engine", () => {
     ]);
     expect(kinds("ask")[2]!.durationMs!).toBeGreaterThanOrEqual(permissionWait - 50);
     expect(kinds("task-end").map((moment) => moment.outcome)).toEqual(["delivered"]);
-  });
+  };
 
-  it("keeps only numbers, names and ids, never the dollar figure, and shares limits through the state", async () => {
+    // keeps only numbers, names and ids, never the dollar figure, and shares limits through the state
+    const scenario6 = async () => {
     const dump = readLog((log) => JSON.stringify([log.turns({}), log.lines({}), log.moments({})]));
     expect(dump).not.toContain("USD");
     expect(dump).not.toContain("1.2345");
@@ -224,9 +241,10 @@ describe("The work log of a real engine", () => {
     const limitsToday = engine.usage({ view: "analytics", period: "today" }).limits;
     expect(limitsToday.tools.map((tool) => tool.toolId).sort()).toEqual(["claude-code", "codex"]);
     expect(limitsToday.tools.find((tool) => tool.toolId === "claude-code")!.limits[0]!.latest.utilization).toBe(0.81);
-  });
+  };
 
-  it("answers only the defined views and periods", async () => {
+    // answers only the defined views and periods
+    const scenario7 = async () => {
     const view = (await dispatch(engine, { name: "usage", args: [{ view: "task", taskId }] })) as { stages: { title: string; agents: { roleId: string; settings: string }[] }[] };
     // Petrina commits to main by itself: no agent works on that stage, so it used nothing and isn't listed.
     expect(view.stages.map((stage) => stage.title)).toEqual(["Planning", "Design", "Build", "Review"]);
@@ -236,22 +254,23 @@ describe("The work log of a real engine", () => {
     await expectRejection(dispatch(engine, { name: "usage", args: [{ view: "today", sql: "DROP TABLE work_turns" }] }));
     const analytics = (await dispatch(engine, { name: "usage", args: [{ view: "analytics", period: "7d" }] })) as { headline: { turns: number } };
     expect(analytics.headline.turns).toBeGreaterThan(5);
-  });
+  };
 
-  it("keeps the log across a restart, and marks a turn cut off by a stop as lost", async () => {
+    // keeps the log across a restart, and marks a turn cut off by a stop as lost
+    const scenario8 = async () => {
     const before = engine.usage({ view: "task", taskId });
-    const firstStop = engine.shutdown();
+    const firstStop = caseOwner.stop(engine);
     replaced.push(firstStop);
-    engine = new Engine(data, options);
+    engine = openEngine();
     expect(engine.usage({ view: "task", taskId })).toEqual(before);
 
     const hanging = engine.addTask({ productId, title: "HANG-FOREVER please", kind: "chore" });
     await until(engine, () => readLog((log) => log.turns({ taskId: hanging }).some((turn) => turn.end === undefined)), () => undefined, 20_000);
     // Nothing starts again after the restart, so the lost turn is the only one.
     engine.setPoolPaused(true);
-    const interruptedStop = engine.shutdown();
+    const interruptedStop = caseOwner.stop(engine);
     replaced.push(interruptedStop);
-    engine = new Engine(data, options);
+    engine = openEngine();
     const lost = readLog((log) => log.turns({ taskId: hanging }));
     expect(lost).toHaveLength(1);
     expect(lost[0]).toMatchObject({ end: "lost" });
@@ -261,9 +280,10 @@ describe("The work log of a real engine", () => {
     expect(view.atLeast).toContain("cut off when Petrina stopped");
     engine.cancel(hanging);
     await Promise.all([firstStop, interruptedStop]);
-  });
+  };
 
-  it("keeps a switch the tool confirmed during a turn, even when the agent stops before replying", async () => {
+    // keeps a switch the tool confirmed during a turn, even when the agent stops before replying
+    const scenario9 = async () => {
     engine.setPoolPaused(false);
     const stopping = engine.addTask({ productId, title: "SWITCH-THEN-STOP please", kind: "chore" });
     await until(engine, () => readLog((log) => log.turns({ taskId: stopping }).some((turn) => turn.end !== undefined)), () => undefined, 20_000);
@@ -272,9 +292,10 @@ describe("The work log of a real engine", () => {
     expect(stopped).toMatchObject({ end: "agent-stopped", modelRan: "opus", effortRan: "high", modelChangedTo: "Sonnet 5.5", effortChangedTo: "low" });
     expect(stopped!.tokens).toBeUndefined();
     engine.cancel(stopping);
-  });
+  };
 
-  it("never gives a removed product's id or history to another repository, even after the state is lost", async () => {
+    // never gives a removed product's id or history to another repository, even after the state is lost
+    const scenario10 = async () => {
     engine.removeProduct(productId);
     // A different repository with the same name.
     const other = await makeRepo(join(temp, "elsewhere"), "OTHER.md");
@@ -291,11 +312,12 @@ describe("The work log of a real engine", () => {
 
     // Lose the saved state entirely: ids in the work log are still never handed out again.
     const loggedTasks = readLog((log) => [...new Set(log.turns({}).map((turn) => turn.taskId))]);
-    await engine.shutdown();
+    await caseOwner.stop(engine);
     const db = new Database(join(data, "petrina.db"));
+    const closeDatabase = caseOwner.afterBody(() => db.close());
     db.run("UPDATE kv SET value = '{not json' WHERE key = 'state'");
-    db.close();
-    engine = new Engine(data, options);
+    await closeDatabase();
+    engine = openEngine();
     expect(engine.getState().products).toHaveLength(0);
     const reborn = await engine.addProduct(repo);
     expect([productId, fresh, again]).not.toContain(reborn);
@@ -303,11 +325,29 @@ describe("The work log of a real engine", () => {
     const newTask = engine.addTask({ productId: reborn, title: "After the loss", kind: "chore" });
     expect(loggedTasks).not.toContain(newTask);
     expect(readFileSync(join(data, "petrina.db")).length).toBeGreaterThan(0);
+  };
+    try {
+      await caseOwner.prepare(scenario1); await settleReplaced();
+      await caseOwner.prepare(scenario2); await settleReplaced();
+      await caseOwner.prepare(scenario3); await settleReplaced();
+      await caseOwner.prepare(scenario4); await settleReplaced();
+      await caseOwner.prepare(scenario5); await settleReplaced();
+      await caseOwner.prepare(scenario6); await settleReplaced();
+      await caseOwner.prepare(scenario7); await settleReplaced();
+      await caseOwner.prepare(scenario8); await settleReplaced();
+      await caseOwner.prepare(scenario9); await settleReplaced();
+      await caseOwner.prepare(scenario10); await settleReplaced();
+    } finally { await settleReplaced(); }
+    }, { allowOverlap: true });
   });
 
-  it("on the first start with a work log, protects ids of products that are gone and marks earlier work", async () => {
-    const dir = join(temp, "upgrade");
+  it("on the first start with a work log, protects ids of products that are gone and marks earlier work", async () => engineCases.use("petrina-worklog-upgrade-", async caseOwner => {
+
+    const temp = caseOwner.root, dir = join(temp, "upgrade");
+    const repo = await makeRepo(temp);
+    const options = { agentCommand: (profile: { toolId: string }) => [process.execPath, fake, `--tool=${profile.toolId}`], toolPath: () => fake, toolProbe: privateAgentToolProbe() };
     const store = new Store(join(dir, "petrina.db"));
+    const closeStore = caseOwner.afterBody(() => store.close());
     const started = (id: string, productId: string): Task => ({
       id, productId, title: id, description: "", area: id, kind: "chore", priority: 0, held: false, state: "done", column: "done", holdsSlot: false, approvePlan: false,
       delivery: "local", approveDelivery: false, stageIndex: 2, rounds: {}, sub: 0, fixing: false, statusLine: "", createdAt: 1, startedAt: 2, finishedAt: 3,
@@ -317,21 +357,23 @@ describe("The work log of a real engine", () => {
       now: 1, seq: 7, products: [{ id: "alive", name: "Alive", repo: "acme/alive", tone: "blue" }], roles: [], tools: [], profiles: [],
       tasks: [started("task-3", "alive"), started("task-5", "repo")], inbox: [], pool: { limit: 2, paused: true, toolCaps: {} },
     });
-    store.close();
-    const upgraded = new Engine(dir, { ...options, usageCommands: { codex: null } });
+    await closeStore();
+    const upgraded = caseOwner.open(dir, { ...options, usageCommands: { codex: null } });
     try {
       // "repo" was removed before Petrina kept names: its id is protected, and it reads as a removed product.
       const db = new Database(join(dir, "petrina.db"));
+      const closeDatabase = caseOwner.afterBody(() => db.close());
       const log = new WorkLog(db);
       expect(log.products().find((record) => record.id === "repo")).toMatchObject({ id: "repo" });
       expect(log.products().find((record) => record.id === "repo")?.removedAt).toBeGreaterThan(0);
       expect([...log.untracked().keys()].sort()).toEqual(["task-3", "task-5"]);
-      db.close();
+      await closeDatabase();
       expect(await upgraded.addProduct(repo)).toBe("repo-2");
       expect(upgraded.usage({ view: "task", taskId: "task-3" }).empty).toBe("untracked");
       expect(upgraded.usage({ view: "products" }).products.find((entry) => entry.productId === "alive")?.tokens.atLeast).toBe(true);
     } finally {
-      await upgraded.shutdown();
+      await caseOwner.stop(upgraded);
     }
-  });
+
+  }));
 });

@@ -3,12 +3,11 @@ import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { Coordination } from "../../../src/coordination.js";
 import { createFollowUpFixtures, older, taskOf, finish, cards, plant, failedAssignment } from "../../fixtures/follow-up-native.js";
-
-const { open, reopen, close, shutdown } = createFollowUpFixtures();
+const { open, reopen, close, use } = createFollowUpFixtures();
 afterAll(close);
-
 it("retries a queued manual fix's picture across source retirement and restart, adding only the missing copy and one credit", async () => {
-  const world = await open();
+  return use(async caseOwner => {
+  const world = await open(caseOwner);
   try {
     const { engine } = world;
     const fixId = engine.addTask({ productId: world.shop, kind: "bug", title: "bug-retry: The coordinator's fix", description: "The unchanged request", backlog: true });
@@ -16,9 +15,11 @@ it("retries a queued manual fix's picture across source retirement and restart, 
     const source = taskOf(engine, world.shop, "A pictured sighting", [older("old", "bug-retry: A later sighting")]);
     plant(engine, source.id, source.findings[0]!.text);
     const original = join(engine.dataDir, "captures", source.id, "pic.png");
-    const copy = spyOn(world.files, "copyFile").mockRejectedValue(new Error("Copy refused"));
+    const copy = spyOn(world.files, "copyFile");
+    caseOwner.onStop(() => copy.mockRestore());
+    copy.mockRejectedValue(new Error("Copy refused"));
     try {
-      await finish(engine, source);
+      await finish(caseOwner, engine, source);
       expect(source.findings[0]!.tracking).toEqual({ reason: "pictures", retry: true });
       expect(engine.task(fixId)!.followUp!.reports.map(report => report.findingId)).toEqual(["old"]);
       engine.save();
@@ -37,11 +38,12 @@ it("retries a queued manual fix's picture across source retirement and restart, 
     expect(existsSync(original)).toBe(false);
     expect(cards(world.engine).map(task => task.id)).toEqual([fixId]);
     expect(world.prompts).toHaveLength(1);
-  } finally { await shutdown(world.engine); }
+  } finally { await caseOwner.stop(world.engine); }
+  });
 });
-
 for (const reason of ["unavailable", "no-choice"] as const) it(`keeps the ${reason} picture retry through source retirement and restart`, async () => {
-  const world = await open();
+  return use(async caseOwner => {
+  const world = await open(caseOwner);
   let release = () => {};
   try {
     const saved = await failedAssignment(world, reason);
@@ -50,7 +52,9 @@ for (const reason of ["unavailable", "no-choice"] as const) it(`keeps the ${reas
     release();
     world.engine.save();
     expect(world.engine.s.tasks.some(task => task.id === source.id)).toBe(false);
-    const copy = spyOn(world.files, "copyFile").mockRejectedValue(new Error("Copy still refused"));
+    const copy = spyOn(world.files, "copyFile");
+    caseOwner.onStop(() => copy.mockRestore());
+    copy.mockRejectedValue(new Error("Copy still refused"));
     try {
       await world.engine["cleanup"].removeCaptures(source.id);
       expect(existsSync(join(world.data, "captures", source.id, "pic.png"))).toBe(true);
@@ -77,5 +81,6 @@ for (const reason of ["unavailable", "no-choice"] as const) it(`keeps the ${reas
     expect(world.engine.task(automaticId)!.followUp!.reports).toHaveLength(1);
     expect(world.engine.task(automaticId)!.session.flatMap(line => line.images ?? [])).toHaveLength(1);
     expect(readdirSync(join(world.data, "captures", automaticId))).toHaveLength(1);
-  } finally { release(); await shutdown(world.engine); }
+  } finally { release(); await caseOwner.stop(world.engine); }
+  });
 });

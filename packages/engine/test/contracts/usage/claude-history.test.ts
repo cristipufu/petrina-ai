@@ -1,26 +1,28 @@
+import { engineCaseFixtures, type EngineCaseOwner } from "../../fixtures/engine-cases.js";
 import { afterAll, expect, it, spyOn } from "bun:test";
 import { limitOf, type AgentProfile } from "@petrina/core";
 import { Engine } from "../../engine.js";
 import { claudeReports } from "@petrina/agent-runtime/claude-usage-report";
 import { claudeAccountReports } from "@petrina/agent-runtime/claude-account-report";
 
-import { removeDir, tempDir } from "../../fixtures.js";
-
+const engineCases = engineCaseFixtures();
+afterAll(() => engineCases.close());
 const NOW = Date.parse("2026-10-21T12:00:00Z"), HOUR = 3_600_000;
 const claude: AgentProfile = { id: "opus-high", toolId: "claude-code", model: "Opus", modelId: "opus", effort: "high" };
-const roots: string[] = [];
-afterAll(() => roots.forEach(removeDir));
-
-async function fixture() {
-  const root = tempDir("petrina-claude-allowances-"); roots.push(root);
-  const engine = new Engine(root, { admissionsClosed: true, agentCommand: () => undefined, toolPath: () => process.execPath });
+async function fixture(caseOwner: EngineCaseOwner) {
+  const root = caseOwner.root;
+  const engine = caseOwner.open(root, { admissionsClosed: true, agentCommand: () => undefined, toolPath: () => process.execPath });
+  return caseOwner.run(engine, async () => {
   await engine.waitUntilReady(); await Promise.all([...engine.backgroundWork]);
   engine.setPoolPaused(true);
   engine.s.pool.toolCaps["claude-code"] = 4;
-  const clock = spyOn(Date, "now").mockReturnValue(NOW);
-  return { engine, clock, close: async () => { clock.mockRestore(); await engine.shutdown(); } };
-}
+  const clock = spyOn(Date, "now");
+    caseOwner.onStop(() => clock.mockRestore());
+    clock.mockReturnValue(NOW);
+  return { engine, clock, close: async () => { clock.mockRestore(); await caseOwner.stop(engine); } };
 
+  });
+}
 const account = (used: number, enabled: boolean, paid: unknown) => ({ rate_limits_available: true, rate_limits: {
   five_hour: { utilization: used, resets_at: new Date(NOW + HOUR).toISOString() },
   seven_day: { utilization: 2, resets_at: new Date(NOW + 24 * HOUR).toISOString() },
@@ -36,11 +38,14 @@ const live = (used: number, enabled: boolean, paid: number) => ({
 function stream(engine: Engine, info: unknown) {
   for (const report of claudeReports("claude-code", { "_claude/rateLimit": info })) engine.recordUsage(report);
 }
-
 it("retires an old false extra-usage cooldown immediately while keeping history and independent limits", async () => {
-  const run = await fixture();
-  const wake = spyOn(run.engine, "schedule").mockImplementation(() => {});
+  return engineCases.use("petrina-claude-allowances-", async caseOwner => {
+  const run = await fixture(caseOwner);
+  const wake = spyOn(run.engine, "schedule");
+    caseOwner.onStop(() => wake.mockRestore());
+    wake.mockImplementation(() => {});
   try {
+    await caseOwner.run(run.engine, async () => {
     const report = { toolId: "claude-code", kind: "overage", status: "rejected" as const, at: NOW - 1000, resetsAt: NOW + 10 * HOUR };
     const unrelated = { toolId: "codex", reason: "Codex's rate limit", until: NOW + HOUR };
     const scoped = { toolId: "claude-code", model: "opus", kind: "seven_day_opus", status: "rejected" as const, utilization: 1, at: NOW - 500, resetsAt: NOW + 2 * HOUR };
@@ -57,12 +62,16 @@ it("retires an old false extra-usage cooldown immediately while keeping history 
     expect(limitOf(run.engine.s.pool, claude, NOW)?.model).toBe("opus");
     expect(limitOf(run.engine.s.pool, { ...claude, model: "Sonnet", modelId: "sonnet" }, NOW)).toBeUndefined();
     expect(run.engine.tracking.log.usageHistory({})).toContainEqual(report);
-  } finally { wake.mockRestore(); await run.close(); }
-});
 
+    });
+} finally { wake.mockRestore(); await run.close(); }
+  });
+});
 it("continues saved Fable history on one Analytics line after a native account refresh", async () => {
-  const run = await fixture();
+  return engineCases.use("petrina-claude-allowances-", async caseOwner => {
+  const run = await fixture(caseOwner);
   try {
+    await caseOwner.run(run.engine, async () => {
     const reset = NOW + HOUR;
     const saved = [0.05, 0.06, 0.08].map((utilization, index) => ({
       toolId: "claude-code", kind: "seven_day_model", model: "fable", name: "fable", windowMinutes: 10_080,
@@ -80,5 +89,8 @@ it("continues saved Fable history on one Analytics line after a native account r
     expect(lines[0]!.latest.utilization).toBe(0.09);
     expect(lines[0]!.latest.resetsAt).toBe(reset);
     expect(run.engine.tracking.log.usageHistory({}).filter(report => report.at < NOW)).toEqual(saved);
-  } finally { await run.close(); }
+
+    });
+} finally { await run.close(); }
+  });
 });

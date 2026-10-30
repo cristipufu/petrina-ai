@@ -1,4 +1,8 @@
 import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
+import { fakeAgentSessions } from "../../fixtures/fake-agent-sessions.js";
+import { installPreparedProduct, privateCloneProduct } from "../../fixtures/prepared-product.js";
+import { installSharedWorkflowFastPaths } from "../../fixtures/shared-preparation.js";
+import { privateAgentToolProbe } from "../../scripted-probes.js";
 import { mkdtempSync } from "node:fs";
 import { afterAll as closeOwnedCases } from "bun:test";
 import { expect, it } from "bun:test";
@@ -6,7 +10,7 @@ import { join } from "node:path";
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { executionFor } from "@petrina/orchestrator";
 import { coordinator, Fakes, itemOf, makeProduct, until } from "../../support.js";
-import { commandInputText } from "../../../src/checks.js";
+import { commandInputText, type CheckCommandExecutor } from "../../../src/checks.js";
 const cases = engineCaseFixtures();
 closeOwnedCases(() => cases.close());
 
@@ -16,14 +20,28 @@ it("keeps the early decision through restart, then runs changed checks and accep
     const root = mkdtempSync(join(owner.root, "petrina-review-final-verification-"));
     const fakes = new Fakes(join(root, "fake"));
     fakes.scenario({ planner: "tester-after", builder: "plain", reviewer: "important" });
-    const options = { agentCommand: () => [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), fakes.dir] };
-    let engine = owner.open(join(root, "data"), options);
     const log = join(root, "check-runs");
     const check = join(root, "check.ts");
+    const runCheckCommand: CheckCommandExecutor = (req) => {
+      if (req.argv[0] !== process.execPath || req.argv[1] !== check) return undefined;
+      appendFileSync(req.argv[2]!, `${req.argv[3]!}\n`);
+      return { code: 0 };
+    };
+    const options = {
+      agentCommand: () => [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), fakes.dir],
+      startAgentSession: fakeAgentSessions(fakes),
+      toolProbe: privateAgentToolProbe(),
+      runCheckCommand,
+    };
+    let engine = installSharedWorkflowFastPaths(owner.open(join(root, "data"), options));
     writeFileSync(check, `import { appendFileSync } from "node:fs"; appendFileSync(process.argv[2], process.argv[3] + "\\n");`);
     const definitions = (name: string) => [{ name: "Tests", command: commandInputText([process.execPath, check, log, name]) }];
     try {
-      const productId = await engine.addProduct(await makeProduct(root));
+      const productId = await owner.run(engine, async () => {
+        const repo = await makeProduct(root);
+        await engine.waitUntilReady(); owner.check(); engine.stopRequested.signal.throwIfAborted();
+        return installPreparedProduct(engine, privateCloneProduct(repo));
+      });
       engine.setProductDelivery(productId, "local", true);
       engine.setProductChecks(productId, definitions("before decision"));
       const id = engine.addTask({ productId, title: "A reviewed greeting", description: "[no-check]" });
@@ -34,7 +52,7 @@ it("keeps the early decision through restart, then runs changed checks and accep
       expect(readFileSync(log, "utf8")).toBe("before decision\n");
       engine.setPoolPaused(true);
       await owner.stop(engine);
-      engine = owner.open(join(root, "data"), options);
+      engine = installSharedWorkflowFastPaths(owner.open(join(root, "data"), options));
       expect(engine.task(id)!.reviewDecision?.accepted).toBe(false);
       expect(engine.s.inbox.find(entry => entry.id === item.id)).toBeDefined();
       engine.setProductChecks(productId, definitions("after decision"));

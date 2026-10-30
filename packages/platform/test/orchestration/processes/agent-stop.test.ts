@@ -49,7 +49,23 @@ stopCases.push(
   { firstTimesOut: false, listedLate: false, stubborn: true, delay: 0, workerStubborn: true, cancel: false, firstRunning: true, overrun: 0 },
   { firstTimesOut: false, listedLate: true, stubborn: true, delay: 2_500, workerStubborn: true, cancel: false, firstRunning: false, overrun: 700 },
 );
-for (const { firstTimesOut, listedLate, stubborn, delay, workerStubborn, cancel, firstRunning, overrun } of stopCases) it(`${overrun ? "warns about undiscovered work after a delayed scan exhausts the rescan allowance" : `finds detached work ${listedLate ? "first listed during stopping" : "already listed"}`} within the quit limit when the first process scan ${firstTimesOut ? "times out" : firstRunning ? "still shows the owner running" : "succeeds"}${delay ? ` with consistently slow ${delay}ms listings` : ""}${stubborn ? "" : " and the agent exits gracefully"}${cancel ? " on cancellation" : ""}`, async () => {
+function stopCaseTitle(spec: (typeof stopCases)[number]) {
+  const outcome = spec.overrun
+    ? "warns about undiscovered work after a delayed scan exhausts the rescan allowance"
+    : `finds detached work ${spec.listedLate ? "first listed during stopping" : "already listed"}`;
+  const scanOutcome = spec.firstTimesOut
+    ? "times out"
+    : spec.firstRunning
+      ? "still shows the owner running"
+      : "succeeds";
+  const delaySuffix = spec.delay ? ` with consistently slow ${spec.delay}ms listings` : "";
+  const exitSuffix = spec.stubborn ? "" : " and the agent exits gracefully";
+  const cancelSuffix = spec.cancel ? " on cancellation" : "";
+  return `${outcome} within the quit limit when the first process scan ${scanOutcome}${delaySuffix}${exitSuffix}${cancelSuffix}`;
+}
+
+for (const spec of stopCases) it(stopCaseTitle(spec), async () => {
+  const { firstTimesOut, listedLate, stubborn, delay, workerStubborn, firstRunning, overrun } = spec;
   const fixture = new AgentStopFixture(stubborn ? "ignore" : "exit");
   fixture.add({ pid: fixture.workerPid, parent: fixture.rootPid, group: fixture.workerPid, state: "S", term: workerStubborn ? "ignore" : "exit" });
   const scanned: boolean[] = [];

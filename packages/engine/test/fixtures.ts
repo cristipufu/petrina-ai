@@ -1,14 +1,16 @@
-export { ADDRESS, makeProduct, repositorySeed } from "@petrina/test-support/repositories";
+export { ADDRESS, createProductRepository, makeProduct, repositorySeed } from "@petrina/test-support/repositories";
 import { removeDir } from "@petrina/test-support/fixtures";
 export { tempDir, removeDir, waitFor, waitForFile, firstLine, testBrowserRoot } from "@petrina/test-support/fixtures";
 // Lightweight private repositories, processes and fake-agent records. No Engine dependency.
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { inflateSync } from "node:zlib";
 import type { State } from "@petrina/core";
 import type { Scenario } from "./fake-agent.js";
 import { updateGitHub, type FakeGitHub } from "./fake-gh.js";
 import type { MachineRecords } from "../src/check-interruption.js";
-import { runChecks as runProductChecks } from "../src/checks.js";
+import { runChecks as runProductChecks, type CheckCommandExecutor, type CheckCommandOutcome, type CheckCommandRequest } from "../src/checks.js";
+export type { CheckCommandExecutor, CheckCommandOutcome, CheckCommandRequest };
 import { PromptReader, type PromptRecord } from "./prompt-records.js";
 import { commitAt } from "@petrina/test-support/commands";
 import { writeFixtureJson } from "@petrina/test-support/fixture-json";
@@ -140,8 +142,72 @@ export const REPO = "acme/demo";
 
 export { headNow } from "@petrina/test-support/repository-head";
 
+function readGitRefFile(gitDir: string, candidate: string): string | undefined {
+  const file = join(gitDir, ...candidate.split("/"));
+  try {
+    if (existsSync(file) && statSync(file).isFile()) {
+      const text = readFileSync(file, "utf8").trim();
+      if (text) return text;
+    }
+  } catch { /* Fall through to packed-refs / git. */ }
+  const packed = join(gitDir, "packed-refs");
+  try {
+    if (existsSync(packed)) {
+      for (const line of readFileSync(packed, "utf8").split("\n")) {
+        if (!line || line.startsWith("#") || line.startsWith("^")) continue;
+        const space = line.indexOf(" ");
+        if (space > 0 && line.slice(space + 1).trim() === candidate) return line.slice(0, space).trim();
+      }
+    }
+  } catch { /* Fall back to git. */ }
+  return undefined;
+}
+
 /** A ref's commit on the stand-in GitHub, or undefined when Git confirms the ref is absent. */
-export const remoteRef = (remote: string, ref: string): Promise<string | undefined> => commitAt(remote, ref);
+export function remoteRef(remote: string, ref: string): Promise<string | undefined> {
+  if (!ref || ref.startsWith("-") || /[\^~:@*{]/.test(ref) || !existsSync(join(remote, "HEAD")) || !existsSync(join(remote, "objects"))) {
+    return commitAt(remote, ref);
+  }
+  const candidates = ref === "HEAD"
+    ? ["HEAD"]
+    : ref.startsWith("refs/")
+      ? [ref]
+      : [ref, `refs/${ref}`, `refs/tags/${ref}`, `refs/heads/${ref}`, `refs/remotes/${ref}`];
+  let resolved: string | undefined;
+  for (const candidate of candidates) {
+    let value = readGitRefFile(remote, candidate);
+    for (let depth = 0; value?.startsWith("ref: ") && depth < 5; depth += 1) {
+      value = readGitRefFile(remote, value.slice("ref: ".length).trim());
+    }
+    if (value && /^[0-9a-f]{40,64}$/.test(value)) {
+      resolved = value;
+      break;
+    }
+  }
+  if (!resolved) {
+    if (/^[0-9a-f]{4,64}$/.test(ref)) {
+      if (/^[0-9a-f]{40,64}$/.test(ref)) resolved = ref;
+      else return commitAt(remote, ref);
+    } else {
+      return Promise.resolve(undefined);
+    }
+  }
+  let oid = resolved;
+  for (let depth = 0; depth < 5; depth += 1) {
+    const objPath = join(remote, "objects", oid.slice(0, 2), oid.slice(2));
+    if (!existsSync(objPath)) return commitAt(remote, ref);
+    try {
+      const raw = inflateSync(readFileSync(objPath)).toString("latin1");
+      if (raw.startsWith("commit ")) return Promise.resolve(oid);
+      if (raw.startsWith("tag ")) {
+        const next = /\0object ([0-9a-f]{40,64})\n/.exec(raw)?.[1];
+        if (next) { oid = next; continue; }
+      }
+    } catch { /* Fall back to git. */ }
+    return commitAt(remote, ref);
+  }
+  return commitAt(remote, ref);
+}
 
 export { finishedHelper } from "@petrina/test-support/process-helper";
 

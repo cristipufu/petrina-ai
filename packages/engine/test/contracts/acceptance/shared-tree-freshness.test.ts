@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { invalidateAcceptance, versionsOf } from "../../../src/repositories.js";
-import { git } from "../../support.js";
+import * as gitOps from "@petrina/repositories/git";
 import { executionFor } from "@petrina/orchestrator";
 import { withRepositoryRecords } from "../../fixtures/shared-records.js";
 
@@ -27,7 +27,7 @@ describe.concurrent("one task across products", () => {
       task.acceptancePassed = true;
       const copy = task.repositories![1]!.worktree!;
       writeFileSync(join(copy, "api-repair.txt"), "A repair changes this product\n");
-      await git(copy, "add", "."); await git(copy, "commit", "-qm", "Repair API");
+      await gitOps.commitChanges(copy, "Repair API");
       await invalidateAcceptance(task);
       expect(task.brief.acceptance[0]!.verification).toBe("passed");
       expect(task.brief.acceptance[1]!.verification).toBe("stale");

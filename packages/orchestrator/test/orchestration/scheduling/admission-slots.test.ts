@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { pipelineOf, queueOf, slotUses, type State } from "@petrina/core";
+import { pipelineOf, queueOf, resumeTaskState, slotUses, type State } from "@petrina/core";
 import { admissionFixture as fixture } from "../../fixtures/agent-workflow.js";
+import { deferred } from "../../fixtures/tool-checks.js";
 
 function counts(state: State) {
   const uses = slotUses(state);
@@ -9,6 +10,28 @@ function counts(state: State) {
 }
 
 describe("slots are recorded and checked for every agent", () => {
+  for (const slots of [1, 2]) it(`does not allocate any of ${slots} free slots to a resumed task still stopping`, async () => {
+    const f = fixture(slots, slots, slots + 1), stopped = f.task(f.ids[0]!)!;
+    const settlement = deferred<void>();
+    try {
+      stopped.state = "paused";
+      // The same owner used by AgentWorkflow retains a driver after Pause and through Resume.
+      f.ownership.settling.set(stopped.id, settlement.promise);
+      expect(resumeTaskState(stopped, false)).toBe(true);
+      f.workflow.setPoolPaused(false);
+      const queued = f.ids.slice(1).map(id => f.task(id)!);
+      expect(stopped.state).toBe("waiting");
+      expect(queued.map(task => task.holdsSlot)).toEqual(Array(slots).fill(true));
+      expect(queued.map(task => task.state)).toEqual(Array(slots).fill("running"));
+      expect(stopped.holdsSlot).toBe(false);
+      expect(stopped.agent).toBeUndefined();
+    } finally {
+      settlement.resolve();
+      f.ownership.settling.delete(stopped.id);
+      await f.close();
+    }
+  });
+
   it("shows Plan and its planner immediately, before the working copy is ready", async () => {
     const f = await fixture(8, 5);
     try {

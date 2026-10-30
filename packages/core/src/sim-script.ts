@@ -452,7 +452,7 @@ export function callAnswers(area: string, due: readonly Objection[], call: strin
 
 export function briefFor(task: DeepMutable<Task>): DeepMutable<DesignBrief> {
   return {
-    summary: callOn(task as unknown as Task, task.stageIndex) ? `How ${task.area} should work after this change, following your call.` : `How ${task.area} should work after this change, agreed by both architects.`,
+    summary: callOn(task, task.stageIndex) ? `How ${task.area} should work after this change, following your call.` : `How ${task.area} should work after this change, agreed by both architects.`,
     forUsers: [`${capitalize(task.area)} works the way the task describes`, "Nothing changes for people who do not use it"],
     areas: [capitalize(task.area), "Settings"],
     acceptance: [

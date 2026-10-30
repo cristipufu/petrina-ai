@@ -1,29 +1,22 @@
-import { FAKE_AGENT } from "../../fixtures.js";
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
+import { readRef } from "../../fixtures/shared-preparation.js";
+import { createProductRepository, FAKE_AGENT, SLOW } from "../../fixtures.js";
+import { privateAgentToolProbe } from "../../scripted-probes.js";
+import { afterAll, describe, expect, it } from "bun:test";
+import { existsSync, readFileSync, renameSync } from "node:fs";
+
 import { join } from "node:path";
 import { type State } from "@petrina/core";
 import { Engine } from "../../engine.js";
-import { git, removeDir, SLOW } from "../../fixtures.js";
 
 const fake = FAKE_AGENT;
-const temp = mkdtempSync(join(tmpdir(), "petrina-engine-"));
 
-async function makeRepo(name = "repo"): Promise<string> {
+async function makeRepo(temp: string, name = "repo"): Promise<string> {
+  const { path: clone } = await createProductRepository(join(temp, `${name}-seed`), { origin: "none" });
   const repo = join(temp, name);
-  mkdirSync(repo, { recursive: true });
-  await git(repo, "init", "-q", "-b", "main");
-  await git(repo, "config", "user.email", "test@example.com");
-  await git(repo, "config", "user.name", "Test");
-  writeFileSync(join(repo, "README.md"), "# Demo\n");
-  await git(repo, "add", ".");
-  await git(repo, "commit", "-q", "-m", "init");
+  renameSync(clone, repo);
   return repo;
 }
-
-let retainFiles = false;
-afterAll(() => { if (!retainFiles) removeDir(temp); });
 
 /** Wait for a condition on the engine's state, answering the inbox like a coordinator would. */
 async function until(engine: Engine, done: (state: State) => boolean, respond: (engine: Engine, state: State) => void, ms = 60_000): Promise<State> {
@@ -37,18 +30,15 @@ async function until(engine: Engine, done: (state: State) => boolean, respond: (
   }
 }
 
+const engineCases = engineCaseFixtures();
+afterAll(() => engineCases.close());
+
 describe("Engine with a fake ACP agent", () => {
-  let repo = "";
-  beforeAll(async () => { repo = await makeRepo(); });
-  const awakeChanges: boolean[] = [];
-  const engine = new Engine(join(temp, "data"), { agentCommand: () => [process.execPath, fake], awakeObserver: (active) => awakeChanges.push(active) });
-
-  afterAll(async () => {
-    try { await engine.shutdown(); }
-    catch (error) { retainFiles = true; throw error; }
-  });
-
   it("takes a task from the queue to a commit on main, asking the coordinator along the way", async () => {
+    return engineCases.use("petrina-engine-", async caseOwner => {
+    const temp = caseOwner.root, repo = await makeRepo(temp);
+    const awakeChanges: boolean[] = [];
+    const engine = caseOwner.open(join(temp, "data"), { agentCommand: () => [process.execPath, fake], toolProbe: privateAgentToolProbe(), awakeObserver: (active) => awakeChanges.push(active) });
     const productId = await engine.addProduct(repo);
     engine.setProductDelivery(productId, "local", true);
     const taskId = engine.addTask({ productId, title: "Add a greeting", description: "A friendly greeting file.", kind: "feature" });
@@ -89,11 +79,12 @@ describe("Engine with a fake ACP agent", () => {
     expect(task.timeline.some((entry) => entry.text === "You approved the design")).toBe(true);
     expect(task.timeline.some((entry) => entry.text === "You approved the delivery")).toBe(true);
     // The work is on main, with the permission granted.
-    expect(await git(repo, "show", "main:greeting.txt")).toBe("Hello (with left-pad)");
+    expect(readFileSync(join(repo, "greeting.txt"), "utf8").trim()).toBe("Hello (with left-pad)");
     expect(task.findings.some((finding) => finding.severity === "suggestion")).toBe(true);
     await until(engine, (s) => s.tasks.find((entry) => entry.id === taskId)?.cleanup?.removedAt !== undefined, () => {});
     expect(existsSync(task.worktree!)).toBe(false);
-    expect(await git(repo, "rev-parse", task.branch!)).toBe(await git(repo, "rev-parse", "main"));
+    expect(readRef(join(repo, ".git"), `refs/heads/${task.branch!}`)).toBe(readRef(join(repo, ".git"), "refs/heads/main"));
     await until(engine, () => awakeChanges.at(-1) === false, () => {});
+    });
   });
 });

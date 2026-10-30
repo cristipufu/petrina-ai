@@ -1,4 +1,4 @@
-import { cpSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, cpSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { executionFor } from "@petrina/orchestrator";
 import { checksFor } from "@petrina/repositories/check-discovery";
@@ -7,7 +7,9 @@ import { createLeasedProgramRecords, type LeasedProgramRecords } from "@petrina/
 import { writeFixtureJson } from "@petrina/test-support/fixture-json";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { tempDir } from "../fixtures.js";
+import { privateAgentToolProbe } from "../scripted-probes.js";
 import { directDrivers } from "./direct-drivers.js";
+import { installSharedWorkflowFastPaths } from "./shared-preparation.js";
 import { commandInputText } from "../../src/checks.js";
 
 export interface SetupCommand {
@@ -20,7 +22,7 @@ export interface SetupCommand {
 }
 
 /** A real check owner with private Git/SQLite and leased argv actors; no planning or agent workflow. */
-export async function checkSetupFixture() {
+export async function checkSetupFixture(options: { nativeGitCapture?: boolean } = {}) {
   const root = tempDir("check-setup-");
   const owners = directDrivers(root);
   let programs: LeasedProgramRecords | undefined, closing: Promise<void> | undefined;
@@ -59,7 +61,34 @@ if (choice.stderr !== undefined) process.stderr.write(choice.stderr);
 process.exit(choice.code ?? 0);`);
     const data = join(root, "data"), path = join(root, "repository"), seed = await repositorySeed();
     cpSync(seed.clone, path, { recursive: true });
-    const start = () => owners.open(data, { agentCommand: () => undefined, terminals: () => [] });
+    let commands: Record<string, SetupCommand> = {};
+    const runFastSetupCommand = !options.nativeGitCapture
+      ? (req: { argv: readonly string[] }) => {
+          if (req.argv.length === 3 && req.argv[0] === process.execPath && req.argv[1] === script) {
+            const kind = req.argv[2]!;
+            const choice = commands[kind] ?? {};
+            if (!choice.mark && !choice.release && !choice.writeTracked) {
+              appendFileSync(log, `${JSON.stringify({ kind, pid: process.pid })}\n`);
+              return {
+                code: choice.code ?? 0,
+                ...(choice.stdout !== undefined ? { stdout: choice.stdout } : {}),
+                ...(choice.stderr !== undefined ? { stderr: choice.stderr } : {}),
+              };
+            }
+          }
+          return undefined;
+        }
+      : undefined;
+    const start = () => {
+      const opened = owners.open(data, {
+        agentCommand: () => undefined,
+        ...(runFastSetupCommand ? { runCheckCommand: runFastSetupCommand } : {}),
+        toolProbe: privateAgentToolProbe(),
+        terminals: () => [],
+      });
+      if (!options.nativeGitCapture) installSharedWorkflowFastPaths(opened, { fastCheckCapture: true });
+      return opened;
+    };
     let engine = start();
     engine.schedule = () => engine.checkQueue.pump();
     await engine.waitUntilReady();
@@ -74,7 +103,6 @@ process.exit(choice.code ?? 0);`);
     ] };
     task.stageIndex = 1; task.state = "running";
     engine.setPoolPaused(false);
-    let commands: Record<string, SetupCommand> = {};
     const argv = (kind: string) => [process.execPath, script, kind];
     const current = () => executionFor(engine.task(taskId)!);
     const run = (lowLevel = false) => {

@@ -5,8 +5,9 @@ import { join } from "node:path";
 import type { CheckId } from "@petrina/core";
 
 import { checkAdmissionFixture } from "../../fixtures/check-admission.js";
+import * as gitOps from "@petrina/repositories/git";
 import { checksFingerprint } from "../../../src/checks.js";
-import { git, waitFor, waitForFile } from "../../fixtures.js";
+import { waitFor, waitForFile } from "../../fixtures.js";
 const cases = engineCaseFixtures();
 afterAll(() => cases.close());
 
@@ -22,9 +23,9 @@ for (const paused of [false, true]) it(`prepares queued review checks on current
     await waitForFile(join(f.root, "first.started"), { during: firstReview });
     secondReview = f.review(second);
     await waitFor(() => f.engine.checkQueue.waiting === 1, "second review checks to queue");
-    const queuedHead = await git(second.copy, "rev-parse", "HEAD");
+    const queuedHead = f.head(second.copy);
     const latest = await f.land();
-    expect(await git(second.copy, "rev-parse", "HEAD")).toBe(queuedHead);
+    expect(f.head(second.copy)).toBe(queuedHead);
     if (paused) f.engine.setPoolPaused(true);
     f.release(); expect(await firstReview).toBe("continue");
     if (paused) {
@@ -37,7 +38,7 @@ for (const paused of [false, true]) it(`prepares queued review checks on current
     expect(checked.map(run => [run.name, run.fix])).toEqual([["first", false], ["second", true]]);
     const run = checked[1]!;
     expect(run.sha).not.toBe(queuedHead);
-    expect(await git(second.copy, "merge-base", latest, run.sha)).toBe(latest);
+    expect(await f.mergeBase(second.copy, latest, run.sha)).toBe(latest);
     expect(second.scope.work.checks).toMatchObject({ sha: run.sha, tree: run.tree, current: true });
     expect(second.scope.work.tamper?.sha).toBe(run.sha);
     const attempts = second.task.journey!.flatMap(step => step.checkAttempts ?? []);
@@ -56,8 +57,8 @@ for (const paused of [false, true]) it(`prepares queued review checks on current
 it("returns a queued conflict to the Builder without commands and hands the place to the next review", async () => {
   return cases.use("petrina-check-admission-", owner => checkAdmissionFixture(owner, async f => {
   const first = await f.add("first"), conflict = await f.add("conflict", false, true), next = await f.add("next");
-  conflict.scope.work.approvedSha = await git(conflict.copy, "rev-parse", "HEAD");
-  conflict.scope.work.approvedPatch = await f.engine["updates"].patch(conflict.scope);
+  conflict.scope.work.approvedSha = f.head(conflict.copy);
+  conflict.scope.work.approvedPatch = "approved-patch";
   conflict.task.reviewSessions = { review: { "reviewer:0": { sessionId: "old-review", profileId: "sol-high", plannedProfileId: "sol-high", toolId: "codex", model: "stand-in", scope: "old", round: 1 } } };
   const firstReview = f.review(first);
   let conflictReview: ReturnType<typeof f.review> | undefined, nextReview: ReturnType<typeof f.review> | undefined;
@@ -149,7 +150,7 @@ it("gives up check capacity while new check inputs need discovery, then rejoins 
     expect(await secondReview).toBe("continue"); latePlace = await late;
     const run = f.evidence()[1]!;
     expect(f.evidence().map(run => [run.name, run.command])).toEqual([["first", "original"], ["second", "rediscovered-command"]]);
-    expect(run.fix).toBe(true); expect(await git(second.copy, "merge-base", latest, run.sha)).toBe(latest);
+    expect(run.fix).toBe(true); expect(await f.mergeBase(second.copy, latest, run.sha)).toBe(latest);
     expect(second.scope.work.checks).toMatchObject({ sha: run.sha, tree: run.tree, current: true });
     expect(second.task.journey!.flatMap(step => step.checkAttempts ?? [])).toHaveLength(1);
     latePlace(); expect(f.engine.checkQueue.running).toBe(0); expect(f.engine.checkQueue.waiting).toBe(0);
@@ -175,7 +176,8 @@ it("captures a newly configured commit hook before a queued review starts", asyn
     await f.land();
     const folder = join(f.root, "hooks"), hookLog = join(f.root, "hook-runs"); mkdirSync(folder);
     writeFileSync(join(folder, "pre-commit"), `#!/usr/bin/env bun\nimport { appendFileSync } from "node:fs";\nappendFileSync(${JSON.stringify(hookLog)}, "hook\\n");\n`, { mode: 0o755 });
-    await git(f.clone, "config", "core.hooksPath", folder);
+    const cfgPath = join(f.clone, ".git", "config");
+    writeFileSync(cfgPath, readFileSync(cfgPath, "utf8").replace(/^\[core\]\r?\n/im, (header) => `${header}\thooksPath = ${folder}\n`));
     f.release(); expect(await firstReview).toBe("continue"); expect(await secondReview).toBe("continue");
     expect(readFileSync(hookLog, "utf8").trim().split("\n")).toHaveLength(2);
     expect(second.scope.work.checks!.results.map(run => run.name)).toEqual(["Tests", "Pre-commit hook"]);
@@ -196,12 +198,12 @@ for (const savedTester of [false, true]) it(`acceptance ${savedTester ? "finishe
   acceptance.task.plan!.stages[1] = { id: "accept", title: "Try the product", kind: "do", roleId: "tester", profileIds: ["sol-high"] };
   f.engine.s.setup!.checks = f.engine.s.tools.map(tool => ({ id: tool.id as CheckId, status: "ready", at: Date.now() }));
   f.engine.s.tools.forEach(tool => { tool.status = "ready"; });
-  const before = await git(acceptance.copy, "rev-parse", "HEAD");
+  const before = f.head(acceptance.copy);
   if (savedTester) acceptance.scope.work.conversation = { step: "accept:1:0", roleId: "tester", profileId: "sol-high", toolId: "codex", model: "stand-in", sessionId: "saved-tester", startedAt: 1, head: before, briefed: true };
   const began = Promise.withResolvers<string>();
   const work = spyOn(f.engine["work"], "runDo");
     owner.onStop(() => work.mockRestore());
-    work.mockImplementation(async scope => { began.resolve(await git(scope.work.worktree!, "rev-parse", "HEAD")); return "stop"; });
+    work.mockImplementation(async scope => { began.resolve(f.head(scope.work.worktree!)); return "stop"; });
   const updates = spyOn(f.engine["updates"], "upToDate");
     owner.onStop(() => updates.mockRestore());
   const firstReview = f.review(first);
@@ -220,7 +222,7 @@ for (const savedTester of [false, true]) it(`acceptance ${savedTester ? "finishe
       const tested = await began.promise;
       const run = f.evidence().find(run => run.name === "acceptance")!;
       expect(run).toMatchObject({ sha: tested, fix: true });
-      expect(await git(acceptance.copy, "merge-base", tested, latest)).toBe(latest);
+      expect(await f.mergeBase(acceptance.copy, tested, latest)).toBe(latest);
       expect(acceptance.scope.work.checks).toMatchObject({ sha: tested, tree: run.tree, current: true });
       expect(updates.mock.calls.filter(call => call[0].task.id === acceptance.task.id)).toHaveLength(2);
     }
@@ -239,7 +241,7 @@ for (const admission of ["queued", "immediate", "conflict"] as const) it(`update
   acceptance.task.plan!.stages[1] = { id: "accept", title: "Try the product", kind: "do", roleId: "tester", profileIds: ["sol-high"] };
   f.engine.s.setup!.checks = f.engine.s.tools.map(tool => ({ id: tool.id as CheckId, status: "ready", at: Date.now() }));
   f.engine.s.tools.forEach(tool => { tool.status = "ready"; });
-  const before = await git(acceptance.copy, "rev-parse", "HEAD");
+  const before = f.head(acceptance.copy);
   acceptance.scope.work.conversation = { step: "accept:1:0", roleId: "check-finder", profileId: "sol-high", toolId: "codex", model: "stand-in", sessionId: "saved-finder", startedAt: 1, head: before, briefed: true };
   const entered = Promise.withResolvers<void>(), releaseDiscovery = Promise.withResolvers<void>();
     owner.onStop(() => releaseDiscovery.resolve());
@@ -254,7 +256,7 @@ for (const admission of ["queued", "immediate", "conflict"] as const) it(`update
   const work = spyOn(f.engine["work"], "runDo");
     owner.onStop(() => work.mockRestore());
     work.mockImplementation(async (scope, stage) => {
-    if (f.engine.role(stage.roleId, scope.task)?.result === "checks") tested = await git(scope.work.worktree!, "rev-parse", "HEAD");
+    if (f.engine.role(stage.roleId, scope.task)?.result === "checks") tested = f.head(scope.work.worktree!);
     return "stop";
   });
   const updates = spyOn(f.engine["updates"], "upToDate");
@@ -282,7 +284,7 @@ for (const admission of ["queued", "immediate", "conflict"] as const) it(`update
       expect(acceptance.task.stageIndex).toBe(0); expect(acceptance.scope.work.updating?.onto).toBe(latest);
     } else {
       expect(runs).toHaveLength(1); expect(runs[0]).toMatchObject({ sha: tested, fix: true });
-      expect(await git(acceptance.copy, "merge-base", latest, tested!)).toBe(latest);
+      expect(await f.mergeBase(acceptance.copy, latest, tested!)).toBe(latest);
       expect(acceptance.scope.work.checks).toMatchObject({ sha: tested, tree: runs[0]!.tree, current: true });
       expect(acceptance.task.stageIndex).toBe(1);
     }
@@ -309,7 +311,7 @@ it("updates a queued delivery check before capturing the change the coordinator 
     const latest = await f.land(); f.release(); expect(await firstReview).toBe("continue"); await driving;
     const run = f.evidence().find(run => run.name === "delivery-check")!;
     expect(f.evidence().map(run => run.name)).toEqual(["first", "delivery-check"]);
-    expect(run.fix).toBe(true); expect(await git(delivery.copy, "merge-base", latest, run.sha)).toBe(latest);
+    expect(run.fix).toBe(true); expect(await f.mergeBase(delivery.copy, latest, run.sha)).toBe(latest);
     expect(delivery.scope.work.checkedSha).toBe(run.sha);
     expect(delivery.scope.work.checks).toMatchObject({ sha: run.sha, tree: run.tree, current: true });
     expect(delivery.task.state).toBe("needs-you");
@@ -330,7 +332,7 @@ it("retains an earlier failure and its return allowance until the combined curre
   expect(original.passed).not.toBe(true); expect(second.scope.work.checkReturns).toBe(1);
   // The Builder returned a changed tree; its incomplete repair remains a real failure until fresh proof.
   writeFileSync(join(second.copy, "builder-return.txt"), "A focused repair was returned\n");
-  await git(second.copy, "add", "."); await git(second.copy, "commit", "-qm", "Try the focused repair");
+  await gitOps.commitChanges(second.copy, "Try the focused repair");
   second.task.stageIndex = 1;
   const firstReview = f.review(first);
   let secondReview: ReturnType<typeof f.review> | undefined;

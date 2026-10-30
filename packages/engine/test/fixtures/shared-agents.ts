@@ -7,7 +7,7 @@ import { ScriptedAgents, scriptedResult } from "../scripted-agents.js";
 import { answersTo, findingIds } from "../scripted-findings.js";
 
 /** Provider replies only. The real Engine still owns plans, routing, Git, checks, versions and delivery. */
-interface SharedScript {
+export interface SharedScript {
   planner?: "short" | "parallel" | "tester-first" | "tester-with-design" | "copy";
   builder?: "plain";
   reopen?: "resume";
@@ -22,11 +22,35 @@ interface SharedScript {
   controlled?: boolean;
 }
 
+/** Canonical accepted recipe shared by provider replies and prepared native starts. */
+export function sharedPlan(plan: SharedScript, copyRole?: string) {
+  const build = { kind: "do", title: "Build", roleId: "builder", profileIds: [plan.planner === "tester-first" ? "opus-xhigh" : "sol-xhigh"] };
+  const test = { kind: "do", title: "Try acceptance", roleId: "tester", profileIds: ["opus-high"] };
+  const review = { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: plan.planner === "short" || plan.planner === "copy" ? ["opus-high"] : plan.planner === "tester-first" ? ["opus-xhigh", "sol-xhigh"] : ["opus-high", "sol-high"], maxRounds: plan.reviewRounds ?? (plan.planner === "short" || plan.planner === "parallel" || plan.planner === "copy" ? 1 : 2) };
+  const design = { kind: "converge", title: "Design", roleId: "architect", profileIds: ["opus-xhigh"], reviewerRoleId: "design-reviewer", reviewerProfileIds: ["sol-xhigh"], maxRounds: 2 };
+  const check = { kind: "gate", title: "Your design check", roleId: "architect", gate: "design" };
+  const stages = plan.planner === "tester-first" ? [build, test, review]
+    : plan.planner === "copy" ? [build, { kind: "do", title: "Copy", roleId: copyRole, profileIds: ["opus-high"] }, review]
+    : ["short", "parallel"].includes(plan.planner ?? "") ? [build, review]
+    : [design, check, build, ...(plan.planner === "tester-with-design" ? [test] : []), review];
+  return { rationale: "Explicit shared repository prerequisites.", stages,
+    ...(plan.worksOn ? { worksOn: plan.worksOn } : {}),
+    ...(plan.risk ? { risk: { level: plan.risk, why: "Only the greeting's words change." } } : {}) };
+}
+
+export const sharedBrief = () => ({ summary: "A greeting file.", forUsers: ["People see a greeting"], areas: ["Greeting"], acceptance: ["A greeting file exists"], risks: [], answers: [] });
+
 /** This one narrowly scripted recipe replaces ACP only where a workflow does not assert transport. */
 export function sharedAgents(dir: string) {
   mkdirSync(dir, { recursive: true });
   let script: SharedScript = { planner: "short", builder: "plain", reopen: "resume" }, repairs = 0;
   const names = new Map<string, string>(), roleIds = new Map<string, string>();
+  const build = (plan: SharedScript, cwd: string, answers: ReturnType<typeof answersTo>, fixing: boolean, description: boolean) => {
+    writeFileSync(join(cwd, "greeting.txt"), "Hello\n");
+    if (plan.fixes === "change" && fixing) writeFileSync(join(cwd, "welcome.txt"), `Hello repair ${++repairs}\n`);
+    return { summary: "Added a greeting.", changes: ["People see a greeting"], tests: "Petrina runs the configured checks.",
+      ...(description ? { description: "Adds a greeting file.\n\nTested with the greeting test." } : {}), answers };
+  };
   const respond: ConstructorParameters<typeof ScriptedAgents>[0] = async (prompt, signal) => {
     const plan = script, { result, cwd, text } = prompt;
     if (plan.controlled && prompt.turn === 1) await waitFor(() => {
@@ -36,29 +60,15 @@ export function sharedAgents(dir: string) {
     const done = (value: unknown) => scriptedResult(value);
     switch (result) {
       case "plan": {
-        const build = { kind: "do", title: "Build", roleId: "builder", profileIds: [plan.planner === "tester-first" ? "opus-xhigh" : "sol-xhigh"] };
-        const test = { kind: "do", title: "Try acceptance", roleId: "tester", profileIds: ["opus-high"] };
-        const review = { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: plan.planner === "short" || plan.planner === "copy" ? ["opus-high"] : plan.planner === "tester-first" ? ["opus-xhigh", "sol-xhigh"] : ["opus-high", "sol-high"], maxRounds: plan.reviewRounds ?? (plan.planner === "short" || plan.planner === "parallel" || plan.planner === "copy" ? 1 : 2) };
-        const design = { kind: "converge", title: "Design", roleId: "architect", profileIds: ["opus-xhigh"], reviewerRoleId: "design-reviewer", reviewerProfileIds: ["sol-xhigh"], maxRounds: 2 };
-        const check = { kind: "gate", title: "Your design check", roleId: "architect", gate: "design" };
-        const stages = plan.planner === "tester-first" ? [build, test, review]
-          : plan.planner === "copy" ? [build, { kind: "do", title: "Copy", roleId: roleIds.get("copywriter"), profileIds: ["opus-high"] }, review]
-          : ["short", "parallel"].includes(plan.planner ?? "") ? [build, review]
-          : [design, check, build, ...(plan.planner === "tester-with-design" ? [test] : []), review];
-        return done({ rationale: "Explicit shared repository prerequisites.", stages,
-          ...(plan.worksOn ? { worksOn: plan.worksOn } : {}),
-          ...(plan.risk ? { risk: { level: plan.risk, why: "Only the greeting's words change." } } : {}) });
+        return done(sharedPlan(plan, roleIds.get("copywriter")));
       }
       case "check-discovery": return done({ summary: "Git is the fixture's check.", checks: [{ name: "Version", argv: ["git", "--version"], why: "A real passing product check" }] });
       case "brief":
         if (plan.architect === "writes") writeFileSync(join(cwd, "architecture.txt"), "Before the design review");
-        return done({ summary: "A greeting file.", forUsers: ["People see a greeting"], areas: ["Greeting"], acceptance: ["A greeting file exists"], risks: [], answers: [] });
+        return done(sharedBrief());
       case "objections": return done({ objections: [] });
       case "build":
-        writeFileSync(join(cwd, "greeting.txt"), "Hello\n");
-        if (plan.fixes === "change" && text.includes("You are fixing the review findings")) writeFileSync(join(cwd, "welcome.txt"), `Hello repair ${++repairs}\n`);
-        return done({ summary: "Added a greeting.", changes: ["People see a greeting"], tests: "Petrina runs the configured checks.",
-          ...(text.includes('"description"') ? { description: "Adds a greeting file.\n\nTested with the greeting test." } : {}), answers: answersTo(text) });
+        return done(build(plan, cwd, answersTo(text), text.includes("You are fixing the review findings"), text.includes('"description"')));
       case "checks": return done({ summary: "Tried it: it works.", checks: [{ text: "A greeting file exists", result: "pass", evidence: "The scripted greeting check returned the expected result.", ...(plan.affectedProducts ? { productIds: plan.affectedProducts } : {}) }] });
       case "findings": {
         if (prompt.roleId === "security-reviewer") return done({ verdict: "pass", findings: [], confirms: [], disputes: [] });
@@ -92,7 +102,9 @@ export function sharedAgents(dir: string) {
     return agents.start(options, role);
   };
   const received = (role?: string) => agents.received().map(prompt => ({ role: names.get(prompt.roleId)!, session: prompt.sessionId, text: prompt.text, turn: prompt.turn })).filter(entry => !role || entry.role === role);
-  return { dir, start, agents, respond,
+  return { dir, start, agents, respond, plan: () => sharedPlan(script, roleIds.get("copywriter")),
+    /** Initial accepted input uses the same file/report recipe, without inventing a provider turn. */
+    acceptedInitialBuild: (cwd: string) => build(script, cwd, [], false, true),
     scenario(next: SharedScript) {
       const supported = new Set(["planner", "builder", "reopen", "affectedProducts", "worksOn", "risk", "reviewer", "reviewRounds", "unassignedFinding", "fixes", "architect", "controlled"]);
       for (const key of Object.keys(next)) if (!supported.has(key)) throw new Error(`Unsupported shared provider option: ${key}`);

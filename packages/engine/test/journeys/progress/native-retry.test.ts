@@ -1,16 +1,23 @@
+import { engineCaseFixtures, type EngineCaseOwner } from "../../fixtures/engine-cases.js";
+import { fakeAgentSessions } from "../../fixtures/fake-agent-sessions.js";
+import { installPreparedProduct, privateCloneProduct } from "../../fixtures/prepared-product.js";
+import { prepareProgressEntry } from "../../fixtures/progress-entry.js";
+import { installSharedWorkflowFastPaths } from "../../fixtures/shared-preparation.js";
+import { privateAgentToolProbe } from "../../scripted-probes.js";
 import { afterAll, describe, expect, it } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { journeyView, mainLine, type Task } from "@petrina/core";
-import { Engine } from "../../engine.js";
+
 import type { NativeStep, Scenario } from "../../fake-agent.js";
-import { Fakes, makeProduct, removeDir, tempDir, waitFor } from "../../fixtures.js";
+import { Fakes, createProductRepository, waitFor } from "../../fixtures.js";
+const engineCases = engineCaseFixtures();
+afterAll(() => engineCases.close());
+
 
 // A native harness reporting its own reconnect, end to end: the participant's status on the task, its card,
 // Right now and its live flow step, with no prompt, retry loop or capacity record of Petrina's own.
 
-const roots: string[] = [];
-afterAll(() => roots.forEach(removeDir));
 
 const CODEX_RECONNECTING = "Reconnecting to Codex. Trying automatically.";
 
@@ -23,15 +30,24 @@ const todo = (text: string): NativeStep => ({ update: { sessionUpdate: "plan", e
 const call = (id: string, kind: "read" | "edit", file: string, status: "in_progress" | "completed" = "in_progress"): NativeStep => ({ update: { sessionUpdate: "tool_call", toolCallId: id, title: kind === "read" ? "Read" : "Edit", kind, status, locations: [{ path: file }] } });
 const finished = (id: string): NativeStep => ({ update: { sessionUpdate: "tool_call_update", toolCallId: id, status: "completed" } });
 
-async function start(scenario: Scenario) {
-  const root = tempDir("petrina-native-retry-");
-  roots.push(root);
+async function start(caseOwner: EngineCaseOwner, scenario: Scenario) {
+  const root = caseOwner.root;
+
   const fakes = new Fakes(join(root, "fake"));
   fakes.scenario(scenario);
-  const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), fakes.dir], toolPath: () => process.execPath });
-  const productId = await engine.addProduct(await makeProduct(root));
+  const engine = installSharedWorkflowFastPaths(caseOwner.open(join(root, "data"), { agentCommand: () => [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), fakes.dir], startAgentSession: fakeAgentSessions(fakes), toolPath: () => process.execPath, toolProbe: privateAgentToolProbe() }), { skipReviewInputDiffs: true, fastCheckCapture: true, fastCleanup: true, fastCheckpoints: true });
+  engine.setPoolPaused(true);
+  const repository = await createProductRepository(root, { origin: "none" }), path = repository.path;
+  caseOwner.check();
+  await engine.waitUntilReady();
+  caseOwner.check();
+  const productId = installPreparedProduct(engine, privateCloneProduct(path));
   engine.setProductDelivery(productId, "local", false);
-  const taskId = engine.addTask({ productId, title: "Add a greeting", description: "[no-check]" });
+  const taskId = engine.addTask({ productId, title: "Add a greeting", description: "[no-check]", backlog: true });
+  await prepareProgressEntry(caseOwner, engine, taskId, scenario.planner === "parallel", "sol-xhigh", repository);
+  caseOwner.check();
+  engine.queueTask(taskId);
+  engine.setPoolPaused(false);
   const find = () => engine.getState().tasks.find((task) => task.id === taskId) as Task;
   const live = () => engine.s.tasks.find((task) => task.id === taskId)!;
   const answer = () => {
@@ -58,9 +74,10 @@ async function start(scenario: Scenario) {
 
 describe.concurrent("a native harness reconnecting by itself", () => {
   for (const parallel of [false, true]) it(`does not request corrected JSON after a terminal connection failure in ${parallel ? "parallel review" : "a Builder turn"}`, async () => {
+  return engineCases.use("petrina-native-retry-", async caseOwner => {
     const role = parallel ? "code reviewer" : "builder";
     const meta = { jetbrains: { air: { version: 1, sessionFailure: { id: "terminal-network", revision: 1, category: "connection", severity: "error", title: "stream disconnected before completion: retries exhausted", actions: ["retry", "new_session"] } } } };
-    const run = await start({ planner: parallel ? "parallel" : "short", builder: "plain", reopen: "resume", nativeRetry: [{ role, model: "gpt-6.1-sol", steps: [said("I saved the work before reconnecting."), { mark: "terminal-ready" }, { wait: "end-terminal" }], meta }] });
+    const run = await start(caseOwner, { planner: parallel ? "parallel" : "short", builder: "plain", reopen: "resume", nativeRetry: [{ role, model: "gpt-6.1-sol", steps: [said("I saved the work before reconnecting."), { mark: "terminal-ready" }, { wait: "end-terminal" }], meta }] });
     try {
       await run.until(task => run.fakes.marked("terminal-ready") && task, "the connection failure's controlled boundary");
       run.release("end-terminal");
@@ -82,10 +99,13 @@ describe.concurrent("a native harness reconnecting by itself", () => {
         expect(run.fakes.received(role)).toHaveLength(2);
         expect(new Set(run.fakes.received(role).map(entry => entry.session)).size).toBe(2);
       }
-    } finally { await run.engine.shutdown(); }
+    } finally { await caseOwner.stop(run.engine); }
+
   });
+});
   it("shows Codex reconnecting over stale activity and the saved to-do item, then returns to the work, with nothing sent", async () => {
-    const run = await start({
+  return engineCases.use("petrina-native-retry-", async caseOwner => {
+    const run = await start(caseOwner, {
       planner: "short", builder: "plain",
       nativeRetry: [{ role: "builder", model: "gpt-6.1-sol", steps: [
         todo("Drafting the greeting"),
@@ -147,11 +167,14 @@ describe.concurrent("a native harness reconnecting by itself", () => {
       expect(task.timeline.some((entry) => entry.text.includes("at capacity"))).toBe(false);
       expect(task.timeline.filter((entry) => entry.text.includes(CODEX_RECONNECTING))).toHaveLength(1);
       expect(task.retrying).toBeUndefined();
-    } finally { await run.engine.shutdown(); }
+    } finally { await caseOwner.stop(run.engine); }
+
   });
+});
 
   it("clears the status when the turn fails during the retry, and leaves the failure to its usual handling", async () => {
-    const run = await start({
+  return engineCases.use("petrina-native-retry-", async caseOwner => {
+    const run = await start(caseOwner, {
       planner: "short", builder: "plain",
       nativeRetry: [{ role: "builder", model: "gpt-6.1-sol", steps: [
         todo("Drafting the greeting"), codexLostStream, { mark: "reconnecting" }, { wait: "go-fail" },
@@ -171,11 +194,14 @@ describe.concurrent("a native harness reconnecting by itself", () => {
       expect(run.engine.getState().pool.limited ?? []).toEqual([]);
       // Petrina sent no recovery prompt into the failed conversation.
       expect(run.fakes.received("builder").filter((entry) => entry.session === run.fakes.received("builder")[0]!.session)).toHaveLength(1);
-    } finally { await run.engine.shutdown(); }
+    } finally { await caseOwner.stop(run.engine); }
+
   });
+});
 
   it("puts a request for the coordinator first, then the reconnecting reviewer, and keeps it through the other's progress", async () => {
-    const run = await start({
+  return engineCases.use("petrina-native-retry-", async caseOwner => {
+    const run = await start(caseOwner, {
       planner: "parallel", builder: "plain", reopen: "resume",
       nativeRetry: [
         { role: "code reviewer", model: "gpt-6.1-sol", steps: [todo("Checking the greeting"), codexLostStream, { mark: "codex-reconnecting" }, { wait: "codex-resume" }, said("Back to the review."), { wait: "codex-finish" }] },
@@ -235,6 +261,8 @@ describe.concurrent("a native harness reconnecting by itself", () => {
       const again = reviewers.find((entry) => entry.text.startsWith("The selected model was at capacity."))!;
       expect(reviewers.filter((entry) => entry.session === again.session)).toHaveLength(2);
       expect(run.engine.getState().pool.limited ?? []).toEqual([]);
-    } finally { await run.engine.shutdown(); }
+    } finally { await caseOwner.stop(run.engine); }
+
   });
+});
 });

@@ -1,48 +1,35 @@
-import { repositoryView, type RepositoryContext } from "@petrina/orchestrator";
+import { DesignConversations, recordDesignAnswers, recordDesignBrief, recordDesignObjections, type RepositoryContext } from "@petrina/orchestrator";
 import { designWorkKey } from "./repositories.js";
-import { designDigest as digest, designConversationScope, participantConversation, ParticipantUnavailable } from "./participant-conversation.js";
+import { conversationDigest, ParticipantUnavailable } from "./participant-conversation.js";
 import { reviewContextIntact } from "./review-context.js";
 export { designConversationScope } from "./participant-conversation.js";
 // Design convergence: the architect writes the brief and a design reviewer objects, round after round,
 // until nothing blocking is left; and following the coordinator's call when the architects disagree.
 
-import { answerByCall, beginYouStep, CALL_WORDS, endAgentStep, followingCall, hintProducts, JOURNEY_WORDS as W, recordStepResult, unanswered, type CallAnswer, type DesignCall, type Id, type Task, designRoundEnd, type SourcePointer, type Stage } from "@petrina/core";
+import { answerByCall, beginYouStep, CALL_WORDS, endAgentStep, followingCall, hintProducts, JOURNEY_WORDS, recordStepResult, unanswered, type CallAnswer, type DesignCall, type Id, type Task, designRoundEnd, type SourcePointer, type Stage } from "@petrina/core";
 import { formatObjections } from "./prompts.js";
 import { BriefResult, ObjectionsResult } from "./roles.js";
-import { Kernel, type MStage, type MTask } from "./kernel.js";
+import { Kernel, type MutableStage, type RuntimeTask } from "./kernel.js";
 import type { Turns } from "./turn.js";
 import type { Context } from "./context.js";
 import { checkSourceHints } from "./source-hints.js";
 
 export class Design {
-  constructor(private readonly k: Kernel, private readonly turns: Turns, private readonly context: Context) {}
-
-  private participant(scope: RepositoryContext, stage: MStage, side: "author" | "reviewer", roleId: Id, plannedId: Id) {
-    const { task, work: repository } = scope;
-    const key = JSON.stringify([stage.id, side, repository.productId]);
-    const planned = structuredClone(this.k.profile(plannedId));
-    let actual = planned;
-    return {
-      resume: async (actual: import("@petrina/core").AgentProfile) => {
-        if (!planned) return;
-        const saved = participantConversation(this.k, scope, this.k.role(roleId)!, planned);
-        if (!saved?.prior || saved.reason || saved.actual?.id !== actual.id) return;
-        const prior = saved.prior;
-        if (!(await reviewContextIntact(prior.context))) throw new ParticipantUnavailable("its saved context is unavailable");
-        return { ...prior, reselect: true, ...(side === "author" && task.brief && "briefDigest" in prior && prior.briefDigest === digest(task.brief) ? { knownSections: ["Design brief"] } : {}) };
-      },
-      used: (id: Id) => { actual = structuredClone(this.k.profile(id)); },
-      remember: () => {
-        const note = repository.conversation;
-        if (!note?.briefed || note.roleId !== roleId) return;
-        task.designSessions = { ...task.designSessions, [key]: { scope: designConversationScope(repositoryView(scope), note.role ?? this.k.role(roleId), planned, actual), plannedProfileId: plannedId, profileId: note.profileId, toolId: note.toolId, model: note.model, sessionId: note.sessionId, ...(note.context ? { context: note.context } : {}), ...(side === "author" ? { briefDigest: digest(task.brief) } : {}) } };
-      },
-    };
+  private readonly conversations: DesignConversations;
+  constructor(private readonly k: Kernel, private readonly turns: Turns, private readonly context: Context) {
+    this.conversations = new DesignConversations({ profile: id => k.profile(id), profiles: () => k.s.profiles,
+      role: id => k.role(id), digest: text => conversationDigest(text), conversation: scope => scope.work.conversation,
+      contextIntact: context => reviewContextIntact(context), unavailable: reason => new ParticipantUnavailable(reason),
+    });
   }
 
-  async runConverge(scope: RepositoryContext, stage: MStage, signal: AbortSignal): Promise<"continue" | "stop"> {
+  private participant(scope: RepositoryContext, stage: MutableStage, side: "author" | "reviewer", roleId: Id, plannedId: Id) {
+    return this.conversations.participant(scope, stage, side, roleId, plannedId);
+  }
+
+  async runConverge(scope: RepositoryContext, stage: MutableStage, signal: AbortSignal): Promise<"continue" | "stop"> {
     const { task } = scope;
-    if (followingCall(task as unknown as Task)) return this.followCall(scope, stage, signal);
+    if (followingCall(task)) return this.followCall(scope, stage, signal);
     const round = task.rounds[stage.id] ?? 1;
     if (task.sub === 0) {
       const profileId = stage.profileIds[0] ?? "opus-xhigh";
@@ -63,18 +50,12 @@ export class Design {
         },
       });
       const sourcePointers = this.sourceHints(scope, result.sourcePointers, stage.roleId, by);
-      task.brief = { summary: result.summary, forUsers: result.forUsers, areas: result.areas, acceptance: result.acceptance.map((text) => ({ text })), risks: result.risks, ...(sourcePointers.length ? { sourcePointers } : {}) };
-      for (const answer of given.size ? given.values() : result.answers) {
-        const objection = task.objections.find((entry) => entry.id === answer.id);
-        if (objection && objection.status === "open") {
-          objection.status = answer.status;
-          objection.answer = answer.answer;
-        }
-      }
+      recordDesignBrief(task, result, sourcePointers);
+      recordDesignAnswers(task, given.size ? given.values() : result.answers);
       participant.remember();
       this.k.log(scope, "done", round === 1 ? "Design brief ready" : "Answered every objection", stage.roleId, by);
       recordStepResult(task, { objections: task.objections.filter((objection) => due.includes(objection.id)) });
-      endAgentStep(task, round === 1 ? { outcome: W.wroteBrief, reason: W.briefReady } : { outcome: W.answeredAll, reason: W.objectionsAnswered }, Date.now());
+      endAgentStep(task, round === 1 ? { outcome: JOURNEY_WORDS.wroteBrief, reason: JOURNEY_WORDS.briefReady } : { outcome: JOURNEY_WORDS.answeredAll, reason: JOURNEY_WORDS.objectionsAnswered }, Date.now());
       await this.k.saveRoleEdits(scope, stage.roleId, by);
       this.k.finishStep(scope);
       if (this.k.rerun(task)) return "continue";
@@ -89,13 +70,9 @@ export class Design {
     let reviewer = reviewerProfile;
     const result = await this.turns.turn(scope, reviewerRole, reviewerProfile, () => this.context.sectionsFor(scope, reviewerRole), ObjectionsResult, signal, { resume: participant.resume, designContext: true, used: (id) => { reviewer = id; participant.used(id); } });
     participant.remember();
-    const before = task.objections.length;
-    for (const objection of result.objections) {
-      task.objections.push({ id: this.k.id(`${task.id}-obj`), round, text: objection.text, blocking: objection.blocking, raisedBy: reviewer, status: "open" });
-    }
-    const blocking = result.objections.filter((objection) => objection.blocking).length;
+    const { before, blocking } = recordDesignObjections(task, result, reviewer, round, () => this.k.id(`${task.id}-obj`));
     recordStepResult(task, { objections: task.objections.slice(before) });
-    endAgentStep(task, blocking ? { outcome: W.objections(result.objections.length, blocking), reason: W.blocking(blocking), tone: "back" } : { outcome: W.objections(result.objections.length, 0), reason: W.noBlocking }, Date.now());
+    endAgentStep(task, blocking ? { outcome: JOURNEY_WORDS.objections(result.objections.length, blocking), reason: JOURNEY_WORDS.blocking(blocking), tone: "back" } : { outcome: JOURNEY_WORDS.objections(result.objections.length, 0), reason: JOURNEY_WORDS.noBlocking }, Date.now());
     this.k.finishStep(scope);
     if (this.k.rerun(task)) return "continue";
     this.k.tracking.designRound(scope, stage, { roleId: reviewerRole, profileId: reviewer }, round, result.objections.length, blocking);
@@ -138,7 +115,7 @@ export class Design {
     return hints.pointers;
   }
 
-  private nextProduct(scope: RepositoryContext, stage: MStage): boolean {
+  private nextProduct(scope: RepositoryContext, stage: MutableStage): boolean {
     const { task, work: repository } = scope;
     if (!task.repositories || !this.k.role(stage.roleId)?.canEdit) return false;
 
@@ -152,7 +129,7 @@ export class Design {
   }
 
   /** The coordinator made the call: the architect updates the brief to follow it, then the design goes to the coordinator's check. */
-  private async followCall(scope: RepositoryContext, stage: MStage, signal: AbortSignal): Promise<"continue"> {
+  private async followCall(scope: RepositoryContext, stage: MutableStage, signal: AbortSignal): Promise<"continue"> {
     const { task } = scope;
     const call = task.call!;
     const profileId = stage.profileIds[0] ?? "opus-xhigh";
@@ -173,12 +150,12 @@ export class Design {
       },
     });
     const sourcePointers = this.sourceHints(scope, result.sourcePointers, stage.roleId, by);
-    task.brief = { summary: result.summary, forUsers: result.forUsers, areas: result.areas, acceptance: result.acceptance.map((text) => ({ text })), risks: result.risks, ...(sourcePointers.length ? { sourcePointers } : {}) };
-    task.objections = answerByCall(task.objections as Task["objections"], call as DesignCall, [...answers.values()]) as MTask["objections"];
+    recordDesignBrief(task, result, sourcePointers);
+    task.objections = answerByCall(task.objections as Task["objections"], call as DesignCall, [...answers.values()]) as RuntimeTask["objections"];
     participant.remember();
     recordStepResult(task, { objections: task.objections.filter((objection) => answers.has(objection.id) || call.open.includes(objection.id)) });
     this.k.log(scope, "done", revising ? CALL_WORDS.revised : CALL_WORDS.updated, stage.roleId, by);
-    endAgentStep(task, { outcome: W.followed, reason: W.followsCall }, Date.now());
+    endAgentStep(task, { outcome: JOURNEY_WORDS.followed, reason: JOURNEY_WORDS.followsCall }, Date.now());
     await this.k.saveRoleEdits(scope, stage.roleId, by);
     this.k.finishStep(scope);
     if (this.nextProduct(scope, stage)) return "continue";

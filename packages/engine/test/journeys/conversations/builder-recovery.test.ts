@@ -4,62 +4,16 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { draftOf } from "@petrina/core";
-import { Engine } from "../../engine.js";
-import type { Scenario } from "../../fake-agent.js";
-import { Fakes, git, makeProduct, removeDir, SLOW, tempDir, waitFor } from "../../fixtures.js";
+import type { Engine } from "../../engine.js";
+import { git, waitFor } from "../../fixtures.js";
+
 
 const prepared = contextStageFixtures();
 afterAll(() => prepared.close());
 
-const roots: string[] = [];
 
-afterAll(() => roots.forEach(removeDir));
 
 const later = () => Date.now() + 3_600_000;
-
-async function fixture(scenario: Scenario = {}) {
-  const root = tempDir("petrina-builder-continuity-");
-  roots.push(root);
-  const fakes = new Fakes(join(root, "fake"));
-  fakes.scenario({ planner: "claude-build", builder: "plain", controlled: true, reopen: "resume", limited: [{ model: "opus", role: "builder", spendCap: true }], ...scenario });
-  let nextGrokCheck: string | undefined;
-  const options = {
-    agentCommand: (profile: { toolId: string }) => {
-      const flag = profile.toolId === "grok" ? nextGrokCheck : undefined;
-      if (flag) nextGrokCheck = undefined;
-      return [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), fakes.dir, ...(flag ? [flag] : [])];
-    },
-    toolPath: () => process.execPath, usageCommands: { codex: null }, toolCheckTimeoutMs: 8000 * SLOW,
-  };
-  let engine = new Engine(join(root, "data"), options);
-  engine.setPoolPaused(true);
-  const repo = await makeProduct(root);
-  const productId = await engine.addProduct(repo);
-  engine.setProductDelivery(productId, "local", true);
-  const taskId = engine.addTask({ productId, title: "Add a greeting", description: "[no-check]" });
-  const task = () => engine.getState().tasks.find((task) => task.id === taskId)!;
-  const model = (session: string) => fakes.settings(session).find((line) => line.startsWith("model="))?.slice(6);
-  const release = (session: string) => writeFileSync(join(fakes.dir, `release-${session}`), "go");
-  const advance = (done: () => boolean, allow: (role: string) => boolean = () => true) => waitFor(() => {
-    for (const prompt of fakes.received()) if (allow(prompt.role)) release(prompt.session);
-    for (const item of engine.getState().inbox) {
-      if (["plan", "design"].includes(item.kind)) engine.approve(item.id);
-      if (item.kind === "question") engine.answer(item.id, item.options?.[0] ?? "Yes");
-      if (item.kind === "permission") engine.allow(item.id, "once");
-    }
-    if (task().state === "failed") throw new Error(task().error);
-    return done();
-  }, "the Builder and its reviews", 60_000);
-  const delivery = () => engine.getState().inbox.some((item) => item.kind === "delivery");
-  const restart = async (flag?: string) => {
-    await engine.shutdown();
-    nextGrokCheck = flag;
-    options.toolCheckTimeoutMs = (flag === "--hang" ? 200 : 8000) * SLOW;
-    engine = new Engine(join(root, "data"), options);
-    await engine.waitUntilReady();
-  };
-  return { get engine() { return engine; }, fakes, task, model, advance, delivery, restart, repo, root };
-}
 
 function roomierAlternative(engine: Engine) {
   engine.s.pool.usage = [
@@ -105,7 +59,8 @@ it("keeps Codex at 33% for review fixes, with actual attribution and independent
 
 describe.concurrent("the Builder's saved fallback conversation", () => {
 it("reopens the saved Codex conversation for a real main conflict and keeps the port review on Grok", async () => {
-    const f = await fixture();
+    const f = await prepared.builderRun();
+    return f.use(async () => {
     try {
       f.engine.setPoolPaused(false);
       await f.advance(f.delivery);
@@ -124,12 +79,14 @@ it("reopens the saved Codex conversation for a real main conflict and keeps the 
       await f.advance(f.delivery);
       expect(f.task().timeline.find((entry) => entry.text.startsWith("Brought up to date with main"))?.profileId).toBe("sol-high");
     } finally { await f.engine.shutdown(); }
+
   });
+});
 });
 
 describe.concurrent("the Builder's saved fallback conversation", () => {
 for (const check of ["ready", "logged-out", "timeout"] as const) it(`recovers an active legacy Grok Builder when its startup check is ${check}`, async () => {
-    const f = await prepared.builderRun({ builder: "work" });
+    const f = await prepared.builderRun({ builder: "work" }, { nativeRechecks: true });
     const hold = join(f.root, "hold-check");
     return f.use(async () => {
       try {

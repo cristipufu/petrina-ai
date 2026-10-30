@@ -1,6 +1,7 @@
 import { afterAll, expect, it } from "bun:test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import * as gitOps from "@petrina/repositories/git";
 import { Fakes, git, tempDir } from "../../fixtures.js";
 import { proofRequestFixtures } from "../../fixtures/proof-requests.js";
 
@@ -15,7 +16,7 @@ for (const converted of [false, true]) for (const committed of [false, true]) it
     // The task's linked working copy shares the product's settings.
     if (converted) await git(f.products[0]!.path!, "config", "core.autocrlf", "true");
     writeFileSync(edited, "Saved before acceptance\n");
-    await git(worktree, "add", "."); await git(worktree, "commit", "-q", "-m", "Save a project file");
+    await gitOps.commitChanges(worktree, "Save a project file");
     f.task.stageIndex = 1;
     fakes.scenario({ testerFiles: [{ dir: worktree, file: "tester-edit.txt", text: "Changed during acceptance\n", commit: committed }] });
     await f.engine["work"].runDo(f.scope, f.tester, signal());

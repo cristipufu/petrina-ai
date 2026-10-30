@@ -158,7 +158,7 @@ export const MAY_CHANGE = {
 } as const;
 
 export function roleCard(ctx: PromptContext): string {
-  if (ctx.role.id === "release-manager") return "";
+  if (ctx.role.result === "delivery") return "";
   return `\n\nYour role: ${ctx.role.purpose}\n${ctx.access?.afterReview ? MAY_CHANGE.afterReview : (ctx.access?.canEdit ?? ctx.role.canEdit) ? MAY_CHANGE.canEdit : MAY_CHANGE.readOnly}\nWhat you hand back: ${ctx.role.handsBack || ctx.role.result}`;
 }
 
@@ -183,7 +183,7 @@ export function buildPrompt(ctx: PromptContext, recordJob?: RecordPrompt): strin
   const job = `${contract.instructions(ctx)}${roleCard(ctx)}`;
   const introduction = `You are the ${role.name} in Petrina, a squad of AI agents working on the product "${product.name}" (${product.repo}).
 The coordinator who reads your work is a product person, not a developer: everything you write for them is plain language, short, and free of code.`;
-  const workspace = role.id === "planner" ? `Your planning folder is ${worktree}. No task working copy exists yet. Investigate GitHub and the registered products’ existing local copies read-only; preserve all uncommitted work.` : `Your working copy is ${worktree}, on branch ${branch}. ${task.repositories ? "You may read every copy in the approved product map below; change only the product assigned to your conversation." : "Stay inside it."}`;
+  const workspace = role.result === "plan" ? `Your planning folder is ${worktree}. No task working copy exists yet. Investigate GitHub and the registered products’ existing local copies read-only; preserve all uncommitted work.` : `Your working copy is ${worktree}, on branch ${branch}. ${task.repositories ? "You may read every copy in the approved product map below; change only the product assigned to your conversation." : "Stay inside it."}`;
   const backgroundRules = background(ctx.screen ?? (mayAskScreen(role) ? "ask" : undefined));
   const request = `# The task: ${task.title}\n${task.description || "(no further description)"}`;
   const sections = [...productMap(ctx, false), ...ctx.sections].filter(section => section.body);

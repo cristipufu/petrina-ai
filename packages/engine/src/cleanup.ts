@@ -11,7 +11,7 @@ import { readdir } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
 import { CLEANUP_WORDS, copyNoLongerNeeded, finishedTask, involvesProduct, type Id, type Task } from "@petrina/core";
 import * as git from "@petrina/repositories/git";
-import type { Kernel, MTask } from "./kernel.js";
+import type { Kernel, RuntimeTask } from "./kernel.js";
 
 export class Cleanup {
   private readonly removing = new Set<Id>();
@@ -24,15 +24,21 @@ export class Cleanup {
     if (this.sweeping || this.k.stopped) return;
     this.sweeping = true;
     try {
-      for (const entry of await readdir(join(this.k.dataDir, "contexts"), { withFileTypes: true }).catch(() => [])) {
-        if (entry.isDirectory()) await this.removeContext(entry.name);
+      const contexts = join(this.k.dataDir, "contexts");
+      if (existsSync(contexts)) {
+        for (const entry of await readdir(contexts, { withFileTypes: true }).catch(() => [])) {
+          if (entry.isDirectory()) await this.removeContext(entry.name);
+        }
       }
       // Pictures belong only to unfinished tasks, independently of whether a working copy
       // must stay (an open pull request or interrupted delivery may still need its files).
       // Walk the capture folders. Only saved unfinished follow-up links can need an
       // archived body; ordinary finished and orphaned pictures need no archive reads.
-      for (const entry of await readdir(join(this.k.dataDir, "captures"), { withFileTypes: true }).catch(() => [])) {
-        if (entry.isDirectory()) await this.removeCaptures(entry.name);
+      const captures = join(this.k.dataDir, "captures");
+      if (existsSync(captures)) {
+        for (const entry of await readdir(captures, { withFileTypes: true }).catch(() => [])) {
+          if (entry.isDirectory()) await this.removeCaptures(entry.name);
+        }
       }
       const ids = new Set(this.k.s.tasks.map((task) => task.id));
       // A late detached child can recreate a finished folder. Inspect folders and Git's actual
@@ -46,9 +52,11 @@ export class Cleanup {
           const task = this.k.task(id);
           if (task && involvesProduct(task, parts[0]!)) ids.add(id);
         };
-        for (const product of await readdir(root, { withFileTypes: true }).catch(() => [])) {
-          if (!product.isDirectory()) continue;
-          for (const task of await readdir(join(root, product.name), { withFileTypes: true }).catch(() => [])) remember(join(root, product.name, task.name));
+        if (existsSync(root)) {
+          for (const product of await readdir(root, { withFileTypes: true }).catch(() => [])) {
+            if (!product.isDirectory()) continue;
+            for (const task of await readdir(join(root, product.name), { withFileTypes: true }).catch(() => [])) remember(join(root, product.name, task.name));
+          }
         }
         for (const product of this.k.s.products) if (product.path) {
           for (const path of await git.linkedWorktrees(product.path).catch(() => [])) remember(path);
@@ -119,7 +127,7 @@ export class Cleanup {
     this.k.commit();
   }
 
-  private async removeRepositoryCopies(task: MTask): Promise<void> {
+  private async removeRepositoryCopies(task: RuntimeTask): Promise<void> {
 
     if (this.k.drivers.has(task.id) || this.k.settling.has(task.id) || task.driving || this.removing.has(task.id) || this.k.stopped || !this.finishedWith(task)) return;
 
@@ -196,15 +204,15 @@ export class Cleanup {
    * cancelled halfway keeps its copy until what it published is looked up (it may be an open pull request),
    * and one from before Petrina published deliveries itself keeps it for the coordinator to check.
    */
-  private finishedWith(task: MTask): boolean {
+  private finishedWith(task: RuntimeTask): boolean {
     const scope = executionFor(task);
     if (this.k.drivers.has(task.id) || this.k.settling.has(task.id) || this.k.agentCleanup.has(task.id) || task.driving || this.k.switching.has(task.id)) return false;
     if (scope.work.shipping?.step !== undefined || scope.work.shipping?.carriedOver) return false;
-    return copyNoLongerNeeded(task as unknown as Task);
+    return copyNoLongerNeeded(task);
   }
 
   /** The task's working copy, when it is one Petrina made in its own folder. Nothing else is ever removed. */
-  copyOf(task: MTask): string | undefined {
+  copyOf(task: RuntimeTask): string | undefined {
     const scope = executionFor(task);
     // Checkout may finish after quitting saved the task, before its usable copy was recorded.
     // Its saved identity still names the same folder prepare() uses; never search other folders.

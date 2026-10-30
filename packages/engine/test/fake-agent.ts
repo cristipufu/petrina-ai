@@ -453,6 +453,11 @@ export interface AgentScript {
   releaseManagerPrompts?: string[];
   /** The Release Manager first asks for the screen, which it may not. */
   releaseManagerScreen?: boolean;
+  /** The Release Manager writes a file in its working copy, which Petrina must undo. */
+  releaseManagerWrite?: string;
+  /** Custom summary and notes returned by the Release Manager. */
+  releaseSummary?: string;
+  releaseNotes?: string;
   /** What the Check finder hands back, instead of its scenario's checks. */
   checks?: { name: string; argv: string[]; why: string }[];
   /** Every builder installs packages and builds: folders the repository ignores, with a link to this shared cache. */

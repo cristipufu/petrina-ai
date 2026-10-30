@@ -6,7 +6,6 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import * as gitOps from "@petrina/repositories/git";
 import { executionFor } from "@petrina/orchestrator";
-import { git } from "../../support.js";
 import { withRepositoryRecords } from "../../fixtures/shared-records.js";
 
 describe("explicit repository execution contexts", () => {
@@ -14,10 +13,10 @@ describe("explicit repository execution contexts", () => {
     await withRepositoryRecords("partial-shared-handback", { git: ["first","second"] }, async ({ engine, task, run: ownRun }) => {
       const anchors: Record<string, { path: string; head: string }> = {};
       for (const work of task.repositories!) {
-        const root = work.worktree!, head = await git(root, "rev-parse", "HEAD"), copy = join(engine.dataDir, work.productId + "-snapshot");
+        const root = work.worktree!, head = (await gitOps.head(root))!, copy = join(engine.dataDir, work.productId + "-snapshot");
         work.branch = "main"; work.baseSha = head;
         work.source = { product: { ...engine.s.products.find(product => product.id === work.productId)!, path: root }, start: { kind: "default", branch: "main" }, destination: { kind: "branch", mode: "local", repo: "local/fixture", branch: "main" }, confirmed: true };
-        work.checks = { current: true, at: 1, tree: await git(root, "rev-parse", "HEAD^{tree}"), results: [] };
+        work.checks = { current: true, at: 1, tree: (await gitOps.treeOf(root))!, results: [] };
         await gitOps.addCopy(root, copy, head);
         writeFileSync(join(copy, "hand-edited.txt"), work.productId + " edit\n");
         anchors[work.productId] = { path: copy, head };
@@ -43,7 +42,7 @@ describe("explicit repository execution contexts", () => {
           expect(task.driving).toBeUndefined();
           for (const work of task.repositories!) {
             expect(readFileSync(join(work.worktree!, "hand-edited.txt"), "utf8")).toBe(work.productId + " edit\n");
-            expect(work.tamper?.sha).toBe(await git(work.worktree!, "rev-parse", "HEAD"));
+            expect(work.tamper?.sha).toBe(await gitOps.head(work.worktree!));
             expect(work.checks!.current).toBe(false);
           }
         } finally { engine.startDriver = start; }

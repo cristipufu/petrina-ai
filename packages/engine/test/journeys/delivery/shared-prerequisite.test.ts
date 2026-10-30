@@ -6,7 +6,10 @@ import { join } from "node:path";
 import { completeAll, type DeepMutable, type Product, type TaskRepository } from "@petrina/core";
 import { scopesFor } from "@petrina/orchestrator";
 import { WaitingForUsage } from "../../../src/usage.js";
-import { Fakes, FAKE_AGENT, git, makeProduct, tempDir, waitFor } from "../../fixtures.js";
+import * as gitOps from "@petrina/repositories/git";
+import { fakeAgentSessions } from "../../fixtures/fake-agent-sessions.js";
+import { Fakes, FAKE_AGENT, makeProduct, tempDir, waitFor } from "../../fixtures.js";
+import { privateAgentToolProbe } from "../../scripted-probes.js";
 
 
 /** Only delivery, release and admission are exercised; planning and review have already settled. */
@@ -24,11 +27,11 @@ async function fixture() {
   return setupWithCleanup(() => lifetime.prepare(async () => {
   const fakes = new Fakes(join(root, "agents"));
   fakes.scenario({ controlled: true, planner: "short", builder: "plain", reopen: "resume" });
-  const engine = lifetime.open(join(root, "data"), { agentCommand: () => [process.execPath, FAKE_AGENT, fakes.dir], terminals: () => [] });
+  const engine = lifetime.open(join(root, "data"), { agentCommand: () => [process.execPath, FAKE_AGENT, fakes.dir], startAgentSession: fakeAgentSessions(fakes), toolProbe: privateAgentToolProbe(), terminals: () => [] });
   engine.schedule = () => {};
   await engine.waitUntilReady();
   const products: DeepMutable<Product>[] = await completeAll(["Shop", "API"].map(async (name): Promise<DeepMutable<Product>> => ({
-    id: name.toLowerCase(), name, repo: `local/${name.toLowerCase()}`, path: await makeProduct(join(root, name)),
+    id: name.toLowerCase(), name, repo: `local/${name.toLowerCase()}`, path: await makeProduct(join(root, name), { origin: "none" }),
     defaultBranch: "main", delivery: "local", tone: "blue", remoteRefused: "Local delivery only", checks: [],
   })));
   engine.s.products.push(...products);
@@ -37,10 +40,10 @@ async function fixture() {
   const task = engine.task(engine.addTask({ productId: first.id, title: "Keep both products together", backlog: true }))!;
   task.repositories = await completeAll(products.map(async (product): Promise<DeepMutable<TaskRepository>> => {
     const worktree = join(root, `${product.id}-work`), branch = "task-change";
-    await git(product.path!, "worktree", "add", "-qb", branch, worktree, "main");
-    const baseSha = await git(worktree, "rev-parse", "HEAD");
+    const baseSha = (await gitOps.head(product.path!))!;
+    await gitOps.ensureWorktree(product.path!, worktree, branch, baseSha);
     writeFileSync(join(worktree, "task-change.txt"), `${product.name}: accepted work\n`);
-    await git(worktree, "add", "."); await git(worktree, "commit", "-qm", "Improve the shared greeting");
+    await gitOps.commitChanges(worktree, "Improve the shared greeting");
     return {
       productId: product.id, delivery: "local", completedStages: ["build", "review"], preparation: "ready",
       branch, worktree, base: "main", baseSha,
@@ -123,7 +126,7 @@ describe.concurrent("runtime waits on a task across products", () => {
       expect(await f.effect(() => shipping.deliver(task, task.plan!.stages[2]!, signal))).toBe("stop");
       expect(task.state).toBe("done");
       expect(task.repositories!.every(work => !!work.landed)).toBe(true);
-      expect(await git(products[0]!.path!, "rev-parse", "main")).toBe(admitted);
+      expect(await gitOps.revParse(products[0]!.path!, "main")).toBe(admitted);
       expect(task.runtimeWait?.refreshPending).toBeUndefined();
       expect(task.rounds).toEqual({});
       expect(discoveries).toBe(0);

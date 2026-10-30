@@ -1978,7 +1978,8 @@
       "status": "reviewed",
       "from": "packages/engine/test/capacity-rejoin.test.ts",
       "splitFiles": [
-        "packages/engine/test/journeys/capacity/parallel-rejoin.test.ts"
+        "packages/engine/test/journeys/capacity/parallel-rejoin.test.ts",
+        "packages/orchestrator/test/orchestration/reviews/capacity-rejoin.test.ts"
       ],
       "layer": "journeys",
       "area": "capacity",
@@ -1991,6 +1992,15 @@
         "qualification": "capacity-semantic-focused",
         "source": "workstreams/capacity-semantic-next/handoff.json,90aba37b4c3763ece1b24ea9691fdf4b30bbaf5cd061ac7b6ee58d07d7dbe748",
         "scope": "C14/C15/C18 policy at actual portable owners; C13 native replacement-voter reopening and C365 genuine partial-ballot/saved-voter restart remain native; all other body/oracle variants retained."
+      },
+      "capacityGroupComposition": {
+        "owner": "TurnRecovery, ModelCapacity, profile selection, ParallelAdmissionGroup, ReviewReports and AgentWorkflow share canonical task, clock and live ownership registries.",
+        "nativeCasesTransferred": 5,
+        "portableCases": 6,
+        "nativeAnchors": "Eight parallel-rejoin bodies retain actual session, copy, input, restart and settlement evidence; capacity/recovery native cases remain unchanged.",
+        "observations": "Provider refusal/session references and copy references are supplied; native classification, reopen and prompt behavior remain boundary evidence.",
+        "evidence": "workstreams/fifth-capacity/oracle-map.json; workstreams/fifth-capacity-conversations/comparison.json",
+        "qualification": "Independent ownership/oracle source review and focused portable/native qualification; complete final-tree evidence remains separate."
       }
     },
     {
@@ -2126,7 +2136,13 @@
       "splitFiles": [
         "packages/engine/test/journeys/checks/failure-evidence.test.ts",
         "packages/engine/test/journeys/checks/hook-freshness.test.ts",
-        "packages/engine/test/journeys/checks/repair-episodes.test.ts"
+        "packages/engine/test/journeys/checks/repair-episodes.test.ts",
+        "packages/engine/test/contracts/checks/legacy-hook-evidence.test.ts",
+        "packages/engine/test/contracts/checks/hook-retry.test.ts",
+        "packages/orchestrator/test/orchestration/builds/completion.test.ts",
+        "packages/orchestrator/test/orchestration/checks/builder-returns.test.ts",
+        "packages/engine/test/contracts/recording/check-return-decisions.test.ts",
+        "packages/engine/test/contracts/checks/static-failure-retention.test.ts"
       ],
       "layer": "journeys",
       "area": "checks",
@@ -2509,7 +2525,8 @@
       "splitFiles": [
         "packages/engine/test/contracts/cleanup/working-copies.test.ts",
         "packages/engine/test/journeys/delivery/cleanup-history.test.ts",
-        "packages/engine/test/journeys/runtime/background-cleanup.test.ts"
+        "packages/engine/test/journeys/runtime/background-cleanup.test.ts",
+        "packages/orchestrator/test/orchestration/scheduling/admission-slots.test.ts"
       ],
       "layer": "contracts",
       "area": "runtime",
@@ -3129,7 +3146,8 @@
       "splitFiles": [
         "packages/core/test/rules/conversations/design-identity.test.ts",
         "packages/engine/test/journeys/conversations/design-resume.test.ts",
-        "packages/engine/test/contracts/conversations/scope-digests.test.ts"
+        "packages/engine/test/contracts/conversations/scope-digests.test.ts",
+        "packages/engine/test/orchestration/conversations/design-input-policy.test.ts"
       ],
       "layer": "rules",
       "area": "context",
@@ -3365,7 +3383,8 @@
       "from": "packages/engine/test/extra-validation-persistence.test.ts",
       "splitFiles": [
         "packages/engine/test/contracts/validation/ownership-persistence.test.ts",
-        "packages/engine/test/contracts/validation/save-failures.test.ts"
+        "packages/engine/test/contracts/validation/save-failures.test.ts",
+        "packages/orchestrator/test/orchestration/validation/execution.test.ts"
       ],
       "layer": "contracts",
       "area": "validation",
@@ -3400,7 +3419,8 @@
       "status": "reviewed",
       "from": "packages/engine/test/extra-validation-prerequisites.test.ts",
       "splitFiles": [
-        "packages/engine/test/contracts/validation/prerequisite-admission.test.ts"
+        "packages/engine/test/contracts/validation/prerequisite-admission.test.ts",
+        "packages/orchestrator/test/orchestration/validation/execution.test.ts"
       ],
       "layer": "contracts",
       "area": "validation",
@@ -3877,6 +3897,7 @@
       "splitFiles": [
         "packages/engine/test/journeys/guidance/review-guide-misses.test.ts",
         "packages/engine/test/contracts/guidance/review-guide-files.test.ts",
+        "packages/orchestrator/test/orchestration/instructions/guide-proposals.test.ts",
         "packages/core/test/rules/instructions/review-guide-text.test.ts"
       ],
       "layer": "journeys",
@@ -4034,7 +4055,8 @@
         "packages/orchestrator/test/orchestration/reviews/panel-workflow-permutations.test.ts",
         "packages/engine/test/contracts/storage/verifier-vote-recovery.test.ts",
         "packages/engine/test/contracts/agents/voter-cancellation.test.ts",
-        "packages/orchestrator/test/orchestration/reviews/verifier-admission.test.ts"
+        "packages/orchestrator/test/orchestration/reviews/verifier-admission.test.ts",
+        "packages/orchestrator/test/orchestration/reviews/phase-workflow.test.ts"
       ],
       "layer": "contracts",
       "area": "reviews",
@@ -4234,7 +4256,8 @@
       "status": "reviewed",
       "from": "packages/engine/test/live-messages.test.ts",
       "splitFiles": [
-        "packages/engine/test/journeys/progress/public-messages.test.ts"
+        "packages/engine/test/journeys/progress/public-messages.test.ts",
+        "packages/engine/test/orchestration/progress/public-messages.test.ts"
       ],
       "layer": "journeys",
       "area": "progress",
@@ -4311,6 +4334,7 @@
       "splitFiles": [
         "packages/engine/test/contracts/maintenance/queued-admission.test.ts",
         "packages/engine/test/journeys/maintenance/native-settings-and-changes.test.ts",
+        "packages/orchestrator/test/orchestration/runtime/maintenance-settings.test.ts",
         "packages/core/test/rules/plans/maintenance-exclusion.test.ts"
       ],
       "layer": "contracts",
@@ -4460,14 +4484,12 @@
       "from": "packages/engine/test/participant-conversation.test.ts",
       "splitFiles": [
         "packages/engine/test/contracts/repositories/held-review-cleanup.test.ts",
-        "packages/engine/test/contracts/agents/seat-start-fallback.test.ts",
         "packages/engine/test/contracts/agents/reviewer-seat-continuity.test.ts",
-        "packages/engine/test/contracts/agents/reviewer-seat-invalidation.test.ts",
         "packages/orchestrator/test/orchestration/profiles/saved-review-readiness.test.ts",
-        "packages/engine/test/contracts/agents/saved-seat-availability.test.ts",
-        "packages/engine/test/contracts/agents/reviewer-reopen-cap.test.ts",
         "packages/engine/test/contracts/repositories/conflict-seat-reasons.test.ts",
-        "packages/orchestrator/test/orchestration/profiles/reviewer-seat-invalidation.test.ts"
+        "packages/orchestrator/test/orchestration/profiles/reviewer-seat-invalidation.test.ts",
+        "packages/engine/test/orchestration/conversations/reviewer-input-policy.test.ts",
+        "packages/engine/test/orchestration/sources/conflict-seat-reasons.test.ts"
       ],
       "layer": "contracts",
       "area": "repositories",
@@ -4478,7 +4500,7 @@
         "qualification": "Author normal-worker native260/0/61owners/33.90s plus v2affected4/0/3.52s; lower36 cases. No resource count claim. Final integrated root qualification pending; required full/resource/platform checks remain due.",
         "rootQualification": "Final root source:277native/support cases0fail0skip,3354expectations,64exactowners36.81s; core3/controller16 pass,296total. All270original identities retained with26newcontrols. All9types/conventions pass. Focused only; complete suite/resources/platforms remain due."
       },
-      "controllerTransfer": "Policy permutations also run through actual profile, review, acceptance and delivery controllers with explicit modeled effects. Native source/version, transport, restart and cleanup boundaries retain real adapters; the paired case/oracle maps identify each transferred declaration."
+      "controllerTransfer": "Reviewer seat selection, return eligibility, invalidation, reopen refusal and capacity policy use actual ProfileSelection, TurnRecovery, ReviewConversations, ParticipantInputs and shared context/prompt producers. Source conflict seat policies use SourceConflicts and the same input owners. Native same-round settlement, source ancestry, context files, transport, usage recovery, restart and cleanup retain their boundary cases. Exact transferred declarations and assertions are mapped in task evidence."
     },
     {
       "file": "packages/engine/test/contracts/context/phase-notes.test.ts",
@@ -4839,7 +4861,10 @@
       "status": "reviewed",
       "from": "packages/engine/test/readiness-recheck.test.ts",
       "splitFiles": [
-        "packages/engine/test/journeys/readiness/saved-participants.test.ts"
+        "packages/engine/test/journeys/readiness/saved-participants.test.ts",
+        "packages/orchestrator/test/orchestration/readiness/builder-admission.test.ts",
+        "packages/orchestrator/test/orchestration/readiness/participant-groups.test.ts",
+        "packages/orchestrator/test/orchestration/readiness/participant-waits.test.ts"
       ],
       "layer": "journeys",
       "area": "readiness",
@@ -4858,7 +4883,8 @@
       "from": "packages/engine/test/recovery.test.ts",
       "splitFiles": [
         "packages/engine/test/journeys/delivery/interrupted-publication.test.ts",
-        "packages/engine/test/contracts/delivery/queued-publication-cancel.test.ts"
+        "packages/engine/test/contracts/delivery/queued-publication-cancel.test.ts",
+        "packages/orchestrator/test/orchestration/delivery/recovery-family.test.ts"
       ],
       "layer": "journeys",
       "area": "delivery",
@@ -4866,6 +4892,11 @@
       "validation": {
         "artifact": "workstreams/remaining-delivery-next/{case-audit.json,source-parity.json,self-review.md,root-parity/source-parity.json,root-audit/case-audit.json,root-qualification.json}",
         "rootQualification": "Final integrated source:259native0fail0skip/26exactfiles/2431consoleexpectations51.084s; core6/controller10pass,275total. All263original runtime identities retained with12newcontrols. All9typespass. Focused only; full/resource/platform qualification remains due."
+      },
+      "deliveryRecoveryTransfer": {
+        "owner": "packages/orchestrator/test/orchestration/delivery/recovery-family.test.ts",
+        "controller": "DeliveryRecovery + DeliveryMonitor, composed with actual DeliveryWorkflow and core dependent rules",
+        "preservation": "Nine native runtime rows transfer policy to consumed scripted observations. Native interrupted publication retains actual transport/stop/restart/ref facts; cancelled lost-answer PR anchor now retains column and timeline assertions. Native legacy tag refusal now explicitly proves the reopened approval gate before publishing. Shared API/history/wait observations remain in contracts/coordination/shared-delivery.test.ts. Native GitHub factory controls retain duplicate-create exists observations."
       }
     },
     {
@@ -5033,12 +5064,18 @@
         "packages/orchestrator/test/orchestration/delivery/release-family.test.ts",
         "packages/orchestrator/test/orchestration/reviews/shared-ownership.test.ts",
         "packages/core/test/rules/repositories/ownership.test.ts",
-        "packages/orchestrator/test/orchestration/delivery/release-preview-family.test.ts"
+        "packages/orchestrator/test/orchestration/delivery/release-preview-family.test.ts",
+        "packages/orchestrator/test/orchestration/delivery/recovery-family.test.ts"
       ],
       "layer": "journeys",
       "area": "repositories",
       "reviewedCurrentOriginalDeclarations": 40,
-      "controllerTransfer": "Policy permutations also run through actual profile, review, acceptance and delivery controllers with explicit modeled effects. Native source/version, transport, restart and cleanup boundaries retain real adapters; the paired case/oracle maps identify each transferred declaration."
+      "controllerTransfer": "Policy permutations also run through actual profile, review, acceptance and delivery controllers with explicit modeled effects. Native source/version, transport, restart and cleanup boundaries retain real adapters; the paired case/oracle maps identify each transferred declaration.",
+      "deliveryRecoveryTransfer": {
+        "owner": "packages/orchestrator/test/orchestration/delivery/recovery-family.test.ts",
+        "controller": "DeliveryRecovery + DeliveryMonitor, composed with actual DeliveryWorkflow and core dependent rules",
+        "preservation": "Nine native runtime rows transfer policy to consumed scripted observations. Native interrupted publication retains actual transport/stop/restart/ref facts; cancelled lost-answer PR anchor now retains column and timeline assertions. Native legacy tag refusal now explicitly proves the reopened approval gate before publishing. Shared API/history/wait observations remain in contracts/coordination/shared-delivery.test.ts. Native GitHub factory controls retain duplicate-create exists observations."
+      }
     },
     {
       "file": "packages/engine/test/contracts/context/shared-acceptance-trees.test.ts",
@@ -5084,10 +5121,10 @@
         "packages/orchestrator/test/rules/repositories/scopes.test.ts",
         "packages/engine/test/contracts/checkpoints/shared-delivery.test.ts",
         "packages/engine/test/contracts/delivery/release-preparation.test.ts",
-        "packages/engine/test/contracts/delivery/shared-confirmation.test.ts",
         "packages/engine/test/contracts/guidance/shared-lessons.test.ts",
         "packages/engine/test/contracts/checks/shared-episodes.test.ts",
-        "packages/core/test/rules/repositories/ownership.test.ts"
+        "packages/core/test/rules/repositories/ownership.test.ts",
+        "packages/orchestrator/test/orchestration/delivery/recovery-family.test.ts"
       ],
       "layer": "contracts",
       "area": "repositories",
@@ -5097,6 +5134,11 @@
         "preservation": "119 current-original runtime names and 725 matcher sites across both originals retained; ten new controls separate. All baseline metadata and earlier migrated-case records retained.",
         "qualification": "Root integrated native118pass/0fail/25files/16.91s plus9core and2controller cases; all9types/conventions pass. Full combined qualification pending.",
         "fullQualification": "97f02a67"
+      },
+      "deliveryRecoveryTransfer": {
+        "owner": "packages/orchestrator/test/orchestration/delivery/recovery-family.test.ts",
+        "controller": "DeliveryRecovery + DeliveryMonitor, composed with actual DeliveryWorkflow and core dependent rules",
+        "preservation": "Nine native runtime rows transfer policy to consumed scripted observations. Native interrupted publication retains actual transport/stop/restart/ref facts; cancelled lost-answer PR anchor now retains column and timeline assertions. Native legacy tag refusal now explicitly proves the reopened approval gate before publishing. Shared API/history/wait observations remain in contracts/coordination/shared-delivery.test.ts. Native GitHub factory controls retain duplicate-create exists observations."
       }
     },
     {
@@ -5177,7 +5219,9 @@
         "packages/engine/test/journeys/conversations/reviewer-conflicts.test.ts",
         "packages/engine/test/contracts/conversations/scope-digests.test.ts",
         "packages/engine/test/contracts/context/reviewer-inputs.test.ts",
-        "packages/engine/test/contracts/agents/reviewer-input-fallback.test.ts"
+        "packages/engine/test/contracts/context/continued-packets.test.ts",
+        "packages/engine/test/orchestration/conversations/reviewer-input-policy.test.ts",
+        "packages/orchestrator/test/orchestration/reviews/conversation-continuation.test.ts"
       ],
       "layer": "rules",
       "area": "context",
@@ -5204,6 +5248,20 @@
           "noObserverGaps": true
         },
         "limits": "Focused source-bound observations; current full-suite94099Git remains the last measured integrated source. Final full/platform/resource qualification remains required."
+      },
+      "conversationPolicyMigration": {
+        "owner": "ReviewConversations with profile selection, source conflicts and explicit packet/Git observations",
+        "nativeCasesTransferred": 6,
+        "portableCases": 12,
+        "evidence": "workstreams/fourth-controller-migrations/review-conversation-transfer.json",
+        "qualification": "Focused native and portable checks; current complete source qualification remains separate."
+      },
+      "reviewFixtureProbeRecipe": {
+        "fixture": "packages/engine/test/fixtures/context-stage.ts reviewRun",
+        "scope": "Explicit calibrated private tool observations replace unrelated startup probes; GH remains unknown with its original detail. Real checkTools recording remains; nativeProbes opts into native probes.",
+        "nativeAnchors": "Native readiness/authentication, actual provider reopen, current inputs, Git comparisons and restart assertions remain.",
+        "evidence": "workstreams/fifth-capacity-conversations/comparison.json",
+        "qualification": "Focused evidence only; complete final-tree qualification remains separate."
       }
     },
     {
@@ -5399,7 +5457,8 @@
         "packages/core/test/rules/reviews/finding-count.test.ts",
         "packages/core/test/rules/reviews/builder-answers.test.ts",
         "packages/orchestrator/test/orchestration/reviews/finding-repairs.test.ts",
-        "packages/engine/test/rules/agents/repeated-finding-prompt.test.ts"
+        "packages/engine/test/rules/agents/repeated-finding-prompt.test.ts",
+        "packages/orchestrator/test/orchestration/reviews/phase-workflow.test.ts"
       ],
       "layer": "contracts",
       "area": "storage",
@@ -5583,7 +5642,8 @@
       "status": "reviewed",
       "from": "packages/engine/test/runtime-wait-partial-recovery.test.ts",
       "splitFiles": [
-        "packages/engine/test/journeys/recovery/partial-builder.test.ts"
+        "packages/engine/test/journeys/recovery/partial-builder.test.ts",
+        "packages/orchestrator/test/orchestration/runtime/partial-recovery.test.ts"
       ],
       "layer": "journeys",
       "area": "runtime",
@@ -5653,11 +5713,12 @@
       "status": "reviewed",
       "from": "packages/engine/test/runtime-wait-refresh.test.ts",
       "splitFiles": [
-        "packages/engine/test/contracts/recovery/shared-source.test.ts"
+        "packages/engine/test/contracts/recovery/shared-source.test.ts",
+        "packages/orchestrator/test/orchestration/sources/conflict-repairs.test.ts"
       ],
       "layer": "contracts",
       "area": "runtime",
-      "review": "Every original case/variant/assertion audited against actual ownership. Portable drain/idle/screen and typed process policies separate from real process/browser/Git/SQLite/restart contracts. Native shutdown actors have independent leases and no self-expiry/PID-authority fallback; browser startup retains ownership until handle and pipes close. Method receivers and concurrent wrapper corrected during review. Required fresh/resumed real Chromium contract now runs on every supported OS; supplemental opt-ins remain explicit.",
+      "review": "Every original case/variant/assertion audited against actual ownership. Portable drain/idle/screen and typed process policies separate from real process/browser/Git/SQLite/restart contracts. Native shutdown actors have independent leases and no self-expiry/PID-authority fallback; browser startup retains ownership until handle and pipes close. Method receivers and concurrent wrapper corrected during review. Required fresh/resumed real Chromium contract now runs on every supported OS; supplemental opt-ins remain explicit. Source-conflict policy now uses the actual SourceConflicts, WaitSourceRefresh, workspace selection, AgentWorkflow and WorkCompletion owners. Native conflict markers, rendered inputs, saved sessions, restart and delivered refs remain in the retained source contracts; the first-review assertions join the first-Tester native control, and admitted-candidate ref assertions join the existing owned restart control. The ordinary shared findings repair and round-four restart remain native anchors.",
       "reviewedCurrentOriginalRegistrations": 5,
       "reviewedCurrentOriginalAssertionSites": 40,
       "reviewedCurrentOriginalRuntimeCases": 6,
@@ -5699,11 +5760,12 @@
       "status": "reviewed",
       "from": "packages/engine/test/runtime-wait-repair.test.ts",
       "splitFiles": [
-        "packages/engine/test/journeys/recovery/repair-source.test.ts"
+        "packages/engine/test/journeys/recovery/repair-source.test.ts",
+        "packages/orchestrator/test/orchestration/sources/conflict-repairs.test.ts"
       ],
       "layer": "journeys",
       "area": "runtime",
-      "review": "Every original case/variant/assertion audited against actual ownership. Portable drain/idle/screen and typed process policies separate from real process/browser/Git/SQLite/restart contracts. Native shutdown actors have independent leases and no self-expiry/PID-authority fallback; browser startup retains ownership until handle and pipes close. Method receivers and concurrent wrapper corrected during review. Required fresh/resumed real Chromium contract now runs on every supported OS; supplemental opt-ins remain explicit.",
+      "review": "Every original case/variant/assertion audited against actual ownership. Portable drain/idle/screen and typed process policies separate from real process/browser/Git/SQLite/restart contracts. Native shutdown actors have independent leases and no self-expiry/PID-authority fallback; browser startup retains ownership until handle and pipes close. Method receivers and concurrent wrapper corrected during review. Required fresh/resumed real Chromium contract now runs on every supported OS; supplemental opt-ins remain explicit. Source-conflict policy now uses the actual SourceConflicts, WaitSourceRefresh, workspace selection, AgentWorkflow and WorkCompletion owners. Native conflict markers, rendered inputs, saved sessions, restart and delivered refs remain in the retained source contracts; the first-review assertions join the first-Tester native control, and admitted-candidate ref assertions join the existing owned restart control. The ordinary shared findings repair and round-four restart remain native anchors.",
       "reviewedCurrentOriginalRegistrations": 5,
       "reviewedCurrentOriginalAssertionSites": 75,
       "reviewedCurrentOriginalRuntimeCases": 12,
@@ -5885,7 +5947,8 @@
       "status": "reviewed",
       "from": "packages/engine/test/screen-review.test.ts",
       "splitFiles": [
-        "packages/engine/test/journeys/review/screen-copies.test.ts"
+        "packages/engine/test/journeys/review/screen-copies.test.ts",
+        "packages/orchestrator/test/orchestration/runtime/screen-workflow.test.ts"
       ],
       "layer": "journeys",
       "area": "runtime",
@@ -5898,6 +5961,12 @@
         "preservation": "All295original runtime name/context/outcome pairs retained, including3unchanged explicit opt-in skips; all201registrations (200literal/template+1conditional),1637matcher sites retained.18additional runtime controls separate.",
         "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending.",
         "fullQualification": "97f02a67"
+      },
+      "screenPolicyMigration": {
+        "owner": "ScreenArbitration, ParallelAdmissionGroup and AgentWorkflow",
+        "nativeCasesTransferred": 7,
+        "evidence": "workstreams/fourth-screen-boundaries/oracle-map.json",
+        "qualification": "Focused portable and retained native controls; actual transport, browser, copies and restart remain native."
       }
     },
     {
@@ -5909,7 +5978,8 @@
       "partialReview": "The hour-expiry decision moved to the actual portable ScreenArbitration with a controlled clock; a real native-clock contract remains. All other native case bytes and assertions are unchanged. Whole-file audit remains pending; see screen-7c6d60ae/moved-hour-case.json.",
       "from": "packages/engine/test/screen.test.ts",
       "splitFiles": [
-        "packages/engine/test/journeys/runtime/screen-sessions.test.ts"
+        "packages/engine/test/journeys/runtime/screen-sessions.test.ts",
+        "packages/orchestrator/test/orchestration/runtime/screen-workflow.test.ts"
       ],
       "layer": "journeys",
       "area": "runtime",
@@ -5922,6 +5992,12 @@
         "preservation": "All295original runtime name/context/outcome pairs retained, including3unchanged explicit opt-in skips; all201registrations (200literal/template+1conditional),1637matcher sites retained.18additional runtime controls separate.",
         "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending.",
         "fullQualification": "97f02a67"
+      },
+      "screenPolicyMigration": {
+        "owner": "ScreenArbitration, ParallelAdmissionGroup and AgentWorkflow",
+        "nativeCasesTransferred": 3,
+        "evidence": "workstreams/fourth-screen-boundaries/oracle-map.json",
+        "qualification": "Focused portable and retained native controls; actual transport, browser, copies and restart remain native."
       }
     },
     {
@@ -6274,7 +6350,9 @@
         "packages/engine/test/journeys/sources/check-recovery.test.ts",
         "packages/engine/test/contracts/sources/cancellation.test.ts",
         "packages/engine/test/journeys/sources/conflicts.test.ts",
-        "packages/orchestrator/test/orchestration/sources/approved-permutations.test.ts"
+        "packages/orchestrator/test/orchestration/sources/approved-permutations.test.ts",
+        "packages/orchestrator/test/orchestration/sources/plan-admission.test.ts",
+        "packages/orchestrator/test/orchestration/sources/updates.test.ts"
       ],
       "layer": "orchestration",
       "area": "context",
@@ -6685,7 +6763,9 @@
       "splitFiles": [
         "packages/engine/test/journeys/repositories/branch-updates.test.ts",
         "packages/engine/test/contracts/agents/builder-conversation.test.ts",
-        "packages/engine/test/contracts/checks/restoration-before-delivery.test.ts"
+        "packages/engine/test/contracts/checks/restoration-before-delivery.test.ts",
+        "packages/orchestrator/test/orchestration/sources/conflict-repairs.test.ts",
+        "packages/orchestrator/test/orchestration/sources/updates.test.ts"
       ],
       "boundaryCostSlice": {
         "originalCases": 15,
@@ -6700,7 +6780,7 @@
       },
       "layer": "journeys",
       "area": "repositories",
-      "review": "Whole-file/case audit retained original declarations, matcher sites, helpers, platform variants and deadlines. Actual ordering/admission/learning-offer controllers and text rules moved to portable owners; real Git, source identity, check evidence, SQLite, ACP/restart, filesystem safety and publishing remain native. Root independently verified all frozen hashes, 181 per-case declaration groups/1398 matcher sites and34 exact source-body comparisons, including8 explicit assertion aliases. Setup-failure and restart cleanup ownership reviewed; uncertain cleanup retains private files.",
+      "review": "Whole-file/case audit retained original declarations, matcher sites, helpers, platform variants and deadlines. Actual ordering/admission/learning-offer controllers and text rules moved to portable owners; real Git, source identity, check evidence, SQLite, ACP/restart, filesystem safety and publishing remain native. Root independently verified all frozen hashes, 181 per-case declaration groups/1398 matcher sites and34 exact source-body comparisons, including8 explicit assertion aliases. Setup-failure and restart cleanup ownership reviewed; uncertain cleanup retains private files. Source-conflict policy now uses the actual SourceConflicts, WaitSourceRefresh, workspace selection, AgentWorkflow and WorkCompletion owners. Native conflict markers, rendered inputs, saved sessions, restart and delivered refs remain in the retained source contracts; the first-review assertions join the first-Tester native control, and admitted-candidate ref assertions join the existing owned restart control. The ordinary shared findings repair and round-four restart remain native anchors.",
       "validation": {
         "artifact": "workstreams/remaining-delivery-next/{case-audit.json,source-parity.json,self-review.md,root-parity/source-parity.json,root-audit/case-audit.json,root-qualification.json}",
         "rootQualification": "Final integrated source:259native0fail0skip/26exactfiles/2431consoleexpectations51.084s; core6/controller10pass,275total. All263original runtime identities retained with12newcontrols. All9typespass. Focused only; full/resource/platform qualification remains due."
@@ -6722,8 +6802,14 @@
       "layer": "journeys",
       "area": "recovery",
       "splitFiles": [
-        "packages/engine/test/journeys/recovery/legacy-delivery.test.ts"
-      ]
+        "packages/engine/test/journeys/recovery/legacy-delivery.test.ts",
+        "packages/orchestrator/test/orchestration/delivery/recovery-family.test.ts"
+      ],
+      "deliveryRecoveryTransfer": {
+        "owner": "packages/orchestrator/test/orchestration/delivery/recovery-family.test.ts",
+        "controller": "DeliveryRecovery + DeliveryMonitor, composed with actual DeliveryWorkflow and core dependent rules",
+        "preservation": "Nine native runtime rows transfer policy to consumed scripted observations. Native interrupted publication retains actual transport/stop/restart/ref facts; cancelled lost-answer PR anchor now retains column and timeline assertions. Native legacy tag refusal now explicitly proves the reopened approval gate before publishing. Shared API/history/wait observations remain in contracts/coordination/shared-delivery.test.ts. Native GitHub factory controls retain duplicate-create exists observations."
+      }
     },
     {
       "file": "packages/storage/test/contracts/sqlite/usage-history.test.ts",
@@ -6769,7 +6855,8 @@
         "packages/engine/test/journeys/usage/live-readings.test.ts",
         "packages/engine/test/journeys/usage/attribution.test.ts",
         "packages/agent-runtime/test/rules/providers/refusals.test.ts",
-        "packages/engine/test/rules/usage/failure-reason.test.ts"
+        "packages/engine/test/rules/usage/failure-reason.test.ts",
+        "packages/orchestrator/test/orchestration/usage/claude-allowances.test.ts"
       ],
       "layer": "journeys",
       "area": "usage",
@@ -8197,5 +8284,14 @@
     "report": ".test-results/2026-10-26T07-46-49-892Z-803b0270/results.json",
     "verifiedRaw": "full-8775564d/failed-run-verification.json",
     "correction": "Engine2325passed; all37earlier failing raw groups now pass. Six browser failures report absent locked Chromium1247. Documented setup restored the build, then three browser owners passed33cases/3existing skips. Focused provisioning is not a complete qualification; cause of earlier cache absence remains unproven. Exact artifacts in full-8775564d; failed993report retained."
+  },
+  "worldAccountProbeComposition": {
+    "fixture": "packages/engine/test/fixtures/world-tool-probe.ts",
+    "contract": "packages/engine/test/contracts/fixtures/world-tool-probes.test.ts",
+    "owner": "Explicit private GitHub dispatcher observations use the same production readiness decoder; all other probe requests and cancellation/cleanup callbacks delegate to NativeToolProbe.",
+    "nativeOptIns": "Native GitHub or probes options, explicit gh/toolProbe/toolCheckTimeoutMs properties (including undefined), and app-mode child fixtures preserve native probing.",
+    "controls": "Ready, logged-out, offline and recovery parity; exact auth counters and one CLI launch versus zero; absent/inconclusive non-GH forwarding; aborted observation and explicit override controls.",
+    "evidence": "workstreams/fifth-world-probes/scope.json; workstreams/fifth-world-probes/independent-comparison.json",
+    "qualification": "Focused boundary27 and matched maintenance39 pass; no whole-suite qualification claim. Matched cohort saves only9 observed launches and has no wall-time improvement; Git variation is not attributed to this overlay."
   }
 }

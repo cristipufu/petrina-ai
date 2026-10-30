@@ -36,6 +36,7 @@ it("reduces unchanged finding records only within an intact native conversation 
     const changed = { ...unchanged, id: "changed", text: "A later finding", productIds: ["api"], evidence: "Original proof" };
     const sections = (findings: readonly import("@petrina/core").Finding[]) => [{ title: "Findings so far (confirm or dispute by id)", body: formatFindings(findings) }];
     const first = await builderContext(root, task, role, "native-session", sections([unchanged, changed]), undefined, { findings: [unchanged, changed] });
+    expect(first.sections.some(section => section.body.includes(unchanged.text))).toBe(true);
     const updated = { ...changed, productIds: ["web"], evidence: "Changed proof", answer: { fixed: true, text: "Builder response", at: 2 }, votes: [{ by: "opus-high", toolId: "claude-code", verdict: "real" as const, reason: "Fresh proof" }], disputes: [{ by: "sol-high", reason: "Counterexample", at: 2 }] };
     const current = [unchanged, updated];
     const next = await builderContext(root, task, role, "native-session", sections(current), first.snapshot, { findings: current });

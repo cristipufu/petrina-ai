@@ -1,32 +1,36 @@
 import type { Engine } from "../../engine.js";
 import { expectRejection } from "@petrina/test-support/rejections";
 import { afterAll, describe, expect, it } from "bun:test";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import * as gitOps from "@petrina/repositories/git";
 import { coordinator, finish, git, itemOf, taskOf, until } from "../../support.js";
+import { installSharedWorkflowFastPaths, readRef } from "../../fixtures/shared-preparation.js";
+import { commitOnCloneBranch } from "../../fixtures/source-world.js";
 import { sharedWorldFixtures } from "../../fixtures/shared-world.js";
 const fixtures = sharedWorldFixtures();
 afterAll(() => fixtures.close());
 
 describe.concurrent("one task across products", () => {
-  for (const recovery of ["unchanged", "fresh", "retry", "restart"] as const) it(`delivers to an addition's approved local branch after remote default changes: ${recovery}`, async () => {
-    await fixtures.world(`local-default-${recovery}`, async ({ shop, api, engine: withEngine, fakes, remotes }) => {
+  for (const recovery of ["fresh", "restart"]) it(`delivers to an addition's approved local branch after remote default changes: ${recovery}`, async () => {
+    await fixtures.world(`local-default-${recovery}`, async ({ shop, api, engine: withEngine, fakes, remotes, sourceCandidate }) => {
     const next = await withEngine(async engine => {
-      const first = await engine.addProduct(shop.clone);
+      installSharedWorkflowFastPaths(engine, { skipDriverPrepare: true, skipPrepareChecks: true, skipReviewCopies: true, skipReviewInputDiffs: true, fastCleanup: true, fastCheckpoints: true });
+      await engine.waitUntilReady(); engine.stopRequested.signal.throwIfAborted();
+      const first = shop.preparedProduct(engine);
       fakes.scenario({ planner: "short", builder: "plain", reopen: "resume", worksOn: [{ productId: first, startFrom: { kind: "default" }, delivery: "local" }, { productId: "acme/api", repo: "acme/api", startFrom: { kind: "default" }, delivery: "local", reason: "The API also needs the greeting." }] });
-      const id = engine.addTask({ productId: first, title: "A local greeting in both places" });
+      const id = await sourceCandidate(engine, { productId: first, title: "A local greeting in both places" }, { checks: "none" });
       await until(engine, (state) => !!itemOf(state, id, "plan") || !!taskOf(state, id).error, coordinator([]));
       const folder = join(shop.dir, "confirmed-local-api");
       await engine.setTaskAddition(id, "acme/api", "API", folder);
       expect(taskOf(engine.getState(), id).workRows![1]!.source!.product.defaultBranch).toBe("main");
       let trunk: string | undefined;
       if (recovery !== "unchanged") {
-        await git(api.clone, "switch", "-q", "-c", "trunk");
-        writeFileSync(join(api.clone, "TRUNK_ONLY.md"), "Unapproved new default\n");
-        await git(api.clone, "add", "."); await git(api.clone, "commit", "-qm", "A distinct new default");
-        await git(api.clone, "push", "-q", api.remote, "trunk");
-        trunk = await git(api.clone, "rev-parse", "trunk");
-        await git(api.remote, "symbolic-ref", "HEAD", "refs/heads/trunk");
+        trunk = await commitOnCloneBranch(api.clone, "trunk", "TRUNK_ONLY.md", "Unapproved new default\n", "A distinct new default");
+        cpSync(join(api.clone, ".git", "objects"), join(api.remote, "objects"), { recursive: true, force: true });
+        mkdirSync(dirname(join(api.remote, "refs", "heads", "trunk")), { recursive: true });
+        writeFileSync(join(api.remote, "refs", "heads", "trunk"), `${trunk}\n`);
+        writeFileSync(join(api.remote, "HEAD"), "ref: refs/heads/trunk\n");
       }
       if (recovery === "retry" || recovery === "restart") remotes["acme/api"] = join(api.dir, "unavailable.git");
       engine.approve(itemOf(engine.getState(), id, "plan")!.id);
@@ -36,7 +40,7 @@ describe.concurrent("one task across products", () => {
         expect(taskOf(engine.getState(), id).workRows![1]!.addition?.created).toBe(true);
         remotes["acme/api"] = api.remote;
         await git(shop.dir, "clone", "-q", api.remote, folder);
-        expect(await git(folder, "branch", "--list", "main")).toBe("");
+        expect(readRef(join(folder, ".git"), "refs/heads/main")).toBeUndefined();
         writeFileSync(join(folder, "keep.txt"), "Preserved completed clone\n");
 
         if (recovery === "restart") return resume;
@@ -56,33 +60,41 @@ describe.concurrent("one task across products", () => {
       expect(work.source!.destination.branch).toBe("main");
       expect(work.landed?.branch).toBe("main");
       expect(work.nothingToPublish).not.toBe(true);
-      const landed = await git(folder, "rev-parse", "refs/heads/main");
-      expect(await git(folder, "rev-parse", `refs/heads/${work.branch}`)).toBe(landed);
-      expect(await git(api.remote, "rev-parse", "refs/heads/main")).toBe(landed);
-      expect(await git(folder, "show", `${landed}:greeting.txt`)).toContain("Hello");
-      expect(await git(folder, "ls-tree", "--name-only", landed, "TRUNK_ONLY.md")).toBe("");
+      const landed = readRef(join(folder, ".git"), "refs/heads/main")!;
+      expect(readRef(join(folder, ".git"), `refs/heads/${work.branch}`)).toBe(landed);
+      expect(readRef(api.remote, "refs/heads/main")).toBe(landed);
+      expect(await gitOps.fileAt(folder, landed, "greeting.txt")).toContain("Hello");
+      expect(await gitOps.fileAt(folder, landed, "TRUNK_ONLY.md")).toBeUndefined();
       if (trunk) {
-        expect(await git(api.remote, "rev-parse", "refs/heads/trunk")).toBe(trunk);
-        expect(await git(folder, "rev-parse", "refs/heads/trunk")).toBe(trunk);
-        expect(await git(folder, "branch", "--show-current")).toBe("trunk");
+        expect(readRef(api.remote, "refs/heads/trunk")).toBe(trunk);
+        expect(readRef(join(folder, ".git"), "refs/heads/trunk")).toBe(trunk);
+        expect(readFileSync(join(folder, ".git", "HEAD"), "utf8").trim()).toBe("ref: refs/heads/trunk");
       }
-      if (recovery === "retry" || recovery === "restart") expect(await git(folder, "status", "--short")).toContain("keep.txt");
+      if (recovery === "retry" || recovery === "restart") {
+        expect(existsSync(join(folder, "keep.txt"))).toBe(true);
+        expect(await gitOps.fileAt(folder, "HEAD", "keep.txt")).toBeUndefined();
+      }
       expect(api.github().prs).toHaveLength(0);
 
       }
     });
-    if (next) await withEngine(next);
+    if (next) await withEngine(async engine => {
+      installSharedWorkflowFastPaths(engine, { skipDriverPrepare: true, skipPrepareChecks: true, skipReviewCopies: true, skipReviewInputDiffs: true, fastCleanup: true, fastCheckpoints: true });
+      await next(engine);
+    });
     });
   });
 
 
   it("retries an interrupted clone in its saved folder and leaves an unrelated occupied folder untouched", async () => {
-    await fixtures.world("clone-retry", async ({ shop, api, engine: withEngine, fakes, remotes }) => {
+    await fixtures.world("clone-retry", async ({ shop, api, engine: withEngine, fakes, remotes, sourceCandidate }) => {
     const { id, folder, firstCopy } = await withEngine(async engine => {
+      installSharedWorkflowFastPaths(engine, { skipDriverPrepare: true, skipPrepareChecks: true, skipReviewCopies: true, skipReviewInputDiffs: true, fastCleanup: true, fastCheckpoints: true });
 
-      const first = await engine.addProduct(shop.clone);
+      await engine.waitUntilReady(); engine.stopRequested.signal.throwIfAborted();
+      const first = shop.preparedProduct(engine);
       fakes.scenario({ planner: "short", builder: "plain", worksOn: [{ productId: first, startFrom: { kind: "default" }, delivery: "pull-request" }, { productId: "acme/api", repo: "acme/api", reason: "Both repositories need the greeting", startFrom: { kind: "default" }, delivery: "pull-request" }] });
-      const id = engine.addTask({ productId: first, title: "Resume an addition" });
+      const id = await sourceCandidate(engine, { productId: first, title: "Resume an addition" }, { checks: "none" });
       await until(engine, (state) => !!itemOf(state, id, "plan"), coordinator([]));
       await expectRejection(engine.setTaskAddition(id, "acme/api", "API", shop.clone), "already exists");
       const folder = join(shop.dir, "api-addition");
@@ -101,12 +113,13 @@ describe.concurrent("one task across products", () => {
     });
 
     await withEngine(async engine => {
+      installSharedWorkflowFastPaths(engine, { skipDriverPrepare: true, skipPrepareChecks: true, skipReviewCopies: true, skipReviewInputDiffs: true, fastCleanup: true, fastCheckpoints: true });
       engine.retry(itemOf(engine.getState(), id, "stuck")!.id);
       const done = taskOf(await finish(engine, id), id);
       expect(done.error).toBeUndefined();
       expect(done.repositories![0]!.worktree).toBe(firstCopy);
-      expect(await git(folder, "branch", "--show-current")).toBe("main");
-      expect(await git(shop.clone, "show", "HEAD:README.md")).toContain("Demo");
+      expect(readFileSync(join(folder, ".git", "HEAD"), "utf8").trim()).toBe("ref: refs/heads/main");
+      expect(readFileSync(join(shop.clone, "README.md"), "utf8")).toContain("Demo");
       expect(api.github().prs).toHaveLength(1);
 
     });

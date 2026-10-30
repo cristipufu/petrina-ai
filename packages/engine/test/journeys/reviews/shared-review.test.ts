@@ -4,9 +4,10 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { ReviewResult } from "../../../src/roles.js";
-import { coordinator, finish, git, headNow, itemOf, taskOf, until } from "../../support.js";
+import { coordinator, git, headNow, itemOf, taskOf, until } from "../../support.js";
 import { sharedWorldFixtures } from "../../fixtures/shared-world.js";
 import { preparedSharedReview } from "../../fixtures/prepared-shared-review.js";
+import { installSharedWorkflowFastPaths } from "../../fixtures/shared-preparation.js";
 const fixtures = sharedWorldFixtures();
 afterAll(() => fixtures.close());
 
@@ -15,9 +16,9 @@ describe.concurrent("one task across products", () => {
     await fixtures.world("finding-owner-restart", async ({ shop, api, engine: withEngine, fakes }) => {
 
     const { second, id, findingId, report } = await withEngine(async engine => {
-
+      installSharedWorkflowFastPaths(engine, { skipDriverPrepare: true, skipUpToDate: true, skipPrepareChecks: true, skipReviewCopies: true, skipReviewInputDiffs: true, fastCheckCapture: true, fastCleanup: true, fastCheckpoints: true });
       const first = await shop.preparedProduct(engine), second = await api.preparedProduct(engine);
-      const id = await preparedSharedReview(engine, [first, second], "Keep routing the reported API repair", false);
+      const id = await preparedSharedReview(engine, [first, second], "Keep routing the reported API repair", false, { checks: "none" });
       await until(engine, (state) => !!itemOf(state, id, "delivery") || !!taskOf(state, id).error, coordinator(["plan", "design"]));
       engine.setPoolPaused(true);
       const task = engine.task(id)!;
@@ -36,6 +37,7 @@ describe.concurrent("one task across products", () => {
     });
 
     await withEngine(async engine => {
+      installSharedWorkflowFastPaths(engine, { skipDriverPrepare: true, skipUpToDate: true, skipPrepareChecks: true, skipReviewCopies: true, skipReviewInputDiffs: true, fastCheckCapture: true, fastCleanup: true, fastCheckpoints: true });
       const restored = engine.task(id)!;
       expect(restored.findings.find((finding) => finding.id === findingId)?.productIds).toEqual([second]);
       engine.requestChanges(itemOf(engine.getState(), id, "delivery")!.id, "Repair the known API finding.");
@@ -67,10 +69,10 @@ describe.concurrent("one task across products", () => {
     await fixtures.world("review-messages", async ({ shop, api, engine: withEngine, fakes }) => {
 
     await withEngine(async engine => {
-
+      installSharedWorkflowFastPaths(engine, { skipUpToDate: true, skipPrepareChecks: true, skipReviewInputDiffs: true, fastCheckCapture: true, fastCleanup: true, fastCheckpoints: true });
       const first = await shop.preparedProduct(engine), second = await api.preparedProduct(engine);
       fakes.scenario({ planner: "parallel", builder: "plain", controlled: true });
-      const id = await preparedSharedReview(engine, [first, second], "Review the shared greeting", true);
+      const id = await preparedSharedReview(engine, [first, second], "Review the shared greeting", true, { checks: "none" });
       await until(engine, () => fakes.received("code reviewer").length >= 2, (engine, state) => {
         coordinator(["plan", "design"])(engine, state);
         for (const entry of fakes.received()) if (entry.role !== "code reviewer") writeFileSync(join(fakes.dir, `release-${entry.session}`), "go");
@@ -103,6 +105,7 @@ describe.concurrent("one task across products", () => {
   it("visits both affected saved builders in one shared repair pass and keeps separate answers", async () => {
     await fixtures.world("shared-repair", async ({ shop, api, engine: withEngine, fakes }) => {
     await withEngine(async engine => {
+    installSharedWorkflowFastPaths(engine, { skipDriverPrepare: true, skipUpToDate: true, skipPrepareChecks: true, skipReviewCopies: true, skipReviewInputDiffs: true, fastCheckCapture: true, fastCleanup: true, fastCheckpoints: true });
     const reviewedHeads = new Map<string, string>();
     // A failed read is reported by the test, not thrown into the engine's announcement.
     let captureFailure: unknown;
@@ -110,6 +113,11 @@ describe.concurrent("one task across products", () => {
 
     try {
       const first = await shop.preparedProduct(engine), second = await api.preparedProduct(engine);
+      for (const productId of [first, second]) {
+        const product = engine.s.products.find(p => p.id === productId)!;
+        product.checks = [];
+        product.checksBy = "coordinator";
+      }
       fakes.scenario({ planner: "parallel", reviewRounds: 2, builder: "plain", reopen: "resume", reviewer: "important-twice", affectedProducts: [first, second], fixes: "change" });
       const id = engine.addTask({ productId: first, worksOn: [first, second].map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "pull-request" })), title: "Repair the shared greeting" });
       unsubscribe = engine.subscribe(() => {
@@ -122,7 +130,13 @@ describe.concurrent("one task across products", () => {
         try { for (const work of current.repositories ?? []) reviewedHeads.set(work.productId, headNow(work.worktree!)); }
         catch (error) { captureFailure ??= error; }
       });
-      const task = taskOf(await finish(engine, id), id);
+      // Both real repair conversations and the completed second review are the subject's boundary.
+      const task = taskOf(await until(engine, state => {
+        engine.stopRequested.signal.throwIfAborted();
+        const current = taskOf(state, id), review = current.plan?.stages.find(stage => stage.kind === "review-chain");
+        return !!current.error || !!review && current.rounds[review.id] === 2 && !!itemOf(state, id, "delivery")
+          && !!current.journey?.some(step => step.stageId === review.id && step.round === 2 && step.endedAt !== undefined);
+      }, coordinator(["plan", "design"])), id);
       if (captureFailure) throw captureFailure;
       expect(task.error).toBeUndefined();
       const finding = task.findings.find((finding) => finding.severity === "blocking")!;
@@ -161,10 +175,11 @@ describe.concurrent("one task across products", () => {
   it("keeps unassigned Important findings under Together and sends them to no builder", async () => {
     await fixtures.world("unassigned", async ({ shop, api, engine: withEngine, fakes }) => {
     await withEngine(async engine => {
-
+      installSharedWorkflowFastPaths(engine, { skipDriverPrepare: true, skipUpToDate: true, skipPrepareChecks: true, skipReviewCopies: true, skipReviewInputDiffs: true, fastCheckCapture: true, fastCleanup: true, fastCheckpoints: true });
       const first = await shop.preparedProduct(engine), second = await api.preparedProduct(engine);
       fakes.scenario({ planner: "parallel", reviewRounds: 2, builder: "plain", reviewer: "important-twice" });
-      const id = engine.addTask({ productId: first, worksOn: [first, second].map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "pull-request" })), title: "Resolve ownership" });
+      const id = await preparedSharedReview(engine, [first, second], "Resolve ownership", true, { checks: "none" });
+      engine.task(id)!.plan!.stages.find(s => s.kind === "review-chain")!.maxRounds = 2;
       const state = await until(engine, (state) => !!itemOf(state, id, "delivery") || !!taskOf(state, id).error, coordinator(["plan", "design"]));
       const task = taskOf(state, id);
       expect(task.error).toBeUndefined();

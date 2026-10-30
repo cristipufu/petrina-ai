@@ -1,16 +1,19 @@
 import { directDrivers, closeDirectDrivers, removeFixtureRoot } from "./direct-drivers.js";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { installPreparedProduct } from "./prepared-product.js";
+import { fakeEngineSettings } from "./fake-agent-sessions.js";
+import { privateAgentToolProbe } from "../scripted-probes.js";
+import { installSharedWorkflowFastPaths, materializePreparedWorktree, readWorktreeCommit } from "./shared-preparation.js";
 import { expect, spyOn } from "bun:test";
 import * as fs from "node:fs";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { beginAgentStep, refreshProofs, type DeepMutable, type JourneyStep, type ProofRequest, type Product } from "@petrina/core";
+import * as gitOps from "@petrina/repositories/git";
 import type { EngineOptions } from "../engine.js";
-import { Fakes, git, makeProduct, tempDir } from "../fixtures.js";
+import { Fakes, createProductRepository, tempDir } from "../fixtures.js";
 import { executionFor } from "@petrina/orchestrator";
 import { changesOf, versionsOf } from "../../src/repositories.js";
-import { commandInputText } from "../../src/checks.js";
 
 export function proofRequestFixtures() {
 const roots: string[] = [];
@@ -21,27 +24,45 @@ async function fixture(shared = false, brief = false, fakes?: Fakes, options: En
   const lifetime = directDrivers(root); fixtures.add(lifetime);
   const close = async () => { await lifetime.close(); fixtures.delete(lifetime); };
   return setupWithCleanup(() => lifetime.prepare(async () => {
-    const engine = lifetime.open(join(root, "data"), { agentCommand: () => fakes ? [process.execPath, join(import.meta.dir, "../fake-agent.ts"), fakes.dir] : undefined, terminals: () => [], ...options });
+    const baseOptions: EngineOptions = {
+      ...(fakes ? fakeEngineSettings(fakes) : { agentCommand: () => undefined, toolProbe: privateAgentToolProbe() }),
+      terminals: () => [],
+      ...options,
+    };
+    const openEngine = (dataDir: string, nextOptions: EngineOptions = {}) => {
+      const opened = lifetime.open(dataDir, { ...baseOptions, ...nextOptions });
+      installSharedWorkflowFastPaths(opened);
+      return opened;
+    };
+    const engine = openEngine(join(root, "data"));
     engine.schedule = () => {};
     await engine.waitUntilReady();
     engine.setPoolPaused(false);
     const products: DeepMutable<Product>[] = [];
+    const initialVersions = new Map<DeepMutable<Product>, string>();
     for (let i = 0; i < (shared ? 2 : 1); i++) {
       const dir = join(root, `product-${i}`); mkdirSync(dir);
-      const repo = await makeProduct(dir, { origin: "none" });
+      const { path: repo, initialSha } = await createProductRepository(dir, { origin: "none" });
       const id = installPreparedProduct(engine, { id: i === 0 ? "clone" : "clone-2", path: repo, name: `Product ${i + 1}`, repo: "local/clone",
         tone: i === 0 ? "blue" : "green", defaultBranch: "main", delivery: "local", approveDelivery: true });
-      engine.setProductChecks(id, [{ name: "Test", command: commandInputText([process.execPath, "-e", "process.exit(0)"]) }]);
-      products.push(engine.s.products.find(product => product.id === id)!);
+      const product = engine.s.products.find(product => product.id === id)!;
+      // Native command contracts supply their command at the case; proof/version contracts
+      // still use the real check owner without launching an unrelated success program.
+      product.checks = []; product.checksBy = "coordinator";
+      products.push(product);
+      initialVersions.set(product, initialSha);
     }
     const task = engine.task(engine.addTask({ productId: products[0]!.id, title: "Keep required Linux proof current", backlog: true }))!;
+    const initialSeeds = new Map<string, { baseSha: string; head: string; tree: string; patch: string }>();
     const owner = async (product: DeepMutable<Product>, i: number) => {
-      const worktree = join(root, `work-${i}`), baseSha = await git(product.path!, "rev-parse", "HEAD"), branch = `proof-${i}`;
-      await git(product.path!, "worktree", "add", "-q", "-b", branch, worktree, baseSha);
-      writeFileSync(join(worktree, "feature.txt"), "the task's change\n");
-      await git(worktree, "add", "."); await git(worktree, "commit", "-q", "-m", "Add the feature");
-      return { productId: product.id, worktree, baseSha, base: baseSha, branch, delivery: "local" as const, completedStages: ["build"], preparation: "ready" as const,
+      const baseSha = initialVersions.get(product);
+      if (!baseSha) throw new Error("The private proof product lost its initial commit");
+      const worktree = join(root, `work-${i}`), branch = `proof-${i}`;
+      const work = { productId: product.id, worktree, baseSha, base: baseSha, branch, delivery: "local" as const, completedStages: ["build"], preparation: "ready" as const,
         source: { product, start: { kind: "default" as const, branch: "main" }, destination: { mode: "local" as const, kind: "branch" as const, repo: product.repo, branch: "main" }, confirmed: true } };
+      const seed = await materializePreparedWorktree(engine, { task, work } as unknown as ReturnType<typeof executionFor>, product.path!, baseSha, baseSha, "feature.txt", "the task's change\n", "Add the feature");
+      initialSeeds.set(product.id, { ...seed, baseSha });
+      return work;
     };
     const owners: Awaited<ReturnType<typeof owner>>[] = [];
     for (const [i, product] of products.entries()) owners.push(await owner(product, i));
@@ -60,21 +81,63 @@ async function fixture(shared = false, brief = false, fakes?: Fakes, options: En
     const advance = async (index = 0) => {
       const product = products[index]!;
       writeFileSync(join(product.path!, `incoming-${++sequence}.txt`), `main ${sequence}\n`);
-      await git(product.path!, "add", "."); await git(product.path!, "commit", "-q", "-m", "Main advances");
+      await gitOps.commitChanges(product.path!, "Main advances");
     };
     const request = async (text = "Run Linux recovery", ids = products.map(product => product.id)): Promise<DeepMutable<ProofRequest>> => {
       const reviewedVersions: Record<string, string> = {};
-      for (const owner of owners) reviewedVersions[owner.productId] = await git(owner.worktree, "rev-parse", "HEAD^{tree}");
-      const item: DeepMutable<ProofRequest> = { id: `proof-${(task.proofRequests?.length ?? 0) + 1}`, text, reason: "Required on final code", productIds: ids, source: `source-${task.proofRequests?.length ?? 0}`, requestedBy: { stageId: review.id, round: 1, seat: "0", roleId: "code-reviewer", profileId: "sol-high" }, ownerStageId: tester.id, reviewedVersions, status: "pending" };
-      task.proofRequests ??= []; task.proofRequests.push(item); return item;
+      for (const owner of owners) reviewedVersions[owner.productId] = (await gitOps.treeOf(owner.worktree))!;
+      const item: DeepMutable<ProofRequest> = {
+        id: `proof-${(task.proofRequests?.length ?? 0) + 1}`,
+        text,
+        reason: "Required on final code",
+        productIds: ids,
+        source: `source-${task.proofRequests?.length ?? 0}`,
+        requestedBy: { stageId: review.id, round: 1, seat: "0", roleId: "code-reviewer", profileId: "sol-high" },
+        ownerStageId: tester.id,
+        reviewedVersions,
+        status: "pending",
+      };
+      task.proofRequests ??= [];
+      task.proofRequests.push(item);
+      return item;
     };
     const recordPass = async (requests = task.proofRequests ?? []) => {
       const versions = await versionsOf(task);
-      const node: DeepMutable<JourneyStep> = { id: `saved-test-${task.journey?.length ?? 0}`, kind: "agent", stageId: tester.id, roleId: "tester", profileId: "opus-high", round: 1, sub: 0, startedAt: 10, endedAt: 20, end: "done", proofChecks: requests.map(item => ({ id: item.id, result: "pass", evidence: "Private Ubuntu capacity and nearby recovery passed" })), acceptanceChecks: [{ text: "Linux recovery works", result: "pass", evidence: "Private Ubuntu recovery passed" }], agentResults: [{ roleId: "tester", profileId: "opus-high", at: 20, value: {}, versions }] };
-      task.journey ??= []; task.journey.push(node);
+      const node: DeepMutable<JourneyStep> = {
+        id: `saved-test-${task.journey?.length ?? 0}`,
+        kind: "agent",
+        stageId: tester.id,
+        roleId: "tester",
+        profileId: "opus-high",
+        round: 1,
+        sub: 0,
+        startedAt: 10,
+        endedAt: 20,
+        end: "done",
+        proofChecks: requests.map(item => ({
+          id: item.id,
+          result: "pass",
+          evidence: "Private Ubuntu capacity and nearby recovery passed",
+        })),
+        acceptanceChecks: [{
+          text: "Linux recovery works",
+          result: "pass",
+          evidence: "Private Ubuntu recovery passed",
+        }],
+        agentResults: [{ roleId: "tester", profileId: "opus-high", at: 20, value: {}, versions }],
+      };
+      task.journey ??= [];
+      task.journey.push(node);
       for (const item of requests) item.proof = { stepId: node.id, versions, result: "pass", evidence: "Private Ubuntu recovery passed" };
       refreshProofs(task, versions);
-      task.testedVersions = versions; task.testedChanges = await changesOf(task);
+      const canUseSeedPatches = owners.every((w) => {
+        const seed = initialSeeds.get(w.productId);
+        return Boolean(seed && w.baseSha === seed.baseSha && readWorktreeCommit(w.worktree)?.commit === seed.head);
+      });
+      task.testedVersions = versions;
+      task.testedChanges = canUseSeedPatches
+        ? Object.fromEntries(owners.map((w) => [w.productId, initialSeeds.get(w.productId)!.patch]))
+        : await changesOf(task);
       task.testedPatch = await engine["checks"].acceptanceVersion(scope, versions);
       task.acceptancePassed = true;
       return node;
@@ -88,7 +151,7 @@ async function fixture(shared = false, brief = false, fakes?: Fakes, options: En
       advance: (...args: Parameters<typeof advance>) => lifetime.run(f.engine, () => advance(...args)),
       request: (...args: Parameters<typeof request>) => lifetime.run(f.engine, () => request(...args)),
       recordPass: (...args: Parameters<typeof recordPass>) => lifetime.run(f.engine, () => recordPass(...args)),
-      drive, close, open: lifetime.open, stop: lifetime.stop, run: lifetime.run,
+      drive, close, open: openEngine, stop: lifetime.stop, run: lifetime.run,
       body: <T>(start: () => Promise<T>) => lifetime.prepare(start),
     };
     return f;

@@ -7,6 +7,7 @@ import { keepApprovedLearnings, LearningOffers, type RepositoryContext } from "@
 
 import { AGENTS_FILE, cleanPoint, hasPoint, LEARNINGS_INTRO as INTRO, LEARNINGS_SECTION as SECTION, type DeepMutable, type GuideLine, type Id, type Product } from "@petrina/core";
 import * as git from "@petrina/repositories/git";
+import { plainFilesAt } from "@petrina/repositories/object-batch";
 import { addToSection, localPoints } from "./points.js";
 import type { Kernel } from "./kernel.js";
 
@@ -90,8 +91,14 @@ export interface KeptLearnings {
  * and any part of that history Git cannot read. `ref`: the task's version merged onto `onto`.
  */
 export async function keptLearnings(product: Pick<Product, "learnings" | "learningReceipts"> | undefined, taskId: Id, worktree: string, fork: string, onto: string, merged: { tree: string; conflicts: readonly string[] }, ref = "HEAD"): Promise<KeptLearnings | undefined> {
+  const versions = [fork, onto, ref];
+  let instructions: ReturnType<typeof plainFilesAt> | undefined;
   return keepApprovedLearnings(product ? { current: () => product } : undefined, { taskId, fork, onto, merged, ref }, {
-    instructionsAt: version => git.plainFileAt(worktree, version, AGENTS_FILE),
+    instructionsAt: version => {
+      const index = versions.indexOf(version);
+      return index < 0 ? git.plainFileAt(worktree, version, AGENTS_FILE)
+        : (instructions ??= plainFilesAt(worktree, versions, AGENTS_FILE)).then(files => files[index]);
+    },
     objectMergeBase: (own, main) => git.mergeBase(worktree, own, main, true),
     instructionVersionsBetween: (start, main) => git.versionsBetween(worktree, start, main, AGENTS_FILE),
     objectHistoryContains: (main, sha) => git.contains(worktree, main, sha, true),

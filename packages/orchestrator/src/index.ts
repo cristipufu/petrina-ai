@@ -9,6 +9,8 @@ export { resolveSource } from "./source-resolution.js";
 export { SourceSelections } from "./source-selection.js";
 export type { AcceptanceRoutingHost, AcceptanceRoutingInput } from "./ports/acceptance.js";
 export { routeAcceptance } from "./acceptance-routing.js";
+export { AcceptanceStep } from "./acceptance-step.js";
+export type { AcceptanceStepHost, AcceptanceStepEffects, AcceptanceTurnInput } from "./ports/acceptance-step.js";
 export { addDeliveryCheck } from "./delivery-gate.js";
 export type { DeliveryReturnInput, DeliveryReturnRoute } from "./ports/delivery.js";
 export { clearDeliveryPreparation, prepareDeliveryReturn } from "./delivery-return.js";
@@ -48,6 +50,8 @@ export * from "./delivery-turns.js";
 export * from "./delivery-admission.js";
 
 export * from "./learnings.js";
+export { GuideProposals } from "./guide-proposals.js";
+export type { GuideProposalResult, GuideProposalsHost, GuideProposalsEffects } from "./ports/guide-proposals.js";
 export * from "./follow-up-links.js";
 export * from "./ports/follow-up-links.js";
 export * from "./workflow-events.js";
@@ -57,6 +61,7 @@ export type { WorkCompletionHost, WorkCompletionInput } from "./ports/work-compl
 export * from "./agent-workflow.js";
 export * from "./parallel-admission-group.js";
 export * from "./agent-step-state.js";
+export * from "./step-ownership.js";
 export * from "./review-members.js";
 export * from "./ports/agent-workflow.js";
 export * from "./ports/parallel-admission.js";
@@ -84,3 +89,48 @@ export type { CheckRepairHost } from "./ports/check-repairs.js";
 export { WaitSourceRefresh } from "./wait-source-refresh.js";
 export type { WaitSourceRefreshHost, WaitSourceRefreshEffects } from "./wait-source-refresh.js";
 export { CleanupReceipts } from "./cleanup-receipts.js";
+
+export { SourceConflicts, finishSourcePort } from "./source-conflicts.js";
+export type { SourceConflictHost, SourceConflictObservation, BeginSourceConflictEffects, FinishSourcePortEffects } from "./ports/source-conflicts.js";
+
+export type { GitHubService, GitHubResult, GitHubCreated, GitHubPullRequestInfo } from "./ports/github.js";
+
+export { DeliveryRecovery, CARRIED_OVER } from "./delivery-recovery.js";
+export type { DeliveryEvidence, DeliveryLookup, DeliveryRecoveryEffects, DeliveryRecoveryHost, DeliveryRecoveryFailures } from "./ports/delivery-recovery.js";
+
+export { DeliveryMonitor } from "./delivery-monitor.js";
+export type { DeliveryMonitorHost, DeliveryMonitorEffects, DeliveryRecorder } from "./ports/delivery-monitor.js";
+
+export { CheckEvidence } from "./check-evidence.js";
+export type { CheckVerification, CheckBatchEvidence, CheckEnvironmentObservation, CheckEvidenceState, CheckEvidenceHost, CheckVerificationEffects } from "./ports/check-evidence.js";
+
+export { ReviewConversations, reviewBases, reviewBaseUpdates } from "./review-conversations.js";
+export type { ReviewConversationHost, ReviewConversationEffects, ReviewBaseEffects, ReviewBaseUpdate } from "./ports/review-conversations.js";
+
+export { SourceUpdates } from "./source-update.js";
+export { ReviewWorkflow } from "./review-workflow.js";
+export { BuildCompletion } from "./build-completion.js";
+export type { BuildReply, BuildCompletionInput, BuildRepairVersion, BuildCompletionHost, BuildCompletionEffects } from "./ports/build-completion.js";
+export type { ReviewStage, ReviewPlace, PreparedReviewInput, ReviewWorkflowHost, ReviewWorkflowEffects } from "./ports/review-workflow.js";
+export type { FoldedVersion } from "./source-update.js";
+export type { SourceUpdateHost, SourceUpdateEffects, SourceUpdateRepository, SourceFoldObservation, SourceMerge, SourceFetch, SourceVersion } from "./ports/source-update.js";
+export { ValidationRun } from "./validation-run.js";
+export type { ValidationRecord, ValidationResult, ValidationLog, ValidationRunHost, ValidationRunEffects, ValidationRunCallbacks } from "./ports/validation-run.js";
+
+export { AcceptancePreflight } from "./acceptance-preflight.js";
+export type { AcceptancePreflightHost, AcceptancePreflightEffects } from "./ports/acceptance-preflight.js";
+
+export * from "./maintenance-settings.js";
+
+export { SavedParticipantReadiness } from "./saved-participant-readiness.js";
+export type { SavedParticipantReadinessHost, SavedParticipantReadinessClock, SavedParticipantChecks } from "./ports/saved-participant-readiness.js";
+
+export { CheckDecision, checkDiagnostic, assertCheckApproval } from "./check-decision.js";
+export { CheckDelivery } from "./check-delivery.js";
+export type { CheckDecisionHost, CheckDeliveryEffects } from "./ports/check-delivery.js";
+
+export { ParticipantInputs } from "./participant-input.js";
+export type { InputSection, InputOmission, PendingParticipantInput, ParticipantInputHost, ParticipantInputEffects, ParticipantInputDetails, ParticipantContextPreparation } from "./ports/participant-input.js";
+export { openParticipantSession, type ParticipantSessionEffects } from "./participant-session.js";
+
+export { DesignConversations, recordDesignAnswers, recordDesignBrief, recordDesignObjections, type DesignConversationHost } from "./design-conversations.js";

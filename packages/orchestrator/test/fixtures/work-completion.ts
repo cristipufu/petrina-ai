@@ -5,10 +5,12 @@ import type { WorkCompletionHost } from "../../src/ports/work-completion.js";
 import { acceptanceTask } from "./acceptance.js";
 
 /** Actual completion owner with explicit observations; neither a process nor passing check is invented. */
-export function workCompletionFixture(shared = true) {
+export function workCompletionFixture(shared = true, evidence: "checks" | "none" = "checks") {
   const task = acceptanceTask(shared), scope = executionFor(task);
   task.activeProductId = scope.work.productId;
   const versions = Object.fromEntries((task.repositories ?? [scope.work]).map(work => [work.productId, `${work.productId}-observed-tree`]));
+  // Supplied saved evidence is the invalidation subject, not a claimed native command execution.
+  if (evidence === "checks") for (const work of task.repositories ?? []) work.checks = { at: 100, current: true, tree: versions[work.productId], results: [] };
   const calls: string[] = [], checkpoints: typeof task[] = [];
   const host: WorkCompletionHost = {
     finishStep(bound) { if (bound !== scope) throw new Error("Unexpected completion execution"); calls.push("finish"); finishTaskStep(bound.task, bound.work, 200); },

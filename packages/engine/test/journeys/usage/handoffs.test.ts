@@ -1,20 +1,17 @@
 import { usageWorlds } from "../../fixtures/usage-world.js";
+import { usageCreditAgents } from "../../fixtures/usage-credit-agents.js";
+import { fakeAgentSessions } from "../../fixtures/fake-agent-sessions.js";
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { journeyProblems, journeyView, usageLines, type Task } from "@petrina/core";
-
-
-
-
-
-
-
-import { git, waitFor } from "../../fixtures.js";
+import * as gitOps from "@petrina/repositories/git";
+import { waitFor } from "../../fixtures.js";
 
 const worlds = usageWorlds();
 afterAll(() => worlds.close());
-const start = worlds.use;
+const start: typeof worlds.use = (body, scenario, options = {}) =>
+  worlds.use(body, scenario, { sessions: (fakes) => fakeAgentSessions(fakes), ...options });
 
 const lines = (task: Task) => task.timeline.map((entry) => entry.text);
 
@@ -33,7 +30,7 @@ describe.concurrent("an agent that runs out of usage", () => {
         expect(run.engine.getState().pool.limited).toBeUndefined();
         expect(run.fakes.received("builder")).toHaveLength(1);
       } finally { await run.engine.shutdown(); }
-    }, { planner: "short", builder: "plain", failure: { role: "builder", message, httpStatus: 503 } });
+    }, { planner: "short", builder: "plain", failure: { role: "builder", message, httpStatus: 503 } }, { entry: "builder" });
   });
 
   it("hands off a native Grok 402 without retrying its request or changing the weekly reading", async () => {
@@ -43,7 +40,7 @@ describe.concurrent("an agent that runs out of usage", () => {
         const planned = await waitFor(() => run.find().plan, "the plan check");
         const build = planned.stages.find((stage) => stage.roleId === "builder")!;
         run.engine.setStageProfile(run.taskId, build.id, "profileIds", 0, "grok-xhigh");
-        const task = await run.done();
+        const task = await run.completed("builder");
         expect(task.builderSession!.toolId).not.toBe("grok");
         const attempts = run.fakes.received("builder");
         expect(attempts.filter((entry) => run.modelOf(entry.session) === "grok-4.7")).toHaveLength(1);
@@ -93,6 +90,7 @@ describe.concurrent("an agent that runs out of usage", () => {
         expect(run.find().findings).toEqual([]);
       } finally { await run.engine.shutdown(); }
     }, { planner: "short", builder: "plain", reopen: "resume", limited: [{ model: "grok-4.7", role: "builder" }] }, {
+      entry: "builder",
       before: (engine) => {
         engine.s.setup!.checks = [
           { id: "claude-code", status: "logged-out" },
@@ -121,6 +119,7 @@ describe.concurrent("an agent that runs out of usage", () => {
         await run.engine.shutdown();
       }
     }, { planner: "research-first", builder: "plain", limited: [{ model: "gpt-6.1-sol", role: "planner" }] }, {
+      sessions: usageCreditAgents("planner"),
       before: (engine) => {
         engine.s.setup!.checks = [
           { id: "claude-code", status: "logged-out" },
@@ -135,7 +134,16 @@ describe.concurrent("an agent that runs out of usage", () => {
     it(`credits the ${role}'s completion to the stand-in`, async () => {
       await start(async run => {
         try {
-          const task = await run.done();
+          const task = await run.run(() => waitFor(() => {
+            const task = run.find();
+            if (task.state === "failed") throw new Error(`The task failed: ${task.error}`);
+            const finished = run.engine.tracking.log.turns({ taskId: task.id }).some((turn) => turn.roleId === roleId && turn.end === "finished");
+            if (finished && task.timeline.some((entry) => entry.text.startsWith(prefix))
+              && (role !== "planner" || task.plan)
+              && (role !== "researcher" || task.handedBack?.some((entry) => entry.roleId === roleId))) return task;
+            run.answer();
+            return false;
+          }, `the ${role}'s completion and attribution records`, 60_000));
           const finished = run.engine.tracking.log.turns({ taskId: task.id }).find((turn) => turn.roleId === roleId && turn.end === "finished")!;
           expect(finished.toolId).toBe("codex");
           expect(task.timeline.find((entry) => entry.text.startsWith(prefix))!.profileId).toBe(finished.profileId);
@@ -144,7 +152,7 @@ describe.concurrent("an agent that runs out of usage", () => {
         } finally {
           await run.engine.shutdown();
         }
-      }, { planner: "research-first", builder: "plain", limited: [{ model: "opus", role }] });
+      }, { planner: "research-first", builder: "plain", limited: [{ model: "opus", role }] }, { sessions: usageCreditAgents(roleId) });
     });
   }
 
@@ -161,6 +169,7 @@ describe.concurrent("an agent that runs out of usage", () => {
         await run.engine.shutdown();
       }
     }, { builder: "plain", reviewer: "important", limited: [{ model: "opus", role: "verifier", type: "seven_day_opus" }] }, {
+      entry: "review", stop: "reviewed",
       before: (engine) => {
         engine.s.setup!.checks = [
           { id: "claude-code", status: "ready" },
@@ -191,6 +200,7 @@ describe.concurrent("an agent that runs out of usage", () => {
         expect(lines(task)).toContain("Sent back to the builder: 2 important");
       } finally { await run.engine.shutdown(); }
     }, { builder: "plain", reviewer: "important", verifier: "split" }, {
+      entry: "review", stop: "reviewed",
       before: (engine) => {
         engine.s.setup!.checks = [
           { id: "claude-code", status: "ready" },
@@ -205,7 +215,7 @@ describe.concurrent("an agent that runs out of usage", () => {
   it("keeps the security review off the builder's replacement tool while another tool is available", async () => {
     await start(async run => {
       try {
-        const task = await run.done();
+        const task = await run.until(task => task.timeline.some(entry => entry.text === "Security reviewer started"), "the actual independent security reviewer to start");
         expect(task.builderSession!.toolId).toBe("codex");
         const review = task.timeline.find((entry) => entry.text === "Security reviewer started");
         expect(review).toBeDefined();
@@ -219,7 +229,7 @@ describe.concurrent("an agent that runs out of usage", () => {
   it("keeps a real billing refusal and the turn's settings while the included session window is open", async () => {
     await start(async run => {
       try {
-        const task = await run.done();
+        const task = await run.completed("builder");
         expect(run.engine.getState().pool.usage).toEqual(expect.arrayContaining([
           expect.objectContaining({ toolId: "claude-code", kind: "five_hour", status: "allowed", utilization: 0.4 }),
         ]));
@@ -235,7 +245,7 @@ describe.concurrent("an agent that runs out of usage", () => {
       } finally {
         await run.engine.shutdown();
       }
-    }, { planner: "claude-build", builder: "plain", limited: [{ model: "opus", role: "builder", spendCap: true }] });
+    }, { planner: "claude-build", builder: "plain", limited: [{ model: "opus", role: "builder", spendCap: true }] }, { entry: "builder" });
   });
 
   it("is taken over in the same step by an agent on another tool, who is told what the first one did and said", async () => {
@@ -272,7 +282,7 @@ describe.concurrent("an agent that runs out of usage", () => {
         const returned = task.journey!.find((step) => step.builderReturn)!;
         expect(task.timeline.find((entry) => entry.step === returned.id && entry.text.startsWith(returned.builderReturn!.outcome))!.profileId).toBe(actual);
         expect(task.lessons!.filter((lesson) => lesson.roleId === "builder").map((lesson) => lesson.profileId)).toEqual([actual, actual]);
-        expect(await run.run(() => git(run.engine.getState().products[0]!.path!, "log", "-1", "--format=%B", "main"))).toContain("Built by Petrina: Builder on Codex");
+        expect(await run.run(() => gitOps.message(run.engine.getState().products[0]!.path!, "main"))).toContain("Built by Petrina: Builder on Codex");
         const details = run.engine.usage({ view: "analytics", period: "today" }).squad.details;
         expect(details.failuresByReason).toContainEqual({ label: "usage limit reached", count: 1 });
         expect(details.retries).toBe(1);
@@ -295,7 +305,7 @@ describe.concurrent("an agent that runs out of usage", () => {
   it("is taken over by another model on the same tool when only that model is out", async () => {
     await start(async run => {
       try {
-        const task = await run.done();
+        const task = await run.completed("builder");
         const builders = run.fakes.received("builder");
         expect(builders).toHaveLength(2);
         expect(run.modelOf(builders[1]!.session)).toBe("sonnet");
@@ -307,7 +317,7 @@ describe.concurrent("an agent that runs out of usage", () => {
       } finally {
         await run.engine.shutdown();
       }
-    }, { planner: "claude-build", builder: "plain", limited: [{ model: "opus", role: "builder", type: "seven_day_opus" }] });
+    }, { planner: "claude-build", builder: "plain", limited: [{ model: "opus", role: "builder", type: "seven_day_opus" }] }, { entry: "builder" });
   });
 
   it("waits for usage when every tool is out, then goes back to its own conversation by itself", async () => {
@@ -341,7 +351,7 @@ describe.concurrent("an agent that runs out of usage", () => {
         for (const limit of claudeLimits) limit.until = resetAt;
         run.engine.schedule();
 
-        const task = await run.done();
+        const task = await run.completed("builder");
         const builders = run.fakes.received("builder");
         // The same conversation, reopened: no stand-in ever started.
         expect(new Set(builders.map((entry) => entry.session)).size).toBe(1);
@@ -365,6 +375,7 @@ describe.concurrent("an agent that runs out of usage", () => {
     }, { planner: "claude-build", builder: "plain", reopen: "resume", limited: [{ model: "opus", role: "builder" }] }, {
       // Set the other tools' limits before any task can run. A late fixture update
       // must not erase Claude's already reported limit or admit a replacement.
+      entry: "builder",
       before: (engine) => {
         engine.s.pool.limited = [
           { toolId: "codex", until: Date.now() + 3_600_000, reason: "Codex's usage limit" },
@@ -378,7 +389,12 @@ describe.concurrent("an agent that runs out of usage", () => {
   it("counts a Check finder that could not finish as a failure, and carries on with the checks it has", async () => {
     await start(async run => {
       try {
-        const task = await run.done();
+        const task = await run.until((task, generation) =>
+          task.timeline.some(entry => entry.text === "The Check finder could not finish, so Petrina uses no checks for now")
+          && task.journey?.findLast(step => step.roleId === "check-finder")?.endedAt !== undefined
+          && generation.tracking.log.moments({ taskId: task.id, kinds: ["failure"] }).some(moment => moment.roleId === "check-finder")
+          && generation.s.products.find(product => product.id === task.productId)?.checksBy === "finder",
+        "the actual Check finder failure, completed side turn and saved fallback");
         expect(lines(task)).toContain("The Check finder could not finish, so Petrina uses no checks for now");
         const failures = run.engine.tracking.log.moments({ taskId: task.id, kinds: ["failure"] });
         expect(failures).toMatchObject([{ outcome: "unusable", roleId: "check-finder", profileId: expect.any(String) }]);
@@ -393,7 +409,7 @@ describe.concurrent("an agent that runs out of usage", () => {
       } finally {
         await run.engine.shutdown();
       }
-    }, { planner: "claude-build", builder: "plain", checks: "broken" });
+    }, { planner: "claude-build", builder: "plain", checks: "broken" }, { entry: "builder" });
   });
 
   it("is replaced in a group of reviewers by a stand-in, told what it had said", async () => {
@@ -417,7 +433,7 @@ describe.concurrent("an agent that runs out of usage", () => {
       } finally {
         await run.engine.shutdown();
       }
-    }, { builder: "plain", limited: [{ model: "opus", role: "code reviewer", type: "seven_day_opus" }] });
+    }, { builder: "plain", limited: [{ model: "opus", role: "code reviewer", type: "seven_day_opus" }] }, { entry: "review", stop: "reviewed" });
   });
 
   it("records only the reviewers who actually start when a planned model was already out of usage", async () => {
@@ -432,7 +448,7 @@ describe.concurrent("an agent that runs out of usage", () => {
       } finally {
         await run.engine.shutdown();
       }
-    }, { builder: "plain" }, { before: (engine) => {
+    }, { builder: "plain" }, { entry: "review", stop: "reviewed", before: (engine) => {
       engine.s.pool.limited = [{ toolId: "claude-code", model: "opus", until: Date.now() + 120_000, reason: "Claude Code's weekly Opus limit" }];
     } });
   });

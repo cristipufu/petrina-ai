@@ -2,12 +2,11 @@ import { afterAll, expect, it } from "bun:test";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { createFollowUpFixtures, STAGE, older, groupByBug, taskOf, finish, cardFor, plant } from "../../fixtures/follow-up-native.js";
-
-const { open, close, shutdown } = createFollowUpFixtures();
+const { open, close, use } = createFollowUpFixtures();
 afterAll(close);
-
 it("takes back the product, the picture and the request when a later review says this change caused it", async () => {
-  const world = await open(groupByBug, true);
+  return use(async caseOwner => {
+  const world = await open(caseOwner, groupByBug, true);
   const { engine } = world;
   try {
     const shopText = "bug-cause: The footer opens a retired page.";
@@ -22,7 +21,7 @@ it("takes back the product, the picture and the request when a later review says
     notes.plan = { stages: [STAGE], rationale: "Review it", plannerProfileId: "opus-high" };
     notes.state = "running";
     notes.hunt = { stageId: STAGE.id, round: 1, reported: { "0": true, "1": true }, findings: 0 };
-    await finish(engine, shop);
+    await finish(caseOwner, engine, shop);
     const card = cardFor(engine, "cause")[0]!;
     expect(card.followUp!.reports.map((report) => report.findingId).sort()).toEqual(["notes", "shop"]);
     expect(card.selectedProducts?.map((choice) => choice.productId).sort()).toEqual([world.notes, world.shop].sort());
@@ -51,5 +50,6 @@ it("takes back the product, the picture and the request when a later review says
     await engine["cleanup"].removeCaptures(notes.id);
     expect(existsSync(join(engine.dataDir, "captures", notes.id))).toBe(false);
     expect(existsSync(join(engine.dataDir, "captures", card.id, `${kept[0]!.id}.png`))).toBe(true);
-  } finally { await shutdown(engine); }
+  } finally { await caseOwner.stop(engine); }
+  });
 });

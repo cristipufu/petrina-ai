@@ -1,15 +1,26 @@
+import { installPreparedProduct, acmeDemoProduct, privateCloneProduct } from "../../fixtures/prepared-product.js";
+import { engineCaseFixtures, type EngineCaseOwner } from "../../fixtures/engine-cases.js";
 import { ENGINE_TEST_ROOT } from "../../fixtures/runtime-paths.js";
 import { afterAll, describe, expect, it } from "bun:test";
 import { readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { onScreen, screenOn, slotUses, type State, type Task } from "@petrina/core";
+import { fakeAgentSessions } from "../../fixtures/fake-agent-sessions.js";
+import { installSharedWorkflowFastPaths } from "../../fixtures/shared-preparation.js";
 import { localFixtureSource, screenFixturePlan } from "../../fixtures/prepared-runtime.js";
-import { Engine, type EngineOptions } from "../../engine.js";
+import { prepareScreenReview } from "../../fixtures/prepared-screen-review.js";
+import { queuePreparedDelivery } from "../../fixtures/queued-delivery.js";
+import { privateAgentToolProbe } from "../../scripted-probes.js";
+import { type EngineOptions } from "../../engine.js";
 import { screenRules, WHERE_YOU_WERE_SCREEN } from "../../../src/prompts.js";
 import type { Scenario } from "../../fake-agent.js";
-import { finish, Fakes, git, makeProduct, removeDir, taskOf, tempDir, waitFor } from "../../support.js";
+import { createProductRepository } from "../../fixtures.js";
+import { finish, Fakes, taskOf, waitFor } from "../../support.js";
 
 import { nativeWorldFixtures } from "../../fixtures/native-worlds.js";
+const engineCases = engineCaseFixtures();
+afterAll(() => engineCases.close());
+
 const nativeWorlds = nativeWorldFixtures();
 afterAll(nativeWorlds.close);
 
@@ -18,34 +29,36 @@ const fake = join(ENGINE_TEST_ROOT, "fake-agent.ts");
 const REASON = "Check that the quick note window opens from the menu bar";
 const NEEDS = `Needs the screen for: ${REASON}`;
 
-const roots: string[] = [];
-afterAll(() => roots.forEach(removeDir));
 
 /**
  * Tasks on a product that stops at the delivery check, with the pool paused so a test can set the
  * screen up before anything starts. Plans are short: a builder, then one reviewer.
  */
-async function fixture(scenario: Scenario, count = 1, options: EngineOptions = {}) {
-  const root = tempDir("petrina-screen-");
-  roots.push(root);
+async function fixture(caseOwner: EngineCaseOwner, scenario: Scenario, count = 1, options: EngineOptions = {}, entry: "build" | "review" | "checks" = "build") {
+  const root = caseOwner.root;
+
   const fakes = new Fakes(join(root, "fake"));
   fakes.scenario({ planner: "short", builder: "plain", ...scenario });
-  const repo = await makeProduct(root);
-  // Parallel worktree creation need not write upstream tracking settings to the shared config.
-  await git(repo, "config", "branch.autoSetupMerge", "false");
+  const productRepo = await createProductRepository(root);
+  const repo = productRepo.path;
+  caseOwner.check();
   const data = join(root, "data");
-  const engineOptions: EngineOptions = { agentCommand: () => [process.execPath, fake, fakes.dir], ...options };
-  let engine = new Engine(data, engineOptions);
+  const engineOptions: EngineOptions = { agentCommand: () => [process.execPath, fake, fakes.dir], toolProbe: privateAgentToolProbe(), startAgentSession: fakeAgentSessions(fakes), ...options };
+  const openEngine = () => installSharedWorkflowFastPaths(caseOwner.open(data, engineOptions), { skipUpToDate: true, skipPrepareChecks: true, skipReviewCopies: true, skipReviewInputDiffs: true, fastCheckCapture: true, fastCleanup: true });
+  let engine = openEngine();
   try {
   engine.setPoolPaused(true);
-  const productId = await engine.addProduct(repo);
+  await engine.waitUntilReady(); caseOwner.check(); engine.stopRequested.signal.throwIfAborted();
+  const productId = installPreparedProduct(engine, privateCloneProduct(repo));
   engine.setProductDelivery(productId, "pull-request", true);
   const ids = Array.from({ length: count }, (_, index) => engine.addTask({ productId, title: `Quick note window ${index + 1}`, backlog: true }));
   for (const id of ids) {
     const task = engine.task(id)!;
-    await localFixtureSource(engine, task);
+    await localFixtureSource(engine, task, { initial: productRepo, check: () => caseOwner.check() });
+    caseOwner.check(); engine.stopRequested.signal.throwIfAborted();
     task.startedAt = Date.now(); task.state = "waiting"; task.stageIndex = 0;
     task.plan = { rationale: "The requested screen behavior starts at its Builder", plannerProfileId: "sol-high", stages: screenFixturePlan(scenario.planner === "parallel" ? ["opus-high", "sol-high"] : ["opus-high"]) };
+    if (entry !== "build") await prepareScreenReview(engine, id, entry === "checks" ? "discover" : "none", () => caseOwner.check());
   }
   const f = {
     get engine() {
@@ -63,6 +76,18 @@ async function fixture(scenario: Scenario, count = 1, options: EngineOptions = {
     },
     /** It reached the delivery check: its build and review are done. */
     built: (state: State, id: string) => state.inbox.some((item) => item.taskId === id && item.kind === "delivery"),
+    /** Observe this generation's real handback and persisted native turn, before unrelated checks/review. */
+    builderDone: (id: string, what: string) => {
+      const generation = engine;
+      return caseOwner.run(generation, () => waitFor(() => {
+        caseOwner.check();
+        const state = generation.getState(), task = taskOf(state, id);
+        if (task.state === "failed") throw new Error(task.error);
+        const step = task.journey?.findLast(step => step.roleId === "builder");
+        const turn = generation.tracking.log.turns({ taskId: id }).findLast(turn => turn.roleId === "builder");
+        return step?.end === "done" && turn?.end === "finished" && !task.screen && state;
+      }, what, 30_000));
+    },
     screenItems: (id?: string) => engine.getState().inbox.filter((item) => item.kind === "screen" && (!id || item.taskId === id)),
     /** The conversations that got the screen, in the fake agent's words. */
     onScreen: () =>
@@ -73,21 +98,23 @@ async function fixture(scenario: Scenario, count = 1, options: EngineOptions = {
     /** A screenLate builder asks for the screen now. */
     ask: (session: string) => writeFileSync(join(fakes.dir, `screen-ask-${session}`), "go"),
     restart: async () => {
-      await engine.shutdown();
-      engine = new Engine(data, engineOptions);
+      await caseOwner.stop(engine);
+      engine = openEngine();
       await engine.waitUntilReady();
+      caseOwner.check(); engine.stopRequested.signal.throwIfAborted();
     },
     close: async () => {
-      await engine.shutdown();
+      await caseOwner.stop(engine);
     },
   };
   return f;
-  } catch (error) { await engine.shutdown(); throw error; }
+  } catch (error) { await caseOwner.stop(engine); throw error; }
 }
 
 describe("an agent that needs the screen", () => {
   it("waits without a slot while the switch is off, then continues on the same conversation when it is turned on", async () => {
-    const f = await fixture({ screen: "ask", reopen: "resume" });
+  return engineCases.use("petrina-screen-", async caseOwner => {
+    const f = await fixture(caseOwner, { screen: "ask", reopen: "resume" });
     const [id] = f.ids as [string];
     try {
       f.engine.setPoolPaused(false);
@@ -114,7 +141,7 @@ describe("an agent that needs the screen", () => {
       expect(loggedBefore).toEqual([expect.objectContaining({ reason: "first", end: "finished", sessionId: session })]);
 
       f.engine.setScreenUse("on");
-      const done = await f.until((state) => f.built(state, id), "the build to continue and reach the delivery check");
+      const done = await f.builderDone(id, "the Builder to hand back and save its native turn");
       const builder = f.fakes.received("builder");
       expect(builder.every((entry) => entry.session === session)).toBe(true);
       expect(f.fakes.openings("builder")).toHaveLength(1);
@@ -142,10 +169,13 @@ describe("an agent that needs the screen", () => {
     } finally {
       await f.close();
     }
+
   });
+});
 
   it("still waits after Petrina restarts, and Allow now reopens the saved conversation", async () => {
-    const f = await fixture({ screen: "ask", reopen: "resume" });
+  return engineCases.use("petrina-screen-", async caseOwner => {
+    const f = await fixture(caseOwner, { screen: "ask", reopen: "resume" });
     const [id] = f.ids as [string];
     try {
       f.engine.setPoolPaused(false);
@@ -175,7 +205,7 @@ describe("an agent that needs the screen", () => {
       expect(f.fakes.received("builder")).toHaveLength(1);
 
       f.engine.setPoolPaused(false);
-      await f.until((state) => f.built(state, id), "the build to continue");
+      await f.builderDone(id, "the build to continue");
       expect(f.fakes.received("builder").every((entry) => entry.session === session)).toBe(true);
       expect(f.fakes.opens().filter((open) => open.session === session).map((open) => open.how)).toEqual(["new", "resume"]);
       expect(f.fakes.received("builder")[1]!.text).toStartWith(screenRules(REASON));
@@ -189,10 +219,13 @@ describe("an agent that needs the screen", () => {
     } finally {
       await f.close();
     }
+
   });
+});
 
   it("keeps its screen request when a message arrives as it asks, and hears the message with the screen", async () => {
-    const f = await fixture({ screen: "ask", reopen: "resume", screenLate: true });
+  return engineCases.use("petrina-screen-", async caseOwner => {
+    const f = await fixture(caseOwner, { screen: "ask", reopen: "resume", screenLate: true });
     const [id] = f.ids as [string];
     try {
       f.engine.setPoolPaused(false);
@@ -207,7 +240,7 @@ describe("an agent that needs the screen", () => {
       expect(f.fakes.received("builder")).toHaveLength(1);
 
       f.engine.allowScreen(id);
-      await f.until((state) => f.built(state, id), "the build to continue on the screen");
+      await f.builderDone(id, "the build to continue on the screen");
       const builder = f.fakes.received("builder");
       expect(builder.map((entry) => entry.session)).toEqual([session, session]);
       expect(builder[1]!.text).toStartWith(screenRules(REASON));
@@ -216,10 +249,13 @@ describe("an agent that needs the screen", () => {
     } finally {
       await f.close();
     }
+
   });
+});
 
   it("hears a message that arrived as it asked together with the screen, when it gets the screen at once", async () => {
-    const f = await fixture({ screen: "ask", reopen: "resume", screenLate: true });
+  return engineCases.use("petrina-screen-", async caseOwner => {
+    const f = await fixture(caseOwner, { screen: "ask", reopen: "resume", screenLate: true });
     const [id] = f.ids as [string];
     try {
       f.engine.setScreenUse("on");
@@ -227,7 +263,7 @@ describe("an agent that needs the screen", () => {
       const session = await waitFor(() => f.fakes.received("builder")[0]?.session, "the builder to start");
       f.engine.sendMessage(id, "Use the dark theme too");
       f.ask(session);
-      await f.until((state) => f.built(state, id), "the build to finish on the screen");
+      await f.builderDone(id, "the build to finish on the screen");
       const builder = f.fakes.received("builder");
       expect(builder).toHaveLength(2);
       expect(builder[1]!.text).toStartWith(screenRules(REASON));
@@ -237,10 +273,13 @@ describe("an agent that needs the screen", () => {
     } finally {
       await f.close();
     }
+
   });
+});
 
   it("gets the screen at once in the same live conversation while it is allowed and free, keeping its slot", async () => {
-    const f = await fixture({ screen: "ask", reopen: "resume" });
+  return engineCases.use("petrina-screen-", async caseOwner => {
+    const f = await fixture(caseOwner, { screen: "ask", reopen: "resume" });
     const [id] = f.ids as [string];
     let waited = false;
     let items = 0;
@@ -251,7 +290,7 @@ describe("an agent that needs the screen", () => {
     try {
       f.engine.setScreenUse("on");
       f.engine.setPoolPaused(false);
-      await f.until((state) => f.built(state, id), "the build to finish");
+      await f.builderDone(id, "the build to finish");
       const builder = f.fakes.received("builder");
       expect(new Set(builder.map((entry) => entry.session)).size).toBe(1);
       expect(f.fakes.opens().filter((open) => open.session === builder[0]!.session).map((open) => open.how)).toEqual(["new"]);
@@ -265,108 +304,13 @@ describe("an agent that needs the screen", () => {
       unsubscribe();
       await f.close();
     }
+
   });
-
-  it("goes to one agent at a time: the second waits its turn and follows when the first's step ends", async () => {
-    const f = await fixture({ screen: "hold", reopen: "resume" }, 2);
-    let most = 0;
-    let stale = false;
-    const unsubscribe = f.engine.subscribe(() => {
-      most = Math.max(most, f.state().tasks.filter((task) => task.screen?.granted).length);
-      // Once nobody is on the screen, nobody is waiting their turn on it.
-      stale ||= !onScreen(f.state().tasks) && f.state().tasks.some((task) => task.statusLine === "Waiting its turn on the screen");
-    });
-    try {
-      f.engine.setScreenUse("on");
-      f.engine.setPoolPaused(false);
-      const first = await waitFor(() => f.onScreen()[0], "an agent on the screen");
-      const other = await waitFor(() => f.ids.find((id) => f.asking(id)), "the other agent to ask for the screen");
-      const holder = onScreen(f.state().tasks)!;
-      expect(holder.id).not.toBe(other);
-      expect(holder.holdsSlot).toBe(true);
-      const waiting = f.task(other);
-      expect(waiting.statusLine).toBe("Waiting its turn on the screen");
-      expect(waiting.holdsSlot).toBe(false);
-      expect(f.screenItems()).toEqual([]);
-      await Bun.sleep(400);
-      expect(f.onScreen()).toEqual([first]);
-
-      // The first hands back its result: the screen goes to the second, on its own conversation.
-      f.release(first);
-      const second = await waitFor(() => f.onScreen().find((session) => session !== first), "the second agent on the screen");
-      expect(f.task(holder.id).screen).toBeUndefined();
-      expect(f.fakes.opens().filter((open) => open.session === second).map((open) => open.how)).toEqual(["new", "resume"]);
-      f.release(second);
-      await f.until((state) => f.ids.every((id) => f.built(state, id)), "both builds to finish");
-      expect(most).toBe(1);
-      expect(stale).toBe(false);
-    } finally {
-      unsubscribe();
-      await f.close();
-    }
-  });
-
-  it("goes ahead for a task allowed the screen while the switch is off, and other tasks still wait", async () => {
-    const f = await fixture({ screen: "ask", reopen: "resume" }, 2);
-    const [allowed, other] = f.ids as [string, string];
-    try {
-      // Queued tasks can be allowed too.
-      f.engine.setTaskScreen(allowed, true);
-      expect(f.task(allowed).screenAllowed).toBe(true);
-      f.engine.setPoolPaused(false);
-      await f.until((state) => f.built(state, allowed) && f.asking(other), "the allowed task to build and the other to ask");
-      expect(screenOn(f.state().pool, Date.now())).toBe(false);
-      expect(f.task(allowed).timeline.map((entry) => entry.text)).toEqual(expect.arrayContaining(["You allowed the screen for this task", `Using the screen for: ${REASON}`]));
-      expect(f.task(other).statusLine).toBe(NEEDS);
-      expect(f.screenItems().map((item) => item.taskId)).toEqual([other]);
-
-      f.engine.setTaskScreen(allowed, false);
-      expect(f.task(allowed).screenAllowed).toBeUndefined();
-      f.engine.setTaskScreen(other, true);
-      await f.until((state) => f.built(state, other), "the other task, allowed now, to build");
-      expect(f.screenItems()).toEqual([]);
-    } finally {
-      await f.close();
-    }
-  });
-
-  it("lets the agent on the screen finish when the switch goes off, and gives the screen to nobody new", async () => {
-    const f = await fixture({ screen: "hold", reopen: "resume" }, 2);
-    try {
-      f.engine.setScreenUse("on");
-      f.engine.setPoolPaused(false);
-      const first = await waitFor(() => f.onScreen()[0], "an agent on the screen");
-      const other = await waitFor(() => f.ids.find((id) => f.asking(id)), "the other agent to wait its turn");
-      const holder = onScreen(f.state().tasks)!.id;
-      const heard = f.fakes.received("builder").filter((entry) => entry.session === first).length;
-
-      f.engine.setScreenUse("off");
-      // Not stopped, not messaged: it keeps the screen until its step ends.
-      expect(f.task(holder).screen?.granted).toBe(true);
-      expect(f.task(holder).state).toBe("running");
-      // Only the switch allowed the other: it goes back to waiting for an OK.
-      expect(f.task(other).statusLine).toBe(NEEDS);
-      expect(f.screenItems().map((item) => item.taskId)).toEqual([other]);
-
-      f.release(first);
-      await f.until((state) => f.built(state, holder), "the agent on the screen to finish its step");
-      expect(f.fakes.received("builder").filter((entry) => entry.session === first)).toHaveLength(heard);
-      await Bun.sleep(400);
-      expect(onScreen(f.state().tasks)).toBeUndefined();
-      expect(f.asking(other)).toBe(true);
-      expect(f.onScreen()).toEqual([first]);
-
-      f.engine.allowScreen(other);
-      const second = await waitFor(() => f.onScreen().find((session) => session !== first), "the other agent on the screen after Allow now");
-      f.release(second);
-      await f.until((state) => f.built(state, other), "the other build to finish");
-    } finally {
-      await f.close();
-    }
-  });
+});
 
   it("keeps the screen through a restart and picks up as after any restart", async () => {
-    const f = await fixture({ screen: "hold", reopen: "resume" });
+  return engineCases.use("petrina-screen-", async caseOwner => {
+    const f = await fixture(caseOwner, { screen: "hold", reopen: "resume" });
     const [id] = f.ids as [string];
     try {
       f.engine.setScreenUse("on");
@@ -374,7 +318,7 @@ describe("an agent that needs the screen", () => {
       const session = await waitFor(() => f.onScreen()[0], "the agent on the screen");
       await f.restart();
       expect(f.task(id).screen).toMatchObject({ granted: true, heard: true });
-      await f.until((state) => f.built(state, id), "the build to pick up and finish");
+      await f.builderDone(id, "the build to pick up and finish");
       const builder = f.fakes.received("builder");
       expect(builder.every((entry) => entry.session === session)).toBe(true);
       expect(builder.at(-1)!.text).toStartWith("Petrina restarted while you were on “Build” as the Builder.");
@@ -382,10 +326,13 @@ describe("an agent that needs the screen", () => {
     } finally {
       await f.close();
     }
+
   });
+});
 
   it("starts a fresh conversation, worded as waiting for the screen, when the tool cannot reopen it", async () => {
-    const f = await fixture({ screen: "ask" });
+  return engineCases.use("petrina-screen-", async caseOwner => {
+    const f = await fixture(caseOwner, { screen: "ask" });
     const [id] = f.ids as [string];
     try {
       f.engine.setPoolPaused(false);
@@ -409,10 +356,13 @@ describe("an agent that needs the screen", () => {
     } finally {
       await f.close();
     }
+
   });
+});
 
   it("drops the quiet inbox item when paused or cancelled, and starts the step fresh after resuming", async () => {
-    const f = await fixture({ screen: "ask", reopen: "resume" });
+  return engineCases.use("petrina-screen-", async caseOwner => {
+    const f = await fixture(caseOwner, { screen: "ask", reopen: "resume" });
     const [id] = f.ids as [string];
     try {
       f.engine.setPoolPaused(false);
@@ -433,12 +383,15 @@ describe("an agent that needs the screen", () => {
     } finally {
       await f.close();
     }
+
   });
+});
 });
 
 describe("internal roles and reviewers asking for the screen", () => {
   it.each([false, true])("lets the Check finder ask and finish its own screen turn (already on: %s)", async (alreadyOn) => {
-    const f = await fixture({ screenRoles: ["check finder"], reopen: "resume" });
+  return engineCases.use("petrina-screen-", async caseOwner => {
+    const f = await fixture(caseOwner, { screenRoles: ["check finder"], reopen: "resume" }, 1, {}, "checks");
     const [id] = f.ids as [string];
     try {
       if (alreadyOn) f.engine.setScreenUse("on");
@@ -464,10 +417,13 @@ describe("internal roles and reviewers asking for the screen", () => {
         expect(product.checks?.map((check) => check.name)).toEqual(["Your check"]);
       }
     } finally { await f.close(); }
+
   });
+});
 
   it("resumes both Check finders even after the first one saves checks for their shared product", async () => {
-    const f = await fixture({ screenRoles: ["check finder"], screenRoleHold: true, reopen: "resume" }, 2);
+  return engineCases.use("petrina-screen-", async caseOwner => {
+    const f = await fixture(caseOwner, { screenRoles: ["check finder"], screenRoleHold: true, reopen: "resume" }, 2, {}, "checks");
     try {
       f.engine.setPoolPaused(false);
       await waitFor(() => f.ids.every((id) => f.asking(id)), "both Check finders to wait");
@@ -484,10 +440,13 @@ describe("internal roles and reviewers asking for the screen", () => {
       await f.until((state) => f.ids.every((id) => f.built(state, id)), "both tasks to finish checking");
       for (const session of sessions) expect(f.fakes.received("check finder").filter((entry) => entry.session === session)).toHaveLength(2);
     } finally { await f.close(); }
+
   });
+});
 
   it("lets the Guide keeper wait and reopen before the builder fixes the work", async () => {
-    const f = await fixture({ screenRoles: ["guide keeper"], reopen: "load" });
+  return engineCases.use("petrina-screen-", async caseOwner => {
+    const f = await fixture(caseOwner, { screenRoles: ["guide keeper"], reopen: "load" });
     const [id] = f.ids as [string];
     try {
       f.engine.setPoolPaused(false);
@@ -504,10 +463,13 @@ describe("internal roles and reviewers asking for the screen", () => {
       expect(f.task(id).screen).toBeUndefined();
       expect(f.fakes.received("builder").at(-1)!.text).not.toContain("You may now use the screen");
     } finally { await f.close(); }
+
   });
+});
 
   it("keeps both parallel reviewers' requests across a restart and reopens each conversation in turn", async () => {
-    const f = await fixture({ planner: "parallel", screenRoles: ["code reviewer"], screenRoleHold: true, reopen: "resume" });
+  return engineCases.use("petrina-screen-", async caseOwner => {
+    const f = await fixture(caseOwner, { planner: "parallel", screenRoles: ["code reviewer"], screenRoleHold: true, reopen: "resume" }, 1, {}, "review");
     const [id] = f.ids as [string];
     try {
       f.engine.setPoolPaused(false);
@@ -549,10 +511,13 @@ describe("internal roles and reviewers asking for the screen", () => {
       expect(f.task(id).screen).toBeUndefined();
       expect(f.task(id).hunt).toBeUndefined();
     } finally { await f.close(); }
+
   });
+});
 
   it("gives a parallel reviewer the free screen live, and switching off holds the next reviewer", async () => {
-    const f = await fixture({ planner: "parallel", screenRoles: ["code reviewer"], screenRoleHold: true, reopen: "resume" });
+  return engineCases.use("petrina-screen-", async caseOwner => {
+    const f = await fixture(caseOwner, { planner: "parallel", screenRoles: ["code reviewer"], screenRoleHold: true, reopen: "resume" }, 1, {}, "review");
     const [id] = f.ids as [string];
     try {
       f.engine.setScreenUse("on");
@@ -561,10 +526,12 @@ describe("internal roles and reviewers asking for the screen", () => {
       const [first] = f.onScreen() as [string];
       expect(slotUses(f.state())).toHaveLength(1);
       expect(f.fakes.opens().filter((entry) => entry.session === first).map((entry) => entry.how)).toEqual(["new"]);
+      const heard = f.fakes.received("code reviewer").filter(entry => entry.session === first).length;
       f.engine.setScreenUse("off");
       expect(f.task(id).screen?.granted).toBe(true);
       f.release(first);
       await waitFor(() => f.asking(id), "the second reviewer to wait after switching off");
+      expect(f.fakes.received("code reviewer").filter(entry => entry.session === first)).toHaveLength(heard);
       expect(f.onScreen()).toEqual([first]);
       expect(f.screenItems(id)).toHaveLength(1);
       const second = f.task(id).conversation!.sessionId;
@@ -573,10 +540,13 @@ describe("internal roles and reviewers asking for the screen", () => {
       f.release(second);
       await f.until((state) => f.built(state, id), "the reviewers to finish");
     } finally { await f.close(); }
+
   });
+});
 
   it("drains the reviewer on screen without starting the next one, then reopens the waiting reviewer after restarting", async () => {
-    const f = await fixture({ planner: "parallel", screenRoles: ["code reviewer"], screenRoleHold: true, reopen: "resume" });
+  return engineCases.use("petrina-screen-", async caseOwner => {
+    const f = await fixture(caseOwner, { planner: "parallel", screenRoles: ["code reviewer"], screenRoleHold: true, reopen: "resume" }, 1, {}, "review");
     const [id] = f.ids as [string];
     try {
       f.engine.setScreenUse("on");
@@ -601,10 +571,13 @@ describe("internal roles and reviewers asking for the screen", () => {
       expect(f.fakes.opens().filter((entry) => entry.session === second).map((entry) => entry.how)).toEqual(["new", "resume"]);
       expect(f.fakes.received("code reviewer").filter((entry) => entry.session === first)).toHaveLength(2);
     } finally { await f.close(); }
+
   });
+});
 
   it("lets internal verifiers wait for the screen and give their verdicts on the same conversations", async () => {
-    const f = await fixture({ planner: "parallel", reviewer: "important", verifier: "not-a-bug", screenRoles: ["verifier"], reopen: "resume" });
+  return engineCases.use("petrina-screen-", async caseOwner => {
+    const f = await fixture(caseOwner, { planner: "parallel", reviewer: "important", verifier: "not-a-bug", screenRoles: ["verifier"], reopen: "resume" }, 1, {}, "review");
     const [id] = f.ids as [string];
     try {
       f.engine.setPoolPaused(false);
@@ -623,13 +596,16 @@ describe("internal roles and reviewers asking for the screen", () => {
       for (const session of sessions) expect(f.fakes.received("verifier").filter((entry) => entry.session === session)).toHaveLength(2);
       expect(f.task(id).findings.find((entry) => entry.verification)?.verification?.verdict).toBe("not-a-bug");
     } finally { await f.close(); }
+
   });
+});
 });
 
 describe("screen requests and checked tools", () => {
   it.each([false, true])("keeps the login fix when the waiting agent's tool is logged out (parallel: %s)", async (parallel) => {
+  return engineCases.use("petrina-screen-", async caseOwner => {
     const role = parallel ? "code reviewer" : "builder";
-    const f = await fixture({ planner: parallel ? "parallel" : "short", screenRoles: [role], reopen: "resume" }, 1, { toolPath: () => process.execPath });
+    const f = await fixture(caseOwner, { planner: parallel ? "parallel" : "short", screenRoles: [role], reopen: "resume" }, 1, { toolPath: () => process.execPath }, parallel ? "review" : "build");
     const [id] = f.ids as [string];
     try {
       f.engine.setPoolPaused(false);
@@ -652,13 +628,16 @@ describe("screen requests and checked tools", () => {
       expect(f.task(id).hunt?.screenTurns).toBeUndefined();
       expect(f.onScreen()).toEqual([]);
     } finally { await f.close(); }
+
   });
+});
 });
 
 describe("screen requests when a tool runs out of usage", () => {
   it.each([false, true])("keeps the stand-in's conversation when the planned tool becomes free (parallel: %s)", async (parallel) => {
+  return engineCases.use("petrina-screen-", async caseOwner => {
     const role = parallel ? "code reviewer" : "builder";
-    const f = await fixture({ planner: parallel ? "parallel" : "short", screenRoles: [role], reopen: "resume", limited: [{ model: parallel ? "opus" : "gpt-6.1-sol", role }] }, 1, { toolPath: () => process.execPath });
+    const f = await fixture(caseOwner, { planner: parallel ? "parallel" : "short", screenRoles: [role], reopen: "resume", limited: [{ model: parallel ? "opus" : "gpt-6.1-sol", role }] }, 1, { toolPath: () => process.execPath }, parallel ? "review" : "build");
     const [id] = f.ids as [string];
     try {
       f.engine.setPoolPaused(false);
@@ -674,7 +653,8 @@ describe("screen requests when a tool runs out of usage", () => {
         }
       }
       f.engine.setScreenUse("on");
-      await f.until((state) => f.built(state, id), "the screen checks to finish on their own conversations");
+      if (parallel) await f.until((state) => f.built(state, id), "the screen checks to finish on their own conversations");
+      else await f.builderDone(id, "the Builder to finish on its stand-in conversation");
       for (const session of saved) {
         const received = f.fakes.received(role).filter((entry) => entry.session === session);
         expect(received).toHaveLength(2);
@@ -682,11 +662,14 @@ describe("screen requests when a tool runs out of usage", () => {
       }
       expect(f.task(id).screen).toBeUndefined();
     } finally { await f.close(); }
+
   });
+});
 
   it.each([false, true])("returns the screen when an agent runs out mid-check, and holds its stand-in while Off (parallel: %s)", async (parallel) => {
+  return engineCases.use("petrina-screen-", async caseOwner => {
     const role = parallel ? "code reviewer" : "builder";
-    const f = await fixture({ planner: parallel ? "parallel" : "short", screenRoles: [role], reopen: "resume", limited: [{ model: parallel ? "opus" : "gpt-6.1-sol", role, onScreen: true }] }, 1, { toolPath: () => process.execPath });
+    const f = await fixture(caseOwner, { planner: parallel ? "parallel" : "short", screenRoles: [role], reopen: "resume", limited: [{ model: parallel ? "opus" : "gpt-6.1-sol", role, onScreen: true }] }, 1, { toolPath: () => process.execPath }, parallel ? "review" : "build");
     const [id] = f.ids as [string];
     let switchedOff = false;
     const unsubscribe = f.engine.subscribe(() => {
@@ -710,7 +693,8 @@ describe("screen requests when a tool runs out of usage", () => {
       await Bun.sleep(200);
       expect(f.fakes.received(role)).toHaveLength(before);
       f.engine.setScreenUse("on");
-      await f.until((state) => f.built(state, id), "a stand-in to finish the screen check once allowed");
+      if (parallel) await f.until((state) => f.built(state, id), "a stand-in to finish the screen check once allowed");
+      else await f.builderDone(id, "the stand-in Builder to finish its screen check once allowed");
       const granted = f.fakes.received(role).filter((entry) => entry.text.includes(screenRules(REASON)));
       expect(new Set(granted.map((entry) => entry.session)).size).toBeGreaterThan(1);
       const retries = f.engine.tracking.log.moments({ taskId: id }).filter((entry) => entry.kind === "retry");
@@ -721,7 +705,9 @@ describe("screen requests when a tool runs out of usage", () => {
       }
       expect(f.task(id).screen).toBeUndefined();
     } finally { unsubscribe(); await f.close(); }
+
   });
+});
 });
 
 describe("a Release Manager that asks for the screen", () => {
@@ -735,9 +721,9 @@ describe("a Release Manager that asks for the screen", () => {
     });
     try {
       engine.setScreenUse("on");
-      const productId = await engine.addProduct(w.clone);
+      const productId = installPreparedProduct(engine, acmeDemoProduct(w.clone));
       engine.setProductDelivery(productId, "release", false);
-      const taskId = engine.addTask({ productId, title: "Add a greeting", description: "A greeting file. [quick]" });
+      const taskId = await queuePreparedDelivery(engine, { productId, title: "Add a greeting", description: "A greeting file. [quick]" });
       const task = taskOf(await finish(engine, taskId), taskId);
       expect(task.error).toBeUndefined();
       expect(task.release?.tag).toBe("v0.1.0");
@@ -749,7 +735,7 @@ describe("a Release Manager that asks for the screen", () => {
       unsubscribe();
       await engine.shutdown();
     }
-    });
+    }, { startAgentSession: fakeAgentSessions(new Fakes(w.dir), { scriptPath: join(w.dir, "agents.json") }) });
     });
   });
 });

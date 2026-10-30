@@ -14,6 +14,35 @@ export function summaryAt(roleId: "architect" | "design-reviewer" | "builder" | 
   ] as const;
   const stageIndex = roleId === "builder" ? 2 : roleId === "code-reviewer" ? 3 : 0;
   const profileId = roleId === "builder" ? "sol-high" : roleId === "design-reviewer" ? "sol-xhigh" : "opus-high";
-  const task: Task = taskFixture(state, { id: "summary", productId: "p", title: "Saved carts", kind: "feature", state: "running", column: "building", holdsSlot: true, approvePlan: false, approveDelivery: true, startedAt: 0, stageIndex, sub: roleId === "design-reviewer" ? 1 : 0, rounds: { [stages[stageIndex].id]: round }, plan: { rationale: "Feature summary", plannerProfileId: "sonnet-medium", stages }, agent: { roleId, profileId, since: 0, step: 0 }, statusLine: "Reading the code", journey: [{ id: "active", kind: "agent", stageId: stages[stageIndex].id, roleId, profileId, startedAt: 0, round, sub: 0 }] });
+  const task: Task = taskFixture(state, {
+    id: "summary",
+    productId: "p",
+    title: "Saved carts",
+    kind: "feature",
+    state: "running",
+    column: "building",
+    holdsSlot: true,
+    approvePlan: false,
+    approveDelivery: true,
+    startedAt: 0,
+    stageIndex,
+    sub: roleId === "design-reviewer" ? 1 : 0,
+    rounds: { [stages[stageIndex].id]: round },
+    plan: { rationale: "Feature summary", plannerProfileId: "sonnet-medium", stages },
+    agent: { roleId, profileId, since: 0, step: 0 },
+    statusLine: "Reading the code",
+    journey: [
+      {
+        id: "active",
+        kind: "agent",
+        stageId: stages[stageIndex].id,
+        roleId,
+        profileId,
+        startedAt: 0,
+        round,
+        sub: 0,
+      },
+    ],
+  });
   return { state, task };
 }

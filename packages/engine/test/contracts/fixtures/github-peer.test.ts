@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { FAKE_GH, runCommand as nativeRunCommand, waitForFile } from "../../support.js";
 import { completeAll } from "@petrina/core";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
+import { writeFixtureJson } from "@petrina/test-support/fixture-json";
 import { repositoryWorldFixtures } from "../../fixtures/repository-worlds.js";
 const fixtures = repositoryWorldFixtures();
 afterEach(() => fixtures.close());
@@ -70,7 +71,12 @@ it("answers not found only when Git confirms a ref is absent, and fails when Git
 
     const w = await scope.make("github-lookups");
     const path = join(w.dir, "github.json");
-    const gh = (remote: string, ...args: string[]) => runCommand([process.execPath, FAKE_GH, path, remote, ...args, ...(args[0] === "api" ? ["--paginate", "--slurp"] : ["--repo", "acme/demo"])]);
+    const mapping = join(w.dir, "portfolio.json");
+    const gh = (remote: string, ...args: string[]) => {
+      // The requested product is deliberately not the fallback entry: API and --repo routing must both select it.
+      writeFixtureJson(mapping, { "other/first": { state: join(w.dir, "wrong-state.json"), remote: join(w.dir, "wrong-remote") }, "acme/demo": { state: path, remote } });
+      return runCommand([process.execPath, join(import.meta.dir, "../../fake-portfolio-gh.ts"), mapping, ...args, ...(args[0] === "api" ? ["--paginate", "--slurp"] : ["--repo", "acme/demo"])]);
+    };
 
     w.setGitHub((github) => github.prs.push({ number: 1, url: "https://github.com/acme/demo/pull/1", headRefName: "gone", baseRefName: "main", headRefOid: w.initial, state: "OPEN", isCrossRepository: false, title: "Greeting", body: "" }));
     expect(await gh(w.remote, "api", "repos/acme/demo/branches/main")).toEqual({ code: 0, stdout: `${JSON.stringify([{ commit: { sha: w.initial } }])}\n`, stderr: "" });

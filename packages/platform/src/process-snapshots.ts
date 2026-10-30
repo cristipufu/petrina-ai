@@ -1,4 +1,6 @@
 // Parsing a completed observation has no native effects.
+export const CLEANUP_INCOMPLETE = "Petrina could not confirm every child process stopped. Some may still be running.";
+
 export type ChildState = "running" | "ended" | "unknown";
 
 export type ProcessState = "running" | "finished" | "absent" | "unknown";

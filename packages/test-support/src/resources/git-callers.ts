@@ -5,6 +5,11 @@ export function isGitCaller(value: unknown): value is string {
     && value.split("/").every(part => part !== "" && part !== "." && part !== "..");
 }
 
+function isRepositoryGitFrame(frame: string): boolean {
+  return frame.startsWith("packages/repositories/src/git.")
+    || frame.startsWith("packages/repositories/src/git/");
+}
+
 export function gitCaller(stack: string | undefined, sourceRoot: string): string | undefined {
   const root = sourceRoot.replaceAll("\\", "/").replace(/\/+$/, "");
   if (!root || !stack) return undefined;
@@ -19,10 +24,13 @@ export function gitCaller(stack: string | undefined, sourceRoot: string): string
     const frame = `${match[1]}:${match[2]}`;
     if (isGitCaller(frame) && !frames.includes(frame)) frames.push(frame);
   }
-  const outsidePlumbing = frames.filter(frame => !frame.startsWith("packages/test-support/src/resources/")
+  const outsidePlumbing = frames.filter(frame =>
+    !frame.startsWith("packages/test-support/src/resources/")
     && !frame.startsWith("packages/test-support/src/commands.")
-    && !frame.startsWith("packages/repositories/src/git."));
+    && !isRepositoryGitFrame(frame));
   return outsidePlumbing.find(frame => frame.startsWith("packages/engine/src/"))
     ?? outsidePlumbing[0]
-    ?? frames.find(frame => frame.startsWith("packages/repositories/src/git."));
+    // Async stacks can stop inside the adapter. Keep its operation's call site,
+    // rather than attributing every such command to the shared spawn wrapper.
+    ?? frames.findLast(isRepositoryGitFrame);
 }

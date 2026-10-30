@@ -2,6 +2,7 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { join } from "node:path";
 import { coordinator, FAKE_AGENT, FAKE_GH, taskOf, until } from "../../support.js";
 import { securityWorlds } from "../../fixtures/security.js";
+import { installPreparedProduct, acmeDemoProduct } from "../../fixtures/prepared-product.js";
 
 const { world, close } = securityWorlds();
 afterAll(close);
@@ -32,7 +33,8 @@ it("runs a product's credentialed git steps one at a time, task-start updates in
     });
     return fixture.engine(async engine => {
     try {
-      const productId = await engine.addProduct(w.clone);
+      await engine.waitUntilReady(); engine.stopRequested.signal.throwIfAborted();
+      const productId = installPreparedProduct(engine, acmeDemoProduct(w.clone));
       engine.setPoolPaused(true);
       const tasks = [1, 2, 3].map((n) => engine.addTask({ productId, title: `Task ${n}`, description: "A greeting file. [quick]" }));
       engine.setPoolPaused(false);

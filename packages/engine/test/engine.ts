@@ -9,7 +9,11 @@ export function writeFixtureEngineOptions(path: string, options: EngineOptions):
   if (options.browserRecovery !== undefined) throw new TypeError("Browser recovery is process-local. Configure it inside the child fixture instead of serializing it.");
   if (options.files !== undefined) throw new TypeError("File effects are process-local. Configure them inside the child fixture instead of serializing them.");
   if (options.startAgentSession !== undefined) throw new TypeError("Agent sessions are process-local. Configure them inside the child fixture instead of serializing them.");
+  if (options.github !== undefined) throw new TypeError("GitHub services are process-local. Configure them inside the child fixture instead of serializing them.");
   if (options.toolProbe !== undefined) throw new TypeError("Tool probes are process-local. Configure them inside the child fixture instead of serializing them.");
+  if (options.containerInspection !== undefined) throw new TypeError("Container inspection is process-local. Configure it inside the child fixture instead of serializing it.");
+  if (options.containerControl !== undefined) throw new TypeError("Container controls are process-local. Configure them inside the child fixture instead of serializing them.");
+  if (options.validationSnapshots !== undefined) throw new TypeError("Validation snapshots are process-local. Configure them inside the child fixture instead of serializing them.");
   writeFixtureJson(path, options);
 }
 

@@ -2,12 +2,11 @@ import { afterAll, expect, it } from "bun:test";
 import { followUpKey, type Finding } from "@petrina/core";
 import { Coordination } from "../../../src/coordination.js";
 import { createFollowUpFixtures, settledSource } from "../../fixtures/follow-up-native.js";
-
-const { open, close, shutdown } = createFollowUpFixtures();
+const { open, close, use } = createFollowUpFixtures();
 afterAll(close);
-
 it("refuses incomplete, unsettled and ineligible manual links with plain reasons and no changes", async () => {
-  const world = await open(undefined, true);
+  return use(async caseOwner => {
+  const world = await open(caseOwner, undefined, true);
   try {
     const { engine } = world;
     const c = new Coordination(engine);
@@ -45,5 +44,6 @@ it("refuses incomplete, unsettled and ineligible manual links with plain reasons
       expect([engine.task(source.id), engine.task(targetId), engine.s.followUpPending], variant.name).toEqual(before);
     }
     expect(world.prompts).toEqual([]);
-  } finally { await shutdown(world.engine); }
+  } finally { await caseOwner.stop(world.engine); }
+  });
 });

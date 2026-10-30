@@ -1,12 +1,11 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { createWorkflowEventFixtures } from "../../fixtures/workflow-event-native.js";
-
-const { fixture, close } = createWorkflowEventFixtures();
+const { fixture, close, use } = createWorkflowEventFixtures();
 afterAll(close);
-
 describe("the bounded event log", () => {
 it("reads a bounded health view and immutable finding copies, and refuses to substitute newer records", async () => {
-    const { e, c } = fixture();
+  return use("petrina-events-", async caseOwner => {
+    const { e, c } = fixture(caseOwner);
     const taskId = e.addTask({ productId: "product", title: "Health" });
     const task = e.task(taskId)!;
     const now = Date.now();
@@ -35,4 +34,5 @@ it("reads a bounded health view and immutable finding copies, and refuses to sub
     expect(JSON.parse(String(result.text))).toEqual({ verdict: "fail" });
     expect((await c.call("journey.input", { taskId, nodeId: "j1" })).outcome).toBe("unavailable");
   });
+});
 });

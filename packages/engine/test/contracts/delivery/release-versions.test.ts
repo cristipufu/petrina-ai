@@ -2,11 +2,14 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
+import * as gitOps from "@petrina/repositories/git";
 import { commitFiles, pkg, release, releaseVersionFixtures } from "../../fixtures/release-versions.js";
-import { git, gitWith, remoteRef } from "../../support.js";
+import { git, remoteRef } from "../../support.js";
 
 const { world, close } = releaseVersionFixtures();
 afterAll(close);
+const show = async (clone: string, rev: string, file: string) =>
+  ((await gitOps.fileAt(clone, rev, file)) ?? await git(clone, "show", `${rev}:${file}`)).trim();
 
 describe.concurrent("Release versions on real deliveries", () => {
 
@@ -14,14 +17,11 @@ describe.concurrent("Release versions on real deliveries", () => {
     const [task] = await preparedRelease();
     expect(task!.error).toBeUndefined();
     expect(task!.release?.tag).toBe("v1.4.0");
-    expect(JSON.parse(await git(w.clone, "show", `${await remoteRef(w.remote, "refs/tags/v1.4.0")}:package.json`)).version).toBe("1.4.0");
+    expect(JSON.parse(await show(w.clone, (await remoteRef(w.remote, "refs/tags/v1.4.0"))!, "package.json")).version).toBe("1.4.0");
   }));
 
   it("stops when the version files disagree before the first release", () => world("disagree", { version: "1.0.0" }, async ({ world: w, preparedRelease }) => {
-    writeFileSync(join(w.clone, "Cargo.toml"), '[package]\nname = "demo"\nversion = "2.0.0"\n');
-    await git(w.clone, "add", ".");
-    await git(w.clone, "commit", "-q", "-m", "cargo");
-    await git(w.clone, "push", "-q", w.remote, "main");
+    await commitFiles(w, { "Cargo.toml": '[package]\nname = "demo"\nversion = "2.0.0"\n' });
     const [task] = await preparedRelease();
     expect(task!.state).toBe("failed");
     expect(task!.error).toContain("the version files disagree (package.json says 1.0.0, Cargo.toml says 2.0.0)");
@@ -44,12 +44,12 @@ describe.concurrent("Release versions on real deliveries", () => {
     expect(task!.error).toBeUndefined();
     expect(task!.release?.tag).toBe("v1.4.1");
     const tagged = (await remoteRef(w.remote, "refs/tags/v1.4.1"))!;
-    for (const file of ["package.json", tauri]) expect(JSON.parse(await git(w.clone, "show", `${tagged}:${file}`)).version).toBe("1.4.1");
+    for (const file of ["package.json", tauri]) expect(JSON.parse(await show(w.clone, tagged, file)).version).toBe("1.4.1");
     // A fixture and a package in a subfolder keep theirs, and the version commit changes nothing else.
-    expect(JSON.parse(await git(w.clone, "show", `${tagged}:test/fixtures/old/package.json`)).version).toBe("9.9.9");
-    expect(JSON.parse(await git(w.clone, "show", `${tagged}:apps/desktop/package.json`)).version).toBe("1.4.0");
+    expect(JSON.parse(await show(w.clone, tagged, "test/fixtures/old/package.json")).version).toBe("9.9.9");
+    expect(JSON.parse(await show(w.clone, tagged, "apps/desktop/package.json")).version).toBe("1.4.0");
     expect((await git(w.clone, "diff", "--name-only", `${tagged}^`, tagged)).split("\n").sort()).toEqual(["package.json", tauri]);
-    expect(await git(w.clone, "show", `${tagged}:package.json`)).toBe(pkg("1.4.1").trim());
+    expect(await show(w.clone, tagged, "package.json")).toBe(pkg("1.4.1").trim());
   }));
 
   it("sets Cargo.toml's version and the product's own entry in Cargo.lock, never a dependency's", () => world("cargo", { version: "1.4.0" }, async ({ world: w, preparedRelease }) => {
@@ -62,8 +62,8 @@ describe.concurrent("Release versions on real deliveries", () => {
     expect(task!.error).toBeUndefined();
     expect(task!.release?.tag).toBe("v1.4.1");
     const tagged = (await remoteRef(w.remote, "refs/tags/v1.4.1"))!;
-    expect(await git(w.clone, "show", `${tagged}:Cargo.toml`)).toBe('[package]\nname = "demo"\nversion = "1.4.1" # the product\n\n[dependencies]\nserde = "1"');
-    const lock = await git(w.clone, "show", `${tagged}:Cargo.lock`);
+    expect(await show(w.clone, tagged, "Cargo.toml")).toBe('[package]\nname = "demo"\nversion = "1.4.1" # the product\n\n[dependencies]\nserde = "1"');
+    const lock = await show(w.clone, tagged, "Cargo.lock");
     expect(lock).toContain('name = "demo"\nversion = "1.4.1"');
     expect(lock).toContain('name = "serde"\nversion = "1.4.0"');
   }));
@@ -101,19 +101,21 @@ describe.concurrent("Release versions on real deliveries", () => {
     expect(await remoteRef(w.remote, "refs/heads/main")).toBe(w.initial);
   }));
 
-  it("stops when the version files do not follow the latest release", () => world("off", { version: "2.0.0" }, async ({ world: w, preparedRelease }) => {
-    await release(w, "v1.2.0", w.initial);
+  it("stops when the version files do not follow the latest release", () => world("off", {}, async ({ world: w, preparedRelease }) => {
+    await commitFiles(w, { "package.json": pkg("2.0.0") });
+    const tip = (await remoteRef(w.remote, "refs/heads/main"))!;
+    await release(w, "v1.2.0", tip);
     const [task] = await preparedRelease();
     expect(task!.state).toBe("failed");
     expect(task!.error).toContain("The latest release is v1.2.0, but the version files say otherwise (package.json says 2.0.0)");
-    expect(await remoteRef(w.remote, "refs/heads/main")).toBe(w.initial);
+    expect(await remoteRef(w.remote, "refs/heads/main")).toBe(tip);
     expect(w.github().releases.map((entry) => entry.tagName)).toEqual(["v1.2.0"]);
     expect(w.script().releaseManagerPrompts).toBeUndefined();
   }));
 
   it("stops rather than skip a version when the new tag is already on GitHub", () => world("occupied", {}, async ({ world: w, preparedRelease }) => {
     await release(w, "v1.0.0", w.initial);
-    await gitWith({}, "--git-dir", w.remote, "update-ref", "refs/tags/v1.0.1", w.initial);
+    writeFileSync(join(w.remote, "refs", "tags", "v1.0.1"), `${w.initial}\n`);
     const [task] = await preparedRelease();
     expect(task!.state).toBe("failed");
     expect(task!.error).toContain("The tag v1.0.1 already exists on GitHub");

@@ -1,7 +1,8 @@
 // Taking over a step in the coordinator's own terminal, and handing it back. The engine and the
 // app share these rules and words, so the button is only enabled when the engine would accept it.
 
-import type { State, Task } from "./model.js";
+import type { Role, State, Task } from "./model.js";
+import { roleForTask } from "./roles.js";
 
 /** The tools whose own app Petrina can open on an agent's conversation. */
 export const TAKE_OVER_TOOLS: Readonly<Record<string, string>> = { "claude-code": "Claude Code", codex: "Codex", grok: "Grok" };
@@ -67,11 +68,12 @@ export function toolName(toolId: string | undefined): string {
  * An agent other than the Release Manager must be working or waiting on them, on Claude Code, Codex or Grok,
  * in a conversation that already has its instructions.
  */
-export function takeOverBlock(task: Task, state: Pick<State, "profiles" | "tools">): string | undefined {
+export function takeOverBlock(task: Task, state: Pick<State, "profiles" | "tools"> & { readonly roles?: readonly Pick<Role, "id" | "result">[] }): string | undefined {
   if (task.driving) return TAKE_OVER_WORDS.driving;
   const agent = task.agent;
   if (!agent || !task.holdsSlot || (task.state !== "running" && task.state !== "needs-you")) return TAKE_OVER_WORDS.noAgent;
-  if (agent.roleId === "release-manager") return TAKE_OVER_WORDS.releaseManager;
+  const delivery = state.roles ? roleForTask(state.roles, agent.roleId, task)?.result === "delivery" : agent.roleId === "release-manager";
+  if (delivery) return TAKE_OVER_WORDS.releaseManager;
   if (task.helpers?.length) return TAKE_OVER_WORDS.several;
   const toolId = state.profiles.find((profile) => profile.id === agent.profileId)?.toolId;
   if (toolId === "antigravity") return "Antigravity's terminal cannot open this agent's conversation";

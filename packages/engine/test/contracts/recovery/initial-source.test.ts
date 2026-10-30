@@ -2,10 +2,13 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { CheckId, DeliveryMode } from "@petrina/core";
+import * as gitOps from "@petrina/repositories/git";
 import { executionFor } from "@petrina/orchestrator";
 import { git } from "../../support.js";
 import type { Engine } from "../../engine.js";
 import { nativeWorldFixtures, type NativeWorld } from "../../fixtures/native-worlds.js";
+import { acmeDemoProduct, installPreparedProduct } from "../../fixtures/prepared-product.js";
+import { privateAgentToolProbe } from "../../scripted-probes.js";
 
 const fixtures = nativeWorldFixtures();
 afterAll(() => fixtures.close());
@@ -13,7 +16,8 @@ afterAll(() => fixtures.close());
 /** A plan checkpoint before any product work, with only the next Builder admission observed. */
 async function prepare(engine: Engine, world: NativeWorld, delivery: DeliveryMode, withCopy = false) {
   engine.schedule = () => {};
-  const productId = await engine.addProduct(world.clone);
+  await engine.waitUntilReady(); engine.stopRequested.signal.throwIfAborted();
+  const productId = installPreparedProduct(engine, acmeDemoProduct(world.clone));
   const id = engine.addTask({ productId, title: "Wait before starting the build", delivery, backlog: true });
   const task = engine.task(id)!;
   task.startedAt = 10; task.state = "running"; task.stageIndex = -1;
@@ -31,7 +35,7 @@ async function prepare(engine: Engine, world: NativeWorld, delivery: DeliveryMod
     engine.setRuntimeWait(id, [], "The prerequisite was resolved", "clear");
   };
   const admitted: string[] = [];
-  engine["work"].runDo = async scope => { admitted.push(await git(scope.work.worktree!, "rev-parse", "HEAD")); return "stop"; };
+  engine["work"].runDo = async scope => { admitted.push((await gitOps.head(scope.work.worktree!))!); return "stop"; };
   const run = async () => {
     await engine.approve(checkpoint.id);
     engine["driver"].startDriver(id);
@@ -42,15 +46,15 @@ async function prepare(engine: Engine, world: NativeWorld, delivery: DeliveryMod
 
 function fixture<T>(delivery: DeliveryMode, withCopy: boolean, body: (fixture: Awaited<ReturnType<typeof prepare>>) => Promise<T>): Promise<T> {
   return fixtures.world("wait-initial-copy", ({ world, engine: withEngine }) => withEngine(async engine =>
-    body(await prepare(engine, world, delivery, withCopy)), { agentCommand: () => undefined }));
+    body(await prepare(engine, world, delivery, withCopy)), { agentCommand: () => undefined, toolProbe: privateAgentToolProbe() }));
 }
 
 const advanceRemote = async (world: NativeWorld) => {
   writeFileSync(join(world.clone, "required-fix.txt"), "The prerequisite's landed change\n");
-  await git(world.clone, "add", "required-fix.txt"); await git(world.clone, "commit", "-qm", "Land the prerequisite fix");
+  await gitOps.commitChanges(world.clone, "Land the prerequisite fix");
   await git(world.clone, "push", "-q", world.remote, "main");
-  const latest = await git(world.clone, "rev-parse", "HEAD");
-  await git(world.clone, "reset", "--hard", world.initial);
+  const latest = (await gitOps.head(world.clone))!;
+  await gitOps.resetTo(world.clone, world.initial);
   return latest;
 };
 
@@ -65,7 +69,7 @@ describe.concurrent("a prerequisite wait before the first working copy", () => {
       expect(f.task.error).toBeUndefined();
       expect(f.admitted).toHaveLength(1);
       expect(f.scope.work.baseSha).toBe(latest);
-      expect(await git(f.scope.work.worktree!, "show", "HEAD:required-fix.txt")).toBe("The prerequisite's landed change");
+      expect((await gitOps.fileAt(f.scope.work.worktree!, "HEAD", "required-fix.txt"))?.trim()).toBe("The prerequisite's landed change");
       expect(fetched).toBeGreaterThan(0);
       expect(f.task.runtimeWait?.refreshPending).toBeUndefined();
     });

@@ -1,39 +1,36 @@
+import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
+import { fakeAgentSessions } from "../../fixtures/fake-agent-sessions.js";
+import { installPreparedProduct, privateCloneProduct } from "../../fixtures/prepared-product.js";
+import { installSharedWorkflowFastPaths } from "../../fixtures/shared-preparation.js";
+import { privateAgentToolProbe } from "../../scripted-probes.js";
 import { describe as originalDescribe } from "bun:test";
 import { resolve as testFixturePath } from "node:path";
 const TEST_FIXTURE_ROOT = testFixturePath(import.meta.dir, "../..");
 import { afterAll, expect, it } from "bun:test";
-
-
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Task } from "@petrina/core";
-
-
-import { Engine } from "../../engine.js";
 import { Store } from "@petrina/storage/store";
-import { Fakes, makeProduct, removeDir, tempDir, waitFor } from "../../support.js";
-
-const roots: string[] = [];
-afterAll(() => roots.forEach(removeDir));
+import { Fakes, makeProduct, waitFor } from "../../support.js";
+const engineCases = engineCaseFixtures();
+afterAll(() => engineCases.close());
 // Check behavior and cleanup limits do not depend on the host's power-log read: the fixtures' check runs and
 // engines supply no records. Evidence cases pass their own; the native reader's contract lives in check-interruption.test.ts.
-const root = (prefix: string) => {
-  const dir = tempDir(prefix);
-  roots.push(dir);
-  return dir;
-};
-
-
 originalDescribe("Petrina runs the checks itself during a task", () => {
 for (const outcome of ["pass", "fail"] as const) {
     it(`${outcome === "pass" ? "lets the review go ahead when they pass" : "sends the work back before any reviewer runs when they fail"}`, async () => {
-      const dir = root("petrina-checks-task-");
-      const product = await makeProduct(dir);
+  return engineCases.use("petrina-checks-task-", async caseOwner => {
+      const dir = caseOwner.root;
+      const product = await makeProduct(dir, { origin: "none" });
       const fakes = new Fakes(join(dir, "fake"));
       fakes.scenario({ planner: "short", checks: outcome });
-      const engine = new Engine(join(dir, "data"), { agentCommand: () => [process.execPath, join(TEST_FIXTURE_ROOT, "fake-agent.ts"), fakes.dir] });
+      const engine = caseOwner.open(join(dir, "data"), { agentCommand: () => [process.execPath, join(TEST_FIXTURE_ROOT, "fake-agent.ts"), fakes.dir], startAgentSession: fakeAgentSessions(fakes), toolProbe: privateAgentToolProbe() });
+      installSharedWorkflowFastPaths(engine, { skipDriverPrepare: false, skipUpToDate: true, skipPrepareChecks: true, skipReviewCopies: true, skipReviewInputDiffs: true, fastCheckCapture: true, fastCleanup: true, fastCheckpoints: true });
       try {
-        const productId = await engine.addProduct(product);
+        const productId = await caseOwner.run(engine, async () => {
+          await engine.waitUntilReady(); caseOwner.check();
+          return installPreparedProduct(engine, privateCloneProduct(product));
+        });
         engine.setProductDelivery(productId, "local", true);
         const taskId = engine.addTask({ productId, title: "Add a greeting", description: "[no-check]" });
         const task = await waitFor(() => {
@@ -49,7 +46,6 @@ for (const outcome of ["pass", "fail"] as const) {
           if (found?.state === "failed") throw new Error(`The task failed: ${found.error}`);
           return found && state.inbox.some((item) => item.taskId === taskId && item.kind === "delivery") && found;
         }, "the delivery check", 60_000);
-
         const finder = engine.getState().products.find((entry) => entry.id === productId)!;
         expect(finder.checksBy).toBe("finder");
         expect(finder.checks?.length).toBe(1);
@@ -75,15 +71,16 @@ for (const outcome of ["pass", "fail"] as const) {
         expect(task.timeline.filter((entry) => entry.text.startsWith("Found how to check")).length).toBe(1);
         const savedLog = task.checks!.results[0]!.logPath!;
         const contents = readFileSync(savedLog, "utf8");
-        await engine.shutdown();
+        await caseOwner.stop(engine);
         const store = new Store(join(dir, "data", "petrina.db"));
         try {
           expect(store.load()!.tasks.find((entry) => entry.id === taskId)!.repository!.checks!.results[0]!.logPath).toBe(savedLog);
           expect(readFileSync(savedLog, "utf8")).toBe(contents);
         } finally { store.close(); }
       } finally {
-        await engine.shutdown();
+        await caseOwner.stop(engine);
       }
-    });
+  });
+});
   }
 });

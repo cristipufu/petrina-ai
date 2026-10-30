@@ -1,14 +1,15 @@
-import { WaitSourceRefresh, DeliveryCheckpoint, AgentWorkflow, type AgentAdmissionCatalog, type AgentAdmissionReadiness, type AgentAdmissionErrors, type WorkspacePreparation, type AcceptancePreparation, type DeliveryCheckpointPreparation } from "@petrina/orchestrator";
-import { executionFor, scopesFor, type RepositoryContext } from "@petrina/orchestrator";
+import { WaitSourceRefresh, DeliveryCheckpoint, AcceptancePreflight, AgentWorkflow, type AgentAdmissionCatalog, type AgentAdmissionReadiness, type AgentAdmissionErrors, type WorkspacePreparation, type AcceptancePreparation, type DeliveryCheckpointPreparation } from "@petrina/orchestrator";
+import { executionFor, nextWorkspaceProduct, type RepositoryContext } from "@petrina/orchestrator";
 // Scheduling and the task driver: who gets a slot next, the loop that runs a task's stages and stops at
 // checkpoints, and putting interrupted work back in line after a restart.
 
 import { committedCodeOf, versionsOf, designWorkKey, invalidateAcceptance } from "./repositories.js";
 import { shipsUnasked } from "@petrina/core";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { withdrawAsks, type Id, type InboxItem } from "@petrina/core";
 import * as git from "@petrina/repositories/git";
-import { Kernel, Aborted, type MTask, type MStage, PLANNER_PROFILE, ScreenWait, SourceRefreshRequired } from "./kernel.js";
+import { Kernel, Aborted, type RuntimeTask, type MutableStage, PLANNER_PROFILE, ScreenWait, SourceRefreshRequired } from "./kernel.js";
 import { WaitingForUsage, WaitingForCapacity, waitingFor } from "./usage.js";
 import type { Sources } from "./sources.js";
 import type { Planning } from "./planning.js";
@@ -25,6 +26,7 @@ import { destination, needsReleaseManager, type Shipping } from "./shipping.js";
 export class Driver {
   readonly workflow: AgentWorkflow;
   private readonly checkpoint: DeliveryCheckpoint;
+  private readonly acceptancePreflight: AcceptancePreflight;
   private readonly waitRefresh: WaitSourceRefresh;
   constructor(
     private readonly k: Kernel,
@@ -34,12 +36,21 @@ export class Driver {
     reviews: Reviews,
     private readonly checks: ProductChecks,
     guide: GuideKeeper,
-    private readonly updates: Updates,
+    updates: Updates,
     learnings: Learnings,
     private readonly shipping: Shipping,
     private readonly connections: Connections,
     private readonly sources: Sources,
   ) {
+    this.acceptancePreflight = new AcceptancePreflight({
+      role: (id, task) => k.role(id, task), blocked: task => checks.blocked(task),
+      backToBuilder: (scope, products) => checks.backToBuilder(scope, "before acceptance testing", products),
+    }, {
+      upToDate: (scope, signal) => updates.upToDate(scope, signal),
+      ensureChecks: (scope, signal) => checks.ensureChecks(scope, signal),
+      failing: (scope, signal, required, prepare) => checks.failing(scope, signal, required, "acceptance", prepare),
+      preparationChanged: error => error instanceof CheckPreparationChanged,
+    });
     this.waitRefresh = new WaitSourceRefresh({
       due: task => k.taskSourceRefreshDue(task), stepStarted: task => k.taskStepStarted(task),
       checkpoint: () => k.commitNow(), note: (task, tone, text) => k.log(task, tone, text), aborted: () => new Aborted(),
@@ -71,9 +82,11 @@ export class Driver {
       note: (task, tone, text) => k.log(task, tone, text), checkpoint: () => k.commit(), gate: task => k.gate(task, "delivery"),
       shipsUnasked: task => this.shipsUnasked(task), destination: scope => destination(scope.work, k.s.products.find(product => product.id === scope.work.productId)),
     }, {
-      writeGuide: scope => guide.writeGuide(scope), writeLearnings: scope => learnings.write(scope), upToDate: (scope, signal) => updates.upToDate(scope, signal),
+      writeGuide: scope => guide.writeGuide(scope), writeLearnings: scope => learnings.write(scope),
+      upToDate: (scope, signal) => { updates.clearObservedHead(scope); return updates.upToDate(scope, signal); },
       checksBeforeDelivery: (scope, signal, prepare) => checks.checksBeforeDelivery(scope, signal, prepare), offerLearnings: scope => learnings.offer(scope),
-      previewRelease: async (scope, stage, signal) => { await shipping.releases.previewRelease(scope, stage, signal); }, head: scope => git.head(scope.work.worktree!),
+      previewRelease: async (scope, stage, signal) => { updates.clearObservedHead(scope); await shipping.releases.previewRelease(scope, stage, signal); updates.clearObservedHead(scope); },
+      head: scope => { const known = updates.consumeObservedHead(scope); return known ? Promise.resolve(known) : git.head(scope.work.worktree!); },
       patch: (scope, head) => updates.patch(scope, head), committedCode: task => committedCodeOf(task),
       invalidateAcceptance: (task, versions) => invalidateAcceptance(task, versions), versions: task => versionsOf(task),
       acceptanceVersion: (scope, versions) => checks.acceptanceVersion(scope, versions),
@@ -104,7 +117,7 @@ export class Driver {
   schedule(): void { this.workflow.schedule(); }
   startDriver(taskId: Id, resume = false): void { this.workflow.startDriver(taskId, resume); }
 
-  private async prepareWorkspace(current: MTask, stage: MStage | undefined, signal: AbortSignal): Promise<WorkspacePreparation> {
+  private async prepareWorkspace(current: RuntimeTask, stage: MutableStage | undefined, signal: AbortSignal): Promise<WorkspacePreparation> {
     await this.k.agentCleanup.wait(current.id);
     let scope = executionFor(current);
     // A restart can find the working copy detached by an interrupted commit hook. Put it back before
@@ -128,7 +141,7 @@ export class Driver {
       }
       const editing = stage && this.k.role(stage.roleId, current)?.canEdit && (stage.kind === "do" || (stage.kind === "converge" && current.sub === 0));
       const progress = stage?.kind === "converge" ? designWorkKey(current, stage.id) : stage?.id;
-      const nextProduct = current.repair?.products[current.repair.index] ?? (editing && progress ? current.repositories.find((work) => !work.completedStages.includes(progress))?.productId : undefined) ?? current.leadProductId ?? current.repositories[0]!.productId;
+      const nextProduct = nextWorkspaceProduct(current, editing ? progress : undefined);
       current.activeProductId = nextProduct;
       scope = executionFor(current);
     }
@@ -150,46 +163,10 @@ export class Driver {
   }
 
   private async prepareAcceptance(scope: RepositoryContext, signal: AbortSignal): Promise<AcceptancePreparation> {
-    const current = scope.task;
-    // Resolve an already-known stale base before spending checks or acceptance on it.
-    // A saved helper finishes its version first; completed discovery does not defer the checks' update.
-    let failed = false;
-    const eligibleProducts = new Set<Id>();
-    let conflict = false;
-    for (const scope of scopesFor(current)) {
-      const work = scope.work;
-      if (current.repositories) current.activeProductId = work.productId;
-      const deferred = !!work.conversation;
-      const testerFinishing = () => this.k.role(work.conversation?.roleId ?? "", current)?.result === "checks";
-      if (!deferred && await this.updates.upToDate(scope, signal) === "conflict") { conflict = true; break; }
-      let required = await this.checks.ensureChecks(scope, signal);
-      if (deferred && !testerFinishing()) {
-        const update = await this.updates.upToDate(scope, signal);
-        if (update === "conflict") { conflict = true; break; }
-        if (update === "moved") required = await this.checks.ensureChecks(scope, signal);
-      }
-      try {
-        const result = await this.checks.failing(scope, signal, required, "acceptance", async () => testerFinishing() || await this.updates.upToDate(scope, signal) !== "conflict");
-        failed = result.kind !== "passed" || failed;
-        if (result.kind === "product-failed") eligibleProducts.add(result.productId);
-      } catch (error) { if (error instanceof CheckPreparationChanged) { conflict = true; break; } throw error; }
-
-    }
-    if (conflict) return { kind: "repeat" };
-    if (failed) {
-      for (const { work } of scopesFor(current)) {
-        delete work.portReview;
-        delete work.reviewedTree;
-      }
-      if (this.checks.backToBuilder(scope, "before acceptance testing", eligibleProducts)) return { kind: "repeat" };
-      // Acceptance testing waits here, and starts once the checks pass on the current code.
-      this.checks.blocked(current);
-      return { kind: "stop" };
-    }
-    return { kind: "prepared" };
+    return this.acceptancePreflight.run(scope, signal);
   }
 
-  private async clearUnpublishedOnFailure(current: MTask): Promise<void> {
+  private async clearUnpublishedOnFailure(current: RuntimeTask): Promise<void> {
     await this.k.agentCleanup.wait(current.id);
     if (current.repositories) {
       for (const work of current.repositories) {
@@ -207,7 +184,7 @@ export class Driver {
   }
 
   /** Reuse ordinary source updates and evidence gates; waiting itself changes no conversations or rounds. */
-  private refreshAfterWait(task: MTask, signal: AbortSignal): Promise<boolean> {
+  private refreshAfterWait(task: RuntimeTask, signal: AbortSignal): Promise<boolean> {
     return this.waitRefresh.run(task, signal);
   }
 
@@ -220,7 +197,7 @@ export class Driver {
   }
 
   /** The starting point is recorded and confirmed, and no proposed change is still waiting. */
-  private sourceSettled(task: MTask): boolean {
+  private sourceSettled(task: RuntimeTask): boolean {
     const scope = executionFor(task);
     if (task.confirmWork || task.workError || task.proposedSource) return false;
     // Planning is still open, so the planner may change the starting point. Nothing is fetched yet.
@@ -251,9 +228,9 @@ export class Driver {
       const fetched = await this.connections.fetchDefault(scope, signal);
       // A stalled or refused fetch never holds a task: it works from the local copy.
       if (!fetched.ok && !fetched.missing) this.k.log(scope, "warn", `${fetched.timedOut ? "GitHub did not answer in time" : `Did not update from GitHub: ${this.connections.why(scope, fetched)}`}, so this task starts from the local copy`);
-      if (await git.revParse(product.path, `refs/remotes/origin/${defaultBranch}`)) base = `origin/${defaultBranch}`;
+      if (fetched.ok || await git.revParse(product.path, `refs/remotes/origin/${defaultBranch}`)) base = `origin/${defaultBranch}`;
     }
-    if (!scope.work.worktree && scope.work.delivery === "local" && (!scope.work.source || scope.work.source.start.kind === "default") && base === defaultBranch && !await git.revParse(product.path, `refs/heads/${defaultBranch}`)) {
+    if (!scope.work.worktree && scope.work.delivery === "local" && (!scope.work.source || scope.work.source.start.kind === "default") && base === defaultBranch && !existsSync(join(product.path, ".git", "refs", "heads", defaultBranch)) && !await git.revParse(product.path, `refs/heads/${defaultBranch}`)) {
       // A changed remote default can leave the approved branch only at origin. Passing its
       // bare name makes git guess and attach the task copy to that destination branch.
       base = await git.revParse(product.path, `refs/remotes/origin/${defaultBranch}`) ?? base;
@@ -262,7 +239,7 @@ export class Driver {
     // Stopped before its first copy was made: none is made. Only cancellation removes a newly made copy;
     // a pause, shutdown or resumed task keeps it, even though the old driver's signal is aborted.
     if (signal.aborted && !scope.work.worktree) throw new Aborted();
-    if (own && !own.preparingCopy) {
+    if (own && !own.preparingCopy && (!scope.work.worktree || scope.work.baseSha == null || !scope.work.savedVersion)) {
       own.preparingCopy = { path: worktree, branch, base: await git.revParse(product.path, base) ?? base };
       this.k.commitNow();
     }
@@ -276,13 +253,21 @@ export class Driver {
       await git.reattach(worktree, branch);
       delete scope.work.hooking;
     }
+    if (signal.aborted) throw new Aborted();
     // Known before the builder starts, so it runs them too.
     await this.checks.noteHooks(scope);
+    if (signal.aborted) throw new Aborted();
     scope.work.base = scope.work.base ?? base;
+    const observed = scope.work.baseSha == null || !scope.work.savedVersion ? await git.commitVersion(worktree) : undefined;
+    if (signal.aborted) throw new Aborted();
     // Pin the commit actually checked out, before any agent starts; a shared source ref may move meanwhile.
-    scope.work.baseSha = scope.work.baseSha ?? (await git.head(worktree));
+    // Keep HEAD's throwing fallback when the paired observation is unavailable.
+    const baseSha = scope.work.baseSha ?? observed?.head ?? await git.head(worktree);
+    if (signal.aborted) throw new Aborted();
+    scope.work.baseSha = baseSha;
     if (scope.work.source && scope.work.baseSha) scope.work.source.initialSha ??= scope.work.baseSha;
-    if (!scope.work.savedVersion) await this.k.rememberVersion(scope);
+    if (!scope.work.savedVersion) await this.k.rememberVersion(scope, observed);
+    if (signal.aborted) throw new Aborted();
     if (own) delete own.preparingCopy;
     this.k.commit();
   }
@@ -331,7 +316,7 @@ export class Driver {
   }
 
   /** Low-risk work skips the delivery check only where the coordinator opted in, with nothing left that needs them. */
-  private shipsUnasked(task: MTask): boolean {
+  private shipsUnasked(task: RuntimeTask): boolean {
     const scope = executionFor(task);
     return shipsUnasked(task, { products: this.k.s.products, product: this.k.productOf(task), checks: scope.work.checks, checkSetup: scope.work.checkSetup, checkSetupInvalidated: scope.work.checkSetupInvalidated });
   }

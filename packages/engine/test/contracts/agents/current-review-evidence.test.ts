@@ -14,15 +14,12 @@ afterAll(() => prepared.close());
 describe.concurrent("reviews that converge", () => {
   for (const [name, scenario, role, corrections] of [
     ["single code review", { planner: "short", reviewRounds: 2 }, "code reviewer", 1],
-    ["parallel code review", {}, "code reviewer", 2],
     ["resumed parallel code review after screen permission", { screenRoles: ["code reviewer"] }, "code reviewer", 2],
-    ["security review", { risk: "high" }, "security reviewer", 1],
-    ["added findings role", { planner: "mixed-review" }, "security specialist", 1],
   ] as [string, Scenario, string, number][]) {
     it(`requires current reopening evidence in ${name}, then accepts a correction in the same conversation`, async () => {
       return cases.use("petrina-engine-case-", async owner => {
         const input: Scenario = { ...scenario, builder: "plain", reviewer: "important", reviewConfirmation: { role, correction: "omit" } };
-        const { task, fakes } = await (scenario.screenRoles ? untilDelivery(owner, input) : prepared.evidence(input));
+        const { task, fakes } = await (scenario.screenRoles ? untilDelivery(owner, input, undefined, false, { entry: "builder", skipDiffs: true }) : prepared.evidence(input));
         const findings = task.findings.filter((finding) => finding.severity === "blocking");
         expect(findings.length).toBeGreaterThan(0);
         for (const finding of findings) {

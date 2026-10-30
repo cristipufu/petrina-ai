@@ -1,6 +1,6 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { git } from "../support.js";
+import * as gitOps from "@petrina/repositories/git";
 import { withRepositoryRecords, type OwnedRepositoryRecords } from "./shared-records.js";
 
 type ReviewSettlement = OwnedRepositoryRecords & {
@@ -14,8 +14,7 @@ export async function withReviewSettlement<T>(body: (fixture: ReviewSettlement) 
     const { engine, task } = fixture;
     const [first, second] = engine.s.products.map((product) => ({ clone: product.path! })) as [{ clone: string }, { clone: string }];
     writeFileSync(join(second.clone, "SECOND.md"), "Only the second repository has this file.\n");
-    await git(second.clone, "add", "SECOND.md");
-    await git(second.clone, "commit", "-q", "-m", "Give the second repository distinct review evidence");
+    await gitOps.commitChanges(second.clone, "Give the second repository distinct review evidence");
     const products = engine.s.products;
     task.repositories = products.map((product) => ({ productId: product.id, source: { product, start: { kind: "default", branch: "main" }, destination: { mode: "local", kind: "branch", repo: product.repo, branch: "main" }, confirmed: true }, worktree: product.path, delivery: "local", completedStages: [], reviewedSha: `earlier-${product.id}`, reviewedTree: `earlier-tree-${product.id}` }));
     task.activeProductId = "first";

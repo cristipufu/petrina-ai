@@ -167,23 +167,30 @@ export async function followEvents(client: CoordinationClient, args: Record<stri
   }
 }
 
-export async function coordinationCli(argv: string[], client: CoordinationClient = new EngineClient()): Promise<number> {
+export interface CliOutput {
+  log?: (line: string) => void;
+  error?: (line: string) => void;
+}
+
+export async function coordinationCli(argv: string[], client: CoordinationClient = new EngineClient(), io: CliOutput = {}): Promise<number> {
+  const out = io.log ?? console.log;
+  const err = io.error ?? console.error;
   const [group, verb, ...rest] = argv;
   if (!group || group === "help" || group === "--help" || group === "-h") {
-    console.log(commandHelp());
+    out(commandHelp());
     return 0;
   }
   if (!verb || verb === "--help" || verb === "help") {
-    console.log(commandHelp(group));
+    out(commandHelp(group));
     return 0;
   }
   const spec = operation(`${group}.${verb}`);
   if (!spec) {
-    console.error("Unknown operation. Use petrina --help.");
+    err("Unknown operation. Use petrina --help.");
     return 2;
   }
   if (rest.includes("--help") || rest.includes("-h")) {
-    console.log(commandHelp(group, verb));
+    out(commandHelp(group, verb));
     return 0;
   }
   const args: Record<string, unknown> = {};
@@ -227,15 +234,15 @@ export async function coordinationCli(argv: string[], client: CoordinationClient
     }
     if (spec.changes && !args.requestId) {
       args.requestId = randomUUID();
-      console.error(`Request reference: ${args.requestId}`);
+      err(`Request reference: ${args.requestId}`);
     }
     if (follow) return followEvents(client, args);
     const result: Result = await client.call(spec.name, args);
-    console.log(json ? JSON.stringify(result) : human(result));
+    out(json ? JSON.stringify(result) : human(result));
     return exitCode(result.outcome);
   } catch (error) {
     const result = { outcome: "invalid", message: error instanceof Error ? error.message : "The arguments could not be read." };
-    console.log(json ? JSON.stringify(result) : human(result));
+    out(json ? JSON.stringify(result) : human(result));
     return 2;
   }
 }

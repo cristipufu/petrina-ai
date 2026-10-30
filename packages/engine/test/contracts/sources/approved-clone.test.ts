@@ -1,13 +1,28 @@
 import { expectRejection } from "@petrina/test-support/rejections";
 import { executionFor } from "@petrina/orchestrator";
 import { afterAll, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { Connections } from "../../../src/connection.js";
 import { Sources } from "../../../src/sources.js";
 import type { Engine, EngineOptions } from "../../engine.js";
 import { nativeWorldFixtures, type NativeWorld } from "../../fixtures/native-worlds.js";
+import { readRef, readWorktreeCommit } from "../../fixtures/shared-preparation.js";
+import { commitOnCloneBranch } from "../../fixtures/source-world.js";
 import { git } from "../../support.js";
+
+function checkedOutBranch(repoOrWorktree: string): string {
+  const dotGit = join(repoOrWorktree, ".git");
+  let gitDir = dotGit;
+  try {
+    const content = readFileSync(dotGit, "utf8");
+    if (content.startsWith("gitdir:")) gitDir = resolve(repoOrWorktree, content.slice("gitdir:".length).trim());
+  } catch {
+    // dotGit is a directory
+  }
+  const head = readFileSync(join(gitDir, "HEAD"), "utf8").trim();
+  return head.startsWith("ref: refs/heads/") ? head.slice("ref: refs/heads/".length) : "";
+}
 
 const fixtures = nativeWorldFixtures();
 afterAll(fixtures.close);
@@ -35,13 +50,13 @@ for (const saved of [false, true]) it(`prepares a local delivery on its own bran
       row.choice.delivery = "local";
       row.source!.destination.mode = "local";
       row.source!.destination.kind = "branch";
-      await git(world.clone, "switch", "-q", "-c", "trunk");
-      writeFileSync(join(world.clone, "TRUNK_ONLY.md"), "Unapproved default\n");
-      await git(world.clone, "add", "."); await git(world.clone, "commit", "-qm", "Unapproved new default");
-      await git(world.clone, "push", "-q", world.remote, "trunk");
-      await git(world.remote, "symbolic-ref", "HEAD", "refs/heads/trunk");
+      const trunk = await commitOnCloneBranch(world.clone, "trunk", "TRUNK_ONLY.md", "Unapproved default\n", "Unapproved new default");
+      cpSync(join(world.clone, ".git", "objects"), join(world.remote, "objects"), { recursive: true, force: true });
+      mkdirSync(dirname(join(world.remote, "refs", "heads", "trunk")), { recursive: true });
+      writeFileSync(join(world.remote, "refs", "heads", "trunk"), `${trunk}\n`);
+      writeFileSync(join(world.remote, "HEAD"), "ref: refs/heads/trunk\n");
       await add();
-      expect(await git(path, "branch", "--list", "main")).toBe("");
+      expect(readRef(join(path, ".git"), "refs/heads/main")).toBeUndefined();
       const task = engine.task(id)!;
       new Sources(engine, new Connections(engine)).confirm(task);
       expect(task.delivery).toBe("local");
@@ -49,9 +64,9 @@ for (const saved of [false, true]) it(`prepares a local delivery on its own bran
       await engine["driver"]["prepare"](executionFor(task), new AbortController().signal);
       expect(executionFor(task).work.source!.initialSha).toBe(world.initial);
       expect(executionFor(task).work.baseSha).toBe(world.initial);
-      expect(await git(executionFor(task).work.worktree!, "ls-tree", "--name-only", "HEAD", "TRUNK_ONLY.md")).toBe("");
-      expect(await git(executionFor(task).work.worktree!, "branch", "--show-current")).toBe(executionFor(task).work.branch!);
-      expect(await git(path, "branch", "--list", "main")).toBe("");
+      expect(existsSync(join(executionFor(task).work.worktree!, "TRUNK_ONLY.md"))).toBe(false);
+      expect(checkedOutBranch(executionFor(task).work.worktree!)).toBe(executionFor(task).work.branch!);
+      expect(readRef(join(path, ".git"), "refs/heads/main")).toBeUndefined();
     } finally { await engine.shutdown(); }
     }, engineOptions());
     });
@@ -109,7 +124,7 @@ for (const progress of ["empty", "interrupted", "complete"]) it(`resumes an appr
       await add();
       expect(engine.task(id)!.workRows![0]!.addition?.ready).toBe(true);
       expect(engine.s.products.find((entry) => entry.id === product.id)?.path).toBe(realpathSync(path));
-      expect(await git(path, "rev-parse", "main")).toBe(world.initial);
+      expect(readRef(join(path, ".git"), "refs/heads/main")).toBe(world.initial);
       if (progress === "complete") expect(readFileSync(join(path, "keep.txt"), "utf8")).toBe("Preserve existing work\n");
     } finally { await engine.shutdown(); }
     }, engineOptions());
@@ -122,21 +137,19 @@ for (const recovery of ["new", "retry", "restart", "foreign-origin", "missing-ap
     await fixtures.world(`source-addition-changed-default-${recovery}`, async ({ world, engine: ownedEngine }) => {
     const next = await ownedEngine(async engine => {
       const { id, path, product, add } = await prepare(world, engine);
-      await git(world.clone, "checkout", "-q", "-b", "trunk");
-      writeFileSync(join(world.clone, "TRUNK_ONLY.md"), "This is not the approved main branch.\n");
-      await git(world.clone, "add", "TRUNK_ONLY.md");
-      await git(world.clone, "commit", "-q", "-m", "A distinct new default branch");
-      await git(world.clone, "push", "-q", world.remote, "trunk");
-      await git(world.remote, "symbolic-ref", "HEAD", "refs/heads/trunk");
-      const trunk = await git(world.clone, "rev-parse", "trunk");
+      const trunk = await commitOnCloneBranch(world.clone, "trunk", "TRUNK_ONLY.md", "This is not the approved main branch.\n", "A distinct new default branch");
+      cpSync(join(world.clone, ".git", "objects"), join(world.remote, "objects"), { recursive: true, force: true });
+      mkdirSync(dirname(join(world.remote, "refs", "heads", "trunk")), { recursive: true });
+      writeFileSync(join(world.remote, "refs", "heads", "trunk"), `${trunk}\n`);
+      writeFileSync(join(world.remote, "HEAD"), "ref: refs/heads/trunk\n");
       expect(trunk).not.toBe(world.initial);
-      if (recovery === "missing-approved-branch") await git(world.remote, "update-ref", "-d", "refs/heads/main");
+      if (recovery === "missing-approved-branch") rmSync(join(world.remote, "refs", "heads", "main"), { force: true });
       if (recovery !== "new") {
         // Clone completed, but the engine never recorded ready=true. Git checks out its
         // new default; the approved main remains a remote-tracking branch only.
         await git(world.dir, "clone", "-q", world.remote, path);
-        expect(await git(path, "branch", "--show-current")).toBe("trunk");
-        expect(await git(path, "branch", "--list", "main")).toBe("");
+        expect(checkedOutBranch(path)).toBe("trunk");
+        expect(readRef(join(path, ".git"), "refs/heads/main")).toBeUndefined();
         writeFileSync(join(path, "keep.txt"), "Do not reclone over completed work\n");
         if (recovery === "foreign-origin") await git(path, "remote", "set-url", "origin", "https://github.com/else/unrelated.git");
       }
@@ -152,15 +165,15 @@ for (const recovery of ["new", "retry", "restart", "foreign-origin", "missing-ap
         await add(current);
         expect(current.task(id)!.workRows![0]!.addition?.ready).toBe(true);
         expect(current.s.products.find((entry) => entry.id === product.id)?.defaultBranch).toBe("main");
-        expect(await git(path, "rev-parse", "refs/remotes/origin/main")).toBe(world.initial);
-        expect(await git(path, "rev-parse", "HEAD")).toBe(trunk);
+        expect(readRef(join(path, ".git"), "refs/remotes/origin/main")).toBe(world.initial);
+        expect(readWorktreeCommit(path)?.commit).toBe(trunk);
         expect(current.task(id)!.workRows![0]!.source!.start).toEqual({ kind: "default", branch: "main" });
         const task = current.task(id)!;
         new Sources(current, new Connections(current)).confirm(task);
         await current["driver"]["prepare"](executionFor(task), new AbortController().signal);
         expect(executionFor(task).work.baseSha).toBe(world.initial);
-        expect(await git(executionFor(task).work.worktree!, "rev-parse", "HEAD")).toBe(world.initial);
-        expect(await git(path, "branch", "--show-current")).toBe("trunk");
+        expect(readWorktreeCommit(executionFor(task).work.worktree!)?.commit).toBe(world.initial);
+        expect(checkedOutBranch(path)).toBe("trunk");
       }
       if (recovery !== "new") expect(readFileSync(join(path, "keep.txt"), "utf8")).toBe("Do not reclone over completed work\n");
     } finally { await current.shutdown(); }

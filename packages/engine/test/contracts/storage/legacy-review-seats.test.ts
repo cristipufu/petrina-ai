@@ -1,8 +1,8 @@
 import { executionFor } from "@petrina/orchestrator";
+import * as gitOps from "@petrina/repositories/git";
 import { afterAll, describe, expect, it } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { git } from "../../fixtures.js";
 import { independentReviewFixtures } from "../../fixtures/independence.js";
 
 const { fixture, close } = independentReviewFixtures();
@@ -60,8 +60,7 @@ it("restores the full planned review when an older saved port has no proof of co
       await f.run(async () => {
       await f.advance(f.delivery);
       writeFileSync(join(f.repo, "greeting.txt"), "Hi from main\n");
-      await git(f.repo, "add", "greeting.txt");
-      await git(f.repo, "commit", "-q", "-m", "A greeting on main");
+      await gitOps.commitChanges(f.repo, "A greeting on main");
       f.engine.approve(f.engine.getState().inbox.find((item) => item.kind === "delivery")!.id);
       await f.advance(() => f.fakes.received("code reviewer").some((entry) => entry.text.includes("Review only the port")), (role) => role !== "code reviewer");
       // Older releases saved this mark even for an unreviewed feature. A restart must not trust it.
@@ -82,7 +81,7 @@ it("restores the full planned review when an older saved port has no proof of co
         expect(review.text).toContain(`git diff ${f.task().baseSha}...HEAD`);
       }
       expect(f.task().portReview).toBeUndefined();
-      expect(f.task().reviewedTree).toBe(await git(f.task().worktree!, "rev-parse", "HEAD^{tree}"));
+      expect(f.task().reviewedTree).toBe(await gitOps.treeOf(f.task().worktree!));
       });
     } finally { await f.close(); }
   });

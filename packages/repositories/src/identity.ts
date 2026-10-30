@@ -1,8 +1,6 @@
 // Pure repository addresses and Git reference identities; no process or filesystem access.
 const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 
-/** A whole commit id, as pushes and handoffs name commits. */
-const FULL_SHA = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i;
 /** Git ref names, passed only as individual arguments. Unicode and punctuation valid in git are preserved. */
 const NAME = /^(?!-)(?!.*\.\.)(?!.*\/\/)(?!.*@\{)(?!.*(?:^|\/)\.)(?!.*\.lock(?:\/|$))(?!.*[/.]$)(?!@$)[^\x00-\x20\x7f~^:?*\[\\]+$/;
 
@@ -11,7 +9,7 @@ export const isRepoName = (value: string): boolean => REPO.test(value);
 
 export const isBranchName = (value: string): boolean => NAME.test(value) && !value.endsWith(".lock") && !value.includes("@{") && !value.startsWith(".");
 
-export const isSha = (value: string): boolean => FULL_SHA.test(value);
+export { isGitObjectId as isSha } from "@petrina/core";
 
 
 export const REMOTE = /^(?:(?:ssh|git|https?):\/\/)?(?:[^@/]+@)?([^/:]+)(?::\d+)?[:/](.+?)(?:\.git)?\/?$/;

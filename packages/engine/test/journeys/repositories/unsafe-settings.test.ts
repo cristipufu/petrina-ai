@@ -1,6 +1,7 @@
 import { afterAll, expect, it } from "bun:test";
 import { finish, git, remoteRef, taskOf } from "../../support.js";
 import { nativeWorldFixtures } from "../../fixtures/native-worlds.js";
+import { installPreparedProduct, acmeDemoProduct } from "../../fixtures/prepared-product.js";
 import { plantedGitProgram } from "@petrina/test-support/git-program";
 import { unsafeGitSettings } from "@petrina/test-support/git-safety";
 
@@ -12,7 +13,8 @@ it("refuses to fetch or publish once unsafe settings are planted after setup, an
   const program = plantedGitProgram(w.dir, "evil");
   await ownedEngine(async engine => {
   try {
-    const productId = await engine.addProduct(w.clone);
+    await engine.waitUntilReady(); engine.stopRequested.signal.throwIfAborted();
+    const productId = installPreparedProduct(engine, acmeDemoProduct(w.clone));
     engine.setProductDelivery(productId, "pull-request", false);
     // The native adapter tests cover all seven settings; this journey proves task failure and warning routing.
     const { key, configure } = unsafeGitSettings[0]!;

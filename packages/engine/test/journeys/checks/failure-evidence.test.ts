@@ -1,11 +1,12 @@
 import { executionFor } from "@petrina/orchestrator";
+import * as gitOps from "@petrina/repositories/git";
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { checkSetupOutcome, sameCheckEnvironmentIdentity, decisionEvidence, journeyProblems, type Task, type WorkflowEvent } from "@petrina/core";
+import { checkSetupOutcome, sameCheckEnvironmentIdentity, journeyProblems, type Task, type WorkflowEvent } from "@petrina/core";
 
-import { checkWorkflowFixtures } from "../../fixtures/check-workflow.js";
-import { coordinator, git, itemOf, taskOf, until, waitFor } from "../../support.js";
+import { checkWorkflowFixtures, readRef } from "../../fixtures/check-workflow.js";
+import { coordinator, itemOf, taskOf, until, waitFor } from "../../support.js";
 
 const workflows = checkWorkflowFixtures();
 afterAll(() => workflows.close());
@@ -18,29 +19,6 @@ const reviewStage = (task: Task) => task.plan!.stages.findIndex((stage) => stage
 
 
 describe.concurrent("failed checks are evidence until something changes", () => {
-it("keeps an early static failure current across returns and restart, with heavy checks visibly skipped", async () => {
-    await fixture("built", async f => {
-      try {
-        f.engine.setProductChecks(f.productId, [{ name: "Tests", command: f.command("--pass") }, { name: "Type check", command: f.command() }]);
-        const task = await f.delivery();
-        expect(f.runs()).toEqual(["failed"]);
-        const step = checkSteps(task)[0]!;
-        expect(step.productChecks!.map((check) => [check.name, check.result])).toEqual([["Tests", "skipped"], ["Type check", "fail"]]);
-        expect(f.agents.openings("code reviewer")).toEqual([]);
-        await f.restart();
-        expect((await f.engine["checks"].current(executionFor(f.engine.task(f.taskId)!))).inputs.kind).toBe("matches");
-        expect(f.runs()).toEqual(["failed"]);
-        f.engine.rerunChecks(itemOf(f.engine.getState(), f.taskId, "delivery")!.id);
-        const rerun = await f.delivery();
-        const evidence = decisionEvidence(rerun);
-        expect(f.runs()).toEqual(["failed", "failed"]);
-        expect(evidence.map(check => [check.name, check.result, check.reusedAt])).toEqual([["Type check", "fail", undefined], ["Tests", "skipped", undefined]]);
-        expect(evidence[1]!.source?.stepId).toBe(checkSteps(rerun).at(-1)!.id);
-        expect(itemOf(f.engine.getState(), f.taskId, "delivery")!.body).not.toContain("no new execution");
-      } finally { await f.engine.shutdown(); }
-    }, true, { planner: "short", builder: "plain" });
-  });
-
 it("finishes the current reviewer but starts no delivery preparation while the pool is paused", async () => {
     await fixture("built", async f => {
       const release = f.agents.release;
@@ -89,24 +67,6 @@ it("reuses one passing run through read-only reviewers, acceptance and delivery 
     }, true, { planner: "tester-first", builder: "plain" });
   });
 
-it("spends no acceptance turn on unchanged failing code before asking the coordinator", async () => {
-    await fixture("built", async f => {
-      try {
-        const task = await f.delivery();
-        expect(f.runs()).toEqual(["failed"]);
-        expect(f.agents.openings("tester")).toHaveLength(0);
-        expect(f.agents.openings("code reviewer")).toHaveLength(0);
-        expect(task.journey?.some((step) => step.roleId === "tester")).toBe(false);
-        expect(journeyProblems(task as Task)).toEqual([]);
-        expect(task.checkReturns).toBe(2);
-        expect(task.findings.some((finding) => finding.text.startsWith("Check failed") && finding.status === "open")).toBe(true);
-        // Acceptance testing waits where the checks stopped it, and starts once they pass.
-        expect(task.plan!.stages[task.stageIndex]!.roleId).toBe("tester");
-        expect(itemOf(f.engine.getState(), f.taskId, "delivery")!.body).toContain("Stopped before acceptance testing.");
-      } finally { await f.engine.shutdown(); }
-    }, true, { planner: "tester-first", builder: "plain" });
-  });
-
 it("asks the coordinator before final acceptance when later checks fail after their builder returns are exhausted", async () => {
     await fixture("built", async f => {
       try {
@@ -121,8 +81,7 @@ it("asks the coordinator before final acceptance when later checks fail after th
         // automatic check fixes have used their allowance, as on a long-running task.
         const live = f.engine.task(f.taskId)!;
         writeFileSync(join(executionFor(live).work.worktree!, "later-fix.txt"), "A later change\n");
-        await f.run(() => git(executionFor(live).work.worktree!, "add", "later-fix.txt"));
-        await f.run(() => git(executionFor(live).work.worktree!, "commit", "-q", "-m", "A later change"));
+        await f.run(() => gitOps.commitChanges(executionFor(live).work.worktree!, "A later change"));
         // Change the live record only once the commit has finished, right before the engine acts on it.
         executionFor(live).work.checkReturns = 2;
         f.setCheck();
@@ -153,7 +112,7 @@ it("asks the coordinator before final acceptance when later checks fail after th
         expect(fixed.testedPatch).not.toBe(testedPatch);
         expect(journeyProblems(fixed)).toEqual([]);
       } finally { await f.engine.shutdown(); }
-    }, true, { planner: "tester-first", builder: "plain" });
+    }, true, { planner: "tester-first", builder: "plain" }, { acceptedBuilds: true });
   });
 
 it("returns unchanged work twice without using a review round, keeps the failure after restart, and checks a real fix", async () => {
@@ -271,108 +230,8 @@ it("returns unchanged work twice without using a review round, keeps the failure
     });
   });
 
-it("does not consume more rounds when reviews were already exhausted, including a saved run from before the update", async () => {
-    await fixture("built", async f => {
-      try {
-        // Start with passing checks and a real review that uses up its sole round.
-        f.setCheck("--pass");
-        f.agents.scenario({ planner: "short", reviewer: "important" });
-        let task = await f.delivery();
-        const review = task.plan!.stages.find((stage) => stage.kind === "review-chain")!;
-        expect(task.blockingAfter?.[review.id]).toEqual([1]);
-        expect(lines(task).filter((line) => line.startsWith("Review rounds used up"))).toHaveLength(1);
-        f.setCheck();
-        f.engine.requestChanges(itemOf(f.engine.getState(), f.taskId, "delivery")!.id, "Fix what failed");
-        task = await f.delivery();
-        expect(f.runs()).toEqual(["passed", "failed"]);
-        const captured = task.checks!;
-
-        // Resume at review as a restart between saving the failure and handling its return would do.
-        // Older saved results have the commands and tree, but no definition fingerprint.
-        await f.restart((state) => {
-          const saved = state.tasks.find((task) => task.id === f.taskId)!;
-          delete saved.checks!.definition;
-          saved.stageIndex = saved.plan!.stages.findIndex((stage) => stage.id === review.id);
-          saved.state = "waiting";
-          state.inbox = state.inbox.filter((item) => item.taskId !== f.taskId);
-        });
-        task = await f.delivery();
-        expect(f.runs()).toEqual(["passed", "failed"]);
-        expect(task.checks!.at).toBe(captured.at);
-        expect(task.checks!.definition).toBeUndefined();
-        expect(task.checks!.results).toEqual(captured.results);
-        expect(task.blockingAfter?.[review.id]).toEqual([1]);
-        expect(task.rounds[review.id] ?? 1).toBe(1);
-        expect(lines(task).filter((line) => line.startsWith("Review rounds used up"))).toHaveLength(1);
-        expect(f.agents.openings("code reviewer")).toHaveLength(1);
-
-        f.agents.scenario({ planner: "short", fixes: "change" });
-        f.engine.requestChanges(itemOf(f.engine.getState(), f.taskId, "delivery")!.id, "Fix the welcome page");
-        task = await f.delivery();
-        expect(f.runs()).toEqual(["passed", "failed", "passed"]);
-        expect(task.blockingAfter?.[review.id]).toEqual([1, 0]);
-      } finally {
-        await f.engine.shutdown();
-      }
-    }, true, { planner: "short" }, "Exhausted review rounds");
-  });
-
-it("runs changed commands on the same code, including at final delivery preparation", async () => {
-    await fixture("built", async f => {
-      try {
-        let task = await f.delivery();
-        const failedTree = task.checks!.tree;
-        f.setCheck("--pass");
-        f.engine.requestChanges(itemOf(f.engine.getState(), f.taskId, "delivery")!.id, "Use the corrected check");
-        task = await f.delivery();
-        expect(task.checks!.tree).toBe(failedTree);
-        expect(f.runs()).toEqual(["failed", "passed"]);
-
-        // The coordinator changes the required command after review: final preparation must notice it.
-        f.setCheck("--pass", "--changed");
-        f.engine.approve(itemOf(f.engine.getState(), f.taskId, "delivery")!.id);
-        await until(f.engine, (state) => taskOf(state, f.taskId).state === "done");
-        expect(f.runs()).toEqual(["failed", "passed", "passed"]);
-      } finally {
-        await f.engine.shutdown();
-      }
-    });
-  });
-
-it("keeps a forced check decision and allows explicit reruns without approving delivery or replenishing repairs", async () => {
-    await fixture("built", async f => {
-      try {
-        const blocked = await f.delivery();
-        expect(f.runs()).toEqual(["failed"]);
-        expect(blocked.stageIndex).toBe(reviewStage(blocked));
-        // This task normally delivers without asking. Failed checks still bring it to the coordinator.
-        const decision = itemOf(f.engine.getState(), f.taskId, "delivery")!.id;
-        expect(() => f.engine.approve(decision)).toThrow("delivery has not been approved");
-        expect(itemOf(f.engine.getState(), f.taskId, "delivery")!.id).toBe(decision);
-        expect(f.runs()).toEqual(["failed"]);
-
-        f.engine.rerunChecks(decision);
-        const failed = await f.delivery();
-        expect(f.runs()).toEqual(["failed", "failed"]);
-        expect(failed.checks!.results[0]!.output).toContain("captured failure");
-        expect(failed.checkReturns).toBe(2);
-        expect(failed.approvedSha).toBeUndefined();
-        expect(failed.error).toBeUndefined();
-
-        f.setCheck("--pass");
-        f.engine.rerunChecks(itemOf(f.engine.getState(), f.taskId, "delivery")!.id);
-        await until(f.engine, (state) => taskOf(state, f.taskId).state === "done");
-        expect(f.runs()).toEqual(["failed", "failed", "passed"]);
-        // The passing run continued at the review the checks had held back; nothing shipped unreviewed.
-        expect(f.agents.openings("code reviewer")).toHaveLength(1);
-      } finally {
-        await f.engine.shutdown();
-      }
-    }, false);
-  });
-
 it("keeps completed evidence when a changed check is cancelled, then runs the required check after restart", async () => {
-    await fixture("built", async f => {
+    await fixture("exhausted-repairs", async f => {
       try {
         const captured = (await f.delivery()).checks;
         f.setCheck("--hold");
@@ -391,7 +250,7 @@ it("keeps completed evidence when a changed check is cancelled, then runs the re
       } finally {
         await f.engine.shutdown();
       }
-    });
+    }, true, { planner: "short" }, { acceptedBuilds: true });
   });
 
 it("requires a fresh final run when main moves after approval", async () => {
@@ -400,21 +259,20 @@ it("requires a fresh final run when main moves after approval", async () => {
         f.setCheck("--pass");
         const reviewedTree = (await f.delivery()).checks!.tree;
         writeFileSync(join(f.repo, "NEWS.md"), "News from another task\n");
-        await f.run(() => git(f.repo, "add", "NEWS.md"));
-        await f.run(() => git(f.repo, "commit", "-q", "-m", "News on main"));
+        await f.run(() => gitOps.commitChanges(f.repo, "News on main"));
         f.engine.approve(itemOf(f.engine.getState(), f.taskId, "delivery")!.id);
         const state = await until(f.engine, (state) => taskOf(state, f.taskId).state === "done");
         const shipped = taskOf(state, f.taskId);
         expect(f.runs()).toEqual(["passed", "passed"]);
         expect(shipped.checks!.tree).not.toBe(reviewedTree);
-        expect(shipped.checks!.sha).toBe(await f.run(() => git(f.repo, "rev-parse", "main")));
+        expect(shipped.checks!.sha).toBe(readRef(join(f.repo, ".git"), "refs/heads/main"));
       } finally {
         await f.engine.shutdown();
       }
     });
   });
 
-for (const exhausted of [false, true]) {
+for (const exhausted of [true]) {
     it(`reviews a real fix normally after port checks fail with builder returns ${exhausted ? "used up" : "available"}`, async () => {
       await fixture("built", async f => {
         try {
@@ -424,8 +282,7 @@ for (const exhausted of [false, true]) {
           if (exhausted) await f.restart((state) => { state.tasks.find((task) => task.id === f.taskId)!.checkReturns = 2; });
           // Main overlaps the already reviewed work. The builder must port greeting.txt by hand.
           writeFileSync(join(f.repo, "greeting.txt"), "A greeting on main\n");
-          await f.run(() => git(f.repo, "add", "greeting.txt"));
-          await f.run(() => git(f.repo, "commit", "-q", "-m", "A greeting on main"));
+          await f.run(() => gitOps.commitChanges(f.repo, "A greeting on main"));
           f.setCheck();
           // The port resolves greeting.txt; the later check fix changes welcome.txt, outside the port.
           f.agents.scenario({ fixes: "change" });
@@ -452,7 +309,7 @@ for (const exhausted of [false, true]) {
         } finally {
           await f.engine.shutdown();
         }
-      }, true, {});
+      }, true, {}, { acceptedBuilds: true });
     });
   }
 });

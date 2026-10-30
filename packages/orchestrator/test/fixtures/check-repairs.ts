@@ -1,3 +1,4 @@
+import type { RuntimeTask } from "../../src/model.js";
 import type { CheckRun } from "@petrina/core";
 import { completeCheckExecution } from "@petrina/test-support/check-execution-facts";
 import { CheckRepairs } from "../../src/check-repairs.js";
@@ -6,14 +7,14 @@ import { executionFor } from "../../src/repository-context.js";
 import { repairHost, repairTask } from "./tasks.js";
 
 /** Modeled boundary observations; this fixture executes the actual policy without claiming native execution. */
-export function checkRepairs(shared = false) {
-  const task = repairTask(shared), scope = executionFor(task), recording = repairHost();
+export function checkRepairs(shared = false, task: RuntimeTask = repairTask(shared), productId?: string) {
+  const scope = executionFor(task, productId), recording = repairHost();
   let sequence = 0, definition = "declared-checks";
   const calls: string[] = [], notes: { productId: string; text: string }[] = [];
   scope.work.worktree = "modeled:working-copy";
   const host: CheckRepairHost = {
     ...recording.host,
-    id: () => `finding-${++sequence}`,
+    id: () => `${productId ? `${productId}-` : ""}finding-${++sequence}`,
     async definition(bound, sha) { calls.push(`definition:${bound.work.productId}:${sha}`); return definition; },
     log(bound, _tone, text) { notes.push({ productId: bound.work.productId, text }); },
     changed() { calls.push("changed"); }, checkpoint() { calls.push("checkpoint"); },

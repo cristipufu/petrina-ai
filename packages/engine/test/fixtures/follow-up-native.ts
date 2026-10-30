@@ -1,3 +1,4 @@
+import { installPreparedProduct, privateCloneProduct } from "./prepared-product.js";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { expect, spyOn } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -5,10 +6,12 @@ import { FileFaults } from "@petrina/test-support/file-faults";
 import type { FileOperations } from "@petrina/platform/file-operations";
 import { join } from "node:path";
 import { followUpKey, type DeepMutable, type Finding, type MatchAnswer } from "@petrina/core";
-import { Engine } from "../engine.js";
+import type { Engine } from "../engine.js";
+import { engineCaseFixtures, type EngineCaseOwner } from "./engine-cases.js";
+import { fakeAgentSessions } from "./fake-agent-sessions.js";
 import { dispatch } from "../../src/server.js";
-import { Fakes, makeProduct, removeDir, tempDir } from "../fixtures.js";
-import { registerFixtureRoot } from "@petrina/test-support/fixture-retention";
+import { Fakes, makeProduct } from "../fixtures.js";
+import { privateAgentToolProbe } from "../scripted-probes.js";
 
 /** Original private repositories have no remote, so addProduct selects local delivery. */
 export function recordedFollowUpProduct(engine: Engine, id: string, name: string): string {
@@ -60,6 +63,7 @@ export function groupByBug(prompt: string): MatchAnswer {
 }
 
 export interface World {
+  owner: EngineCaseOwner;
   engine: Engine;
   data: string;
   root: string;
@@ -79,11 +83,13 @@ export function taskOf(engine: Engine, productId: string, title: string, finding
   return task;
 }
 
-export async function finish(engine: Engine, task: ReturnType<Engine["task"]> & object): Promise<void> {
+export async function finish(owner: EngineCaseOwner, engine: Engine, task: ReturnType<Engine["task"]> & object): Promise<void> {
+  return owner.run(engine, async () => {
   task.state = "done";
   task.column = "done";
   task.finishedAt = Date.now();
   await engine["followUps"].noteDone(task);
+  });
 }
 
 export function cards(engine: Engine) {
@@ -118,6 +124,7 @@ export function settledSource(engine: Engine, productId: string, extra: Partial<
 }
 
 export async function failedAssignment(world: World, reason: "unavailable" | "no-choice") {
+  return world.owner.run(world.engine, async () => {
   const { engine } = world;
   const automaticId = engine.addTask({ productId: world.shop, kind: "bug", title: "bug-reserved: Existing bug", backlog: true });
   const manualId = engine.addTask({ productId: world.shop, kind: "bug", title: "Different manual request", backlog: true });
@@ -125,6 +132,7 @@ export async function failedAssignment(world: World, reason: "unavailable" | "no
   const tracking = reason === "unavailable" ? { reason, retry: true } : { reason };
   const source = taskOf(engine, world.shop, "Saved report", [older("old", "bug-reserved: Another sighting", { cardsShown: [automaticId], tracking })]);
   const release = engine.holdFollowUp(source.id);
+  world.owner.onStop(release);
   source.state = "done";
   source.column = "done";
   source.finishedAt = Date.now();
@@ -132,34 +140,40 @@ export async function failedAssignment(world: World, reason: "unavailable" | "no
   engine.s.followUpPending = reason === "unavailable" ? [{ keys: [key], retry: true }] : [];
   plant(engine, source.id, source.findings[0]!.text);
   engine.save();
-  const copy = spyOn(world.files, "copyFile").mockRejectedValue(new Error("Copy refused"));
+  const copy = spyOn(world.files, "copyFile");
+  world.owner.onStop(() => copy.mockRestore());
+  copy.mockRejectedValue(new Error("Copy refused"));
   try { await engine["followUps"].catchUp(); }
   catch (error) { release(); throw error; }
   finally { copy.mockRestore(); }
   expect(engine.task(automaticId)!.followUp!.reports.map(report => report.findingId)).toEqual(["old"]);
   expect(engine.task(automaticId)!.session.flatMap(line => line.images ?? [])).toEqual([]);
   return { source, automaticId, manualId, key, release };
+  });
 }
 
 export async function combinedAssignments(world: World, partial = false) {
+  return world.owner.run(world.engine, async () => {
   const { engine } = world;
   const sources = [
     taskOf(engine, world.shop, "First source", [older("first", "bug-first: An older footer bug")]),
     taskOf(engine, world.shop, "Second source", [older("second", "bug-second: An older header bug")]),
   ];
-  const releases = sources.map(source => engine.holdFollowUp(source.id));
+  const releases = sources.map(source => { const release = engine.holdFollowUp(source.id); world.owner.onStop(release); return release; });
   for (const source of sources) plant(engine, source.id, source.findings[0]!.text);
   if (partial) {
     sources[0]!.journey![0]!.agentResults![0]!.images!.push({ id: "second", caption: "Another view" });
     writeFileSync(join(world.data, "captures", sources[0]!.id, "second.png"), "png");
   }
   const original = world.files.copyFile;
-  const copy = spyOn(world.files, "copyFile").mockImplementation(async (...args) => {
+  const copy = spyOn(world.files, "copyFile");
+  world.owner.onStop(() => copy.mockRestore());
+  copy.mockImplementation(async (...args) => {
     if (String(args[0]).endsWith("pic.png")) throw new Error("Copy refused");
     return original(...args);
   });
   try {
-    for (const source of sources) await finish(engine, source);
+    for (const source of sources) await finish(world.owner, engine, source);
   } catch (error) { releases.forEach(release => release()); throw error; }
   finally { copy.mockRestore(); }
   const originals = [cardFor(engine, "first")[0]!.id, cardFor(engine, "second")[0]!.id];
@@ -167,54 +181,13 @@ export async function combinedAssignments(world: World, partial = false) {
   expect(engine.task(combinedId)!.followUp!.reports).toHaveLength(2);
   for (const id of originals) expect(engine.task(id)!.combinedInto).toBe(combinedId);
   return { sources, originals, combinedId, release: () => releases.forEach(release => release()) };
+  });
 }
 
 export function createFollowUpFixtures() {
-  interface RootOwner { root: string; engines: Set<Engine>; errors: unknown[] }
-  const roots = new Map<string, RootOwner>();
-  const engines = new Map<Engine, { root: RootOwner; stopping?: Promise<void> }>();
-  const createRoot = (prefix: string) => {
-    const root = tempDir(prefix);
-    registerFixtureRoot(root);
-    roots.set(root, { root, engines: new Set(), errors: [] });
-    return root;
-  };
-  const ownEngine = (root: string, engine: Engine) => {
-    const owner = roots.get(root);
-    if (!owner) throw new Error("The Engine's private root has no cleanup owner");
-    owner.engines.add(engine); engines.set(engine, { root: owner });
-    return engine;
-  };
-  const shutdown = (engine: Engine): Promise<void> => {
-    const owner = engines.get(engine);
-    if (!owner) return engine.shutdown();
-    if (owner.stopping) return owner.stopping;
-    const work = (async () => {
-      try {
-        await engine.shutdown();
-        owner.root.engines.delete(engine); engines.delete(engine);
-      } catch (error) { owner.root.errors.push(error); throw error; }
-    })();
-    owner.stopping = work;
-    const clear = () => { owner.stopping = undefined; };
-    void work.then(clear, clear);
-    return work;
-  };
-  const close = async () => {
-    await Promise.allSettled([...engines.keys()].map(engine => shutdown(engine)));
-    const errors: unknown[] = [];
-    for (const owner of roots.values()) {
-      if (owner.errors.length || owner.engines.size) {
-        errors.push(new AggregateError(owner.errors, `Follow-up cleanup is unconfirmed; retained ${owner.root}`));
-        continue;
-      }
-      try { removeDir(owner.root); roots.delete(owner.root); }
-      catch (error) { owner.errors.push(error); errors.push(error); }
-    }
-    if (errors.length) throw new AggregateError(errors, "Follow-up fixture cleanup could not be confirmed");
-  };
-  async function open(answer: World["answer"] = groupByBug, withNotes = false, repository = false): Promise<World> {
-    const root = createRoot("petrina-follow-up-");
+  const cases = engineCaseFixtures();
+  async function open(owner: EngineCaseOwner, answer: World["answer"] = groupByBug, withNotes = false, repository = false): Promise<World> {
+    const root = owner.root;
     const fakes = new Fakes(join(root, "agents"));
     const prompts: string[] = [];
     const data = join(root, "data");
@@ -222,37 +195,50 @@ export function createFollowUpFixtures() {
     const options = {
       files,
       agentCommand: () => [process.execPath, join(import.meta.dir, "../fake-agent.ts"), fakes.dir] as const,
+      startAgentSession: fakeAgentSessions(fakes),
+      toolProbe: privateAgentToolProbe(),
       matchFollowUps: async (prompt: string) => {
         prompts.push(prompt);
         return answer(prompt);
       },
     };
-    const engine = ownEngine(root, new Engine(data, options));
-    return setupWithCleanup(async () => {
+    const engine = owner.open(data, options);
+    return setupWithCleanup(() => owner.run(engine, async () => {
+      owner.check();
       engine.setPoolPaused(true);
-      await engine.waitUntilReady();
-      await engine["followUps"].catchUp();
-      await Promise.all([...engine.backgroundWork]);
-      const shop = repository ? await engine.addProduct(await makeProduct(root), "Shop") : recordedFollowUpProduct(engine, "shop", "Shop");
-      const notes = withNotes ? repository ? await engine.addProduct(await makeProduct(join(root, "other")), "Notes") : recordedFollowUpProduct(engine, "notes", "Notes") : "";
-      const world: World = { engine, data, root, shop, notes, prompts, answer, faults, files };
+      await engine.waitUntilReady(); owner.check();
+      await engine["followUps"].catchUp(); owner.check();
+      await Promise.all([...engine.backgroundWork]); owner.check();
+      const repositoryProduct = async (dir: string, name: string, second = false) => {
+        owner.check();
+        const repo = await makeProduct(dir); owner.check();
+        return installPreparedProduct(engine, { ...privateCloneProduct(repo), id: second ? "clone-2" : "clone", name, tone: second ? "green" : "blue" });
+      };
+      const shop = repository ? await repositoryProduct(root, "Shop") : recordedFollowUpProduct(engine, "shop", "Shop");
+      owner.check();
+      const notes = withNotes ? repository ? await repositoryProduct(join(root, "other"), "Notes", true) : recordedFollowUpProduct(engine, "notes", "Notes") : "";
+      owner.check();
+      const world: World = { owner, engine, data, root, shop, notes, prompts, answer, faults, files };
       return world;
-    }, () => shutdown(engine));
+    }), () => owner.stop(engine));
   }
 
   async function reopen(world: World, match = true): Promise<void> {
-    await shutdown(world.engine);
-    world.engine = ownEngine(world.root, new Engine(world.data, {
+    const fakes = new Fakes(join(world.root, "agents"));
+    world.engine = await world.owner.restart(world.engine, world.data, {
       files: world.files,
-      agentCommand: () => [process.execPath, join(import.meta.dir, "../fake-agent.ts"), join(world.root, "agents")],
+      agentCommand: () => [process.execPath, join(import.meta.dir, "../fake-agent.ts"), fakes.dir],
+      startAgentSession: fakeAgentSessions(fakes),
+      toolProbe: privateAgentToolProbe(),
       ...(match ? { matchFollowUps: async (prompt: string) => { world.prompts.push(prompt); return world.answer(prompt); } } : {}),
-    }));
-    await setupWithCleanup(async () => {
+    });
+    await setupWithCleanup(() => world.owner.run(world.engine, async () => {
+      world.owner.check();
       world.engine.setPoolPaused(true);
-      await world.engine.waitUntilReady();
-      await world.engine["followUps"].catchUp();
-      await Promise.all([...world.engine.backgroundWork]);
-    }, () => shutdown(world.engine));
+      await world.engine.waitUntilReady(); world.owner.check();
+      await world.engine["followUps"].catchUp(); world.owner.check();
+      await Promise.all([...world.engine.backgroundWork]); world.owner.check();
+    }), () => world.owner.stop(world.engine));
   }
-  return { open, reopen, createRoot, ownEngine, shutdown, close };
+  return { open, reopen, use: <T>(body: (owner: EngineCaseOwner) => Promise<T>) => cases.use("petrina-follow-up-", body), close: cases.close };
 }

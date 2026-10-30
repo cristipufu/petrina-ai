@@ -1,12 +1,12 @@
-import { type RepositoryContext } from "@petrina/orchestrator";
+import { GuideProposals, type RepositoryContext } from "@petrina/orchestrator";
 // The review guide that learns from misses: the Guide keeper's proposals, the coordinator's yes or no,
 // and accepted points reaching REVIEW.md. Reading and writing the file is in points.ts.
 
-import { endAgentStep, JOURNEY_WORDS as W, type DeepMutable, type Id, type GuideLine, type Task } from "@petrina/core";
+import { type DeepMutable, type Id, type GuideLine, type Task } from "@petrina/core";
 import * as git from "@petrina/repositories/git";
 import { formatFindings } from "./prompts.js";
 import { GuideResult } from "./roles.js";
-import { AGENTS_FILE, cleanPoint, GUIDE, GUIDE_FILE, hasPoint, pointsText } from "@petrina/core";
+import { AGENTS_FILE, GUIDE, GUIDE_FILE, hasPoint, pointsText } from "@petrina/core";
 import { addToSection, appendPoints, localPoints } from "./points.js";
 
 /** What AGENTS.md says about the review guide, so every agent reads it, in Petrina or not. */
@@ -14,96 +14,36 @@ const GUIDE_SECTION = "## Review guide";
 const GUIDE_POINTER = `Every change here is reviewed against ${GUIDE_FILE}: read it before you build or review one. A change is judged by the guide as the default branch has it, never by what the change itself writes there.`;
 import { Kernel, Aborted, GUIDE_KEEPER_PROFILE, ScreenWait, SourceRefreshRequired } from "./kernel.js";
 import { WaitingForUsage } from "./usage.js";
-import { beginSideStep } from "./side-step.js";
 import type { Turns } from "./turn.js";
 
 export class GuideKeeper {
-  constructor(private readonly k: Kernel, private readonly turns: Turns) {}
-
-  /** "Add it": the proposed point joins the product's review guide. Reviewers see it from their next turn. */
-  acceptGuideLine(itemId: Id): void {
-    const item = this.k.takeItem(itemId);
-    const task = item && this.k.task(item.taskId);
-    const product = task && (item.productId ? this.k.s.products.find((entry) => entry.id === item.productId) : this.k.productOf(task));
-    const point = cleanPoint(item?.body ?? "");
-    if (!point || !task || !product) return;
-    const existing = product.reviewGuide?.find((line) => line.text === point);
-    if (existing?.incorporatedOn) {
-      // Explicitly accepting a removed rule again is a new instruction, with a new delivery owner.
-      existing.at = Date.now();
-      existing.fromTask = task.id;
-      delete existing.writtenOn;
-      delete existing.incorporatedOn;
-    } else if (!existing) product.reviewGuide = [...(product.reviewGuide ?? []), { text: point, at: Date.now(), fromTask: task.id }];
-    this.k.log(task, "you", `You added to the review guide: ${point}`);
-    this.k.commit(task);
+  private readonly proposals: GuideProposals;
+  constructor(private readonly k: Kernel, turns: Turns) {
+    this.proposals = new GuideProposals({
+      current: () => k.s, task: id => k.task(id), productOf: target => k.productOf(target), takeItem: id => k.takeItem(id),
+      profile: () => k.onUsable(GUIDE_KEEPER_PROFILE), now: () => Date.now(),
+      checkpointNow: () => k.commitNow(), checkpoint: task => k.commit(task), releaseScreen: task => k.releaseScreen(task),
+      offer: (scope, title, details) => { k.raise(scope, "guide", title, false, details); },
+      log: (target, kind, text, roleId, profileId) => k.log(target, kind, text, roleId, profileId),
+      failed: (scope, error, profileId) => k.tracking.failed(scope, error, { roleId: "guide-keeper", profileId }),
+    }, {
+      guide: scope => this.reviewGuide(scope),
+      turn: (scope, input, profileId, signal, used) => turns.turn(scope, "guide-keeper", profileId, () => [
+        { title: "The coordinator's note when sending the delivery back", body: input.note },
+        { title: `The review guide now (${GUIDE_FILE})`, body: input.guide || "There is none yet." },
+        ...(scope.task.findings.length ? [{ title: "What the reviewers did raise", body: formatFindings(scope.task.findings as Task["findings"]) }] : []),
+      ], GuideResult, signal, { status: "Looking for what the reviewers missed", used }),
+      interrupted: error => error instanceof Aborted || error instanceof ScreenWait,
+      deferred: error => error instanceof WaitingForUsage || error instanceof SourceRefreshRequired,
+    });
   }
 
-  /** "Not this time": the review guide stays as it is. */
-  declineGuide(itemId: Id): void {
-    const item = this.k.s.inbox.find((entry) => entry.id === itemId && entry.kind === "guide");
-    if (!item) return;
-    this.k.takeItem(itemId);
-    const task = this.k.task(item.taskId);
-    if (task) this.k.log(task, "you", "You left the review guide as it is");
-    this.k.commit(task);
-  }
+  /** Coordinator decisions affect the accepted queue; native writing remains a delivery effect. */
+  acceptGuideLine(itemId: Id): void { this.proposals.accept(itemId); }
+  declineGuide(itemId: Id): void { this.proposals.decline(itemId); }
 
-  /**
-   * The coordinator sent back a delivery every reviewer passed: the Guide keeper proposes one point for
-   * the product's review guide, offered in the inbox without holding the task up. A side errand inside
-   * the builder's step: it leaves the step's own restart bookkeeping as it found it.
-   */
-  async proposeGuideLine(scope: RepositoryContext, signal: AbortSignal): Promise<void> {
-    const { task, work: repository } = scope;
-    const product = this.k.productOf(scope);
-    const miss = task.miss;
-    if (!product || !miss || !repository.worktree) return;
-    const restore = beginSideStep(this.k, scope, "guide-keeper");
-    // On a tool the squad can use, like every other step.
-    const keeper = this.k.onUsable(GUIDE_KEEPER_PROFILE);
-    let ran: Id = keeper;
-    try {
-      const guide = await this.reviewGuide(scope);
-      const result = await this.turns.turn(
-        scope,
-        "guide-keeper",
-        keeper,
-        () => [
-          { title: "The coordinator's note when sending the delivery back", body: miss.note },
-          { title: `The review guide now (${GUIDE_FILE})`, body: guide || "There is none yet." },
-          ...(task.findings.length ? [{ title: "What the reviewers did raise", body: formatFindings(task.findings as Task["findings"]) }] : []),
-        ],
-        GuideResult,
-        signal,
-        { status: "Looking for what the reviewers missed", used: (id) => (ran = id) },
-      );
-      this.k.releaseScreen(task);
-      restore();
-      const proposed = !!result.missed && !!result.line && !hasPoint(guide, result.line);
-      endAgentStep(task, { outcome: proposed ? W.guidePoint : W.noGuidePoint, reason: W.backToBuilder }, Date.now());
-      if (!result.missed || !result.line) this.k.log(scope, "done", `Nothing for the review guide: ${result.why}`, "guide-keeper", ran);
-      else if (hasPoint(guide, result.line)) this.k.log(scope, "done", "The review guide already has that point", "guide-keeper", ran);
-      else {
-        // An offer, not a stop: the task carries on while the coordinator decides.
-        const state = task.state;
-        this.k.raise(scope, "guide", `Add a point to ${product.name}'s review guide?`, false, { body: result.line, detail: `${result.why} It goes into ${GUIDE_FILE}, which AGENTS.md points every agent to, in Petrina or in your own sessions.` });
-        task.state = state;
-        this.k.log(scope, "done", `Proposed a point for the review guide: ${result.line}`, "guide-keeper", ran);
-      }
-    } catch (error) {
-      if (signal.aborted || error instanceof Aborted || error instanceof ScreenWait) throw error;
-      this.k.releaseScreen(task);
-      restore();
-      if (error instanceof WaitingForUsage || error instanceof SourceRefreshRequired) throw error;
-      // Petrina carries on without it, but it is still a failure in Analytics.
-      this.k.tracking.failed(scope, error, { roleId: "guide-keeper", profileId: ran });
-      endAgentStep(task, { outcome: W.couldNotFinish, reason: W.backToBuilder }, Date.now());
-      this.k.log(scope, "warn", "The Guide keeper could not finish, so nothing was proposed for the review guide");
-    }
-    delete task.miss;
-    this.k.commit();
-  }
+  /** A nonblocking side errand preserves the Builder's restart bookkeeping. */
+  proposeGuideLine(scope: RepositoryContext, signal: AbortSignal): Promise<void> { return this.proposals.propose(scope, signal); }
 
   /**
    * Accepted points reach REVIEW.md on a branch that ships: the task they came from, or else the next one to

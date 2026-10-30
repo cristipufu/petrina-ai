@@ -1,4 +1,5 @@
-import { applyAcceptanceVersions, beginAgentStep, builderFindings, checkReviewEvidence, endAgentStep, findingCount, recordBuilderFindingAnswers, roleForTask, startClock, stepKey, type Finding, type Stage } from "@petrina/core";
+import { applyAcceptanceVersions, beginAgentStep, builderFindings, checkReviewEvidence, endAgentStep, findingCount, roleForTask, startClock, stepKey, type Finding, type Stage } from "@petrina/core";
+import { BuildCompletion } from "../../src/build-completion.js";
 import { ReviewReports } from "../../src/review-reports.js";
 import { ReviewRoundCompletion } from "../../src/review-round-completion.js";
 import { VerifierBallots } from "../../src/verifier-ballots.js";
@@ -62,6 +63,19 @@ export function findingRepairFixture(kind: "new-reports" | "confirmation" | "sha
     },
     checkpoint: () => f.host.checkpoint(task), changed: () => f.host.changed(),
   });
+  const builds = new BuildCompletion({
+    now, checkpoint: current => f.host.checkpoint(current),
+    note: (_scope, _tone, words) => { notes.push(words); },
+    noteLearnings: async (_scope, lessons) => { if (lessons.length) throw new Error("Unexpected supplied Builder learning"); },
+  }, {
+    // This decision fixture owns no checkout. These explicit boundary inputs carry no native proof.
+    saveChanges: async bound => { if (bound.task !== task) throw new Error("Wrong build owner"); },
+    fold: async bound => { if (bound.task !== task) throw new Error("Wrong fold owner"); return undefined; },
+    tree: async bound => { if (bound.task !== task) throw new Error("Wrong tree owner"); return undefined; },
+    finishPort: async () => { throw new Error("No source port was declared"); },
+    versions: async () => { throw new Error("No proof version observation was declared"); },
+    repairVersion: async () => { throw new Error("No check repair was declared"); },
+  });
   function start(roleId: string, stage: Stage, signal: AbortSignal) {
     const profile = catalog.profile(task.agent!.profileId)!;
     const request = { task, profile, roleId, step: stepKey(task) };
@@ -92,9 +106,9 @@ export function findingRepairFixture(kind: "new-reports" | "confirmation" | "sha
     const given = task.fixing ? builderFindings(task, bound.work.productId) : [];
     builderDispatches.push({ round: task.rounds.review ?? 1, productId: bound.work.productId, findings: structuredClone(given) });
     start(stage.roleId, stage, signal);
-    if (task.fixing) recordBuilderFindingAnswers(task, given, given.map(finding => ({ id: finding.id, fixed: true, text: "The supplied Builder report claims the greeting is fixed." })),
-      { productId: bound.work.productId, shared: !!task.repositories, at: now() });
-    endAgentStep(task, { outcome: "Accepted Builder report", reason: "The supplied normalized reply is ready for completion" }, now());
+    await builds.complete(bound, { stageId: stage.id, roleId: stage.roleId, plannedProfileId: task.agent!.profileId, actualProfileId: task.agent!.profileId,
+      maintenance: false, sourceName: "main", given, checkFailures: [], result: { summary: "The supplied Builder report claims the greeting is fixed.", changes: [], learnings: [],
+        answers: given.map(finding => ({ id: finding.id, fixed: true, text: "The supplied Builder report claims the greeting is fixed." })) } });
     return completion.complete(bound, { stageId: stage.id, canEdit: true });
   };
   f.phases.review = async (_current, stage, signal) => {

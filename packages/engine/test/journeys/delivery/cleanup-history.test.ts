@@ -11,8 +11,9 @@ import { join } from "node:path";
 import { CLEANUP_WORDS } from "@petrina/core";
 
 import { ensureWorktree } from "@petrina/repositories/git";
-import { finish, git, remoteRef, taskOf } from "../../support.js";
+import { finish, taskOf } from "../../support.js";
 import { cleanupFixture, texts, cleaned, gone } from "../../fixtures/cleanup-world.js";
+import { installSharedWorkflowFastPaths, readRef } from "../../fixtures/shared-preparation.js";
 const { world, close } = cleanupFixture();
 afterAll(close);
 
@@ -20,6 +21,7 @@ describe.concurrent("Finished tasks free their working copies", () => {
 it("saves local delivery and all history before removing packages and build output; reading after restart creates nothing", async () => {
     await world("local", async w => {
       const { id, task, turns, moments, usage } = await w.engine(async engine => {
+        installSharedWorkflowFastPaths(engine, { skipUpToDate: true, skipPrepareChecks: true, skipReviewCopies: true, skipReviewInputDiffs: true, fastCheckCapture: true });
         const productId = installPreparedProduct(engine, acmeDemoProduct(w.clone));
         engine.setProductDelivery(productId, "local", true);
         const other = join(w.data, "worktrees", productId, "other");
@@ -30,8 +32,9 @@ it("saves local delivery and all history before removing packages and build outp
         await gone(w, task);
         expect(existsSync(other)).toBe(true);
         expect(readFileSync(join(w.clone, "greeting.txt"), "utf8")).toContain("Hello");
-        expect(await git(w.clone, "rev-parse", "main")).toBe(await git(w.clone, "rev-parse", task.branch!));
-        expect(await remoteRef(w.remote, "refs/heads/main")).toBe(await git(w.clone, "rev-parse", task.branch!));
+        const branchTip = readRef(join(w.clone, ".git"), `refs/heads/${task.branch!}`);
+        expect(readRef(join(w.clone, ".git"), "refs/heads/main")).toBe(branchTip);
+        expect(readRef(w.remote, "refs/heads/main")).toBe(branchTip);
         expect(texts(task).findIndex((line) => line.startsWith("Petrina pushed main to GitHub"))).toBeLessThan(texts(task).indexOf(CLEANUP_WORDS.removed));
         expect(task.brief).toBeDefined();
         expect(task.findings.length).toBeGreaterThan(0);

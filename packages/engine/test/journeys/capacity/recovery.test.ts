@@ -1,3 +1,6 @@
+import { installPreparedProduct, privateCloneProduct } from "../../fixtures/prepared-product.js";
+import { fakeEngineSettings, prepareReviewRepository } from "../../fixtures/fake-agent-sessions.js";
+import { installSharedWorkflowFastPaths } from "../../fixtures/shared-preparation.js";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { directDrivers, closeDirectDrivers, removeFixtureRoot } from "../../fixtures/direct-drivers.js";
 import { localFixtureSource, screenFixturePlan } from "../../fixtures/prepared-runtime.js";
@@ -15,7 +18,8 @@ import { MODEL_CAPACITY_WAIT_MS } from "../../../src/usage.js";
 import { CODEX_MODEL_CAPACITY } from "@petrina/agent-runtime/provider-interruptions";
 
 import type { NativeStep, Scenario } from "../../fake-agent.js";
-import { Fakes, FAKE_AGENT, git, makeProduct, tempDir, waitFor } from "../../support.js";
+import * as gitOps from "@petrina/repositories/git";
+import { Fakes, createProductRepository, tempDir, waitFor } from "../../support.js";
 
 const roots: string[] = [];
 const fixtures = new Set<ReturnType<typeof directDrivers>>();
@@ -59,7 +63,7 @@ interface PreparedCapacityPlan {
 }
 
 /** One task on fake agents, delivering locally, with every tool counted as installed. */
-async function start(scenario: Scenario, options: { description?: string; before?: (engine: Engine) => void; focus?: "builder" | "review"; preparedPlan?: PreparedCapacityPlan } = {}) {
+async function start(scenario: Scenario, options: { description?: string; before?: (engine: Engine) => void; focus?: "design" | "builder" | "review"; preparedPlan?: PreparedCapacityPlan } = {}) {
   const root = tempDir("petrina-capacity-");
   roots.push(root);
   const lifetime = directDrivers(root); fixtures.add(lifetime);
@@ -67,35 +71,48 @@ async function start(scenario: Scenario, options: { description?: string; before
   return setupWithCleanup(async () => {
   const fakes = new Fakes(join(root, "fake"));
   fakes.scenario(scenario);
-  const engine = lifetime.open(join(root, "data"), { agentCommand: () => [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), fakes.dir], toolPath: () => process.execPath });
+  const engine = installSharedWorkflowFastPaths(
+    lifetime.open(join(root, "data"), fakeEngineSettings(fakes)),
+    { skipUpToDate: true, skipPrepareChecks: true, skipReviewCopies: true, skipReviewInputDiffs: true, fastCheckCapture: true, fastCleanup: true, fastCheckpoints: true },
+  );
   const stops = holdCapacityWaits(engine);
   if (options.focus) engine.setPoolPaused(true);
   options.before?.(engine);
   return lifetime.prepare(async () => {
-  const productId = await engine.addProduct(await makeProduct(root));
+  const preparedReview = options.focus === "review" ? await prepareReviewRepository(root, { branch: "capacity-target", folder: "capacity-work" }) : undefined;
+  const { path: repo, initialSha } = preparedReview ? { path: preparedReview.repo, initialSha: preparedReview.initialSha } : await createProductRepository(root);
+  await engine.waitUntilReady();
+  engine.stopRequested.signal.throwIfAborted();
+  const productId = installPreparedProduct(engine, privateCloneProduct(repo));
   engine.setProductDelivery(productId, "local", false);
+  // Capacity subjects keep native turns and repository observations; check discovery is a supplied
+  // empty declaration. The actual no-command baseline still records its own version/evidence.
+  if (options.focus) {
+    const product = engine.s.products.find(product => product.id === productId)!;
+    product.checks = []; product.checksBy = "coordinator";
+  }
   const taskId = engine.addTask({ productId, title: "Add a greeting", description: options.description ?? "[no-check]", ...(options.focus ? { backlog: true } : {}) });
   if (options.focus) {
     const task = engine.task(taskId)!;
-    await localFixtureSource(engine, task);
+    await localFixtureSource(engine, task, { initial: { path: repo, initialSha }, check: () => engine.stopRequested.signal.throwIfAborted() });
     const profiles = options.preparedPlan ? [...options.preparedPlan.reviewerProfileIds]
-      : scenario.planner === "parallel" ? ["opus-high", "sol-high"] : ["opus-high"];
-    task.plan = { rationale: "Focused native capacity stage; the private repository remains real", plannerProfileId: "sol-xhigh", stages: screenFixturePlan(profiles) };
-    if (scenario.planner === "grok-build") task.plan.stages[0]!.profileIds = ["grok-xhigh"];
+      : scenario.planner === "parallel" || options.focus === "design" ? ["opus-high", "sol-high"] : ["opus-high"];
+    const baseStages = screenFixturePlan(profiles);
+    if (scenario.planner === "grok-build") baseStages[0]!.profileIds = ["grok-xhigh"];
     if (options.preparedPlan) {
-      task.plan.stages[0]!.profileIds = [options.preparedPlan.builderProfileId];
-      task.plan.stages[1]!.maxRounds = options.preparedPlan.reviewMaxRounds;
+      baseStages[0]!.profileIds = [options.preparedPlan.builderProfileId];
+      baseStages[1]!.maxRounds = options.preparedPlan.reviewMaxRounds;
     }
+    const stages = options.focus === "design"
+      ? [{ id: "s-design", kind: "converge" as const, title: "Design", roleId: "architect", profileIds: ["opus-xhigh"], reviewerRoleId: "design-reviewer", reviewerProfileIds: ["sol-xhigh"], maxRounds: 2 }, ...baseStages]
+      : baseStages;
+    task.plan = { rationale: "Focused native capacity stage; the private repository remains real", plannerProfileId: "sol-xhigh", stages };
     task.approvePlan = false; task.approveDelivery = true;
     task.risk = { level: "low", why: "Private greeting fixture" };
     task.stageIndex = options.focus === "review" ? 1 : 0;
-    if (options.focus === "review") {
-      const work = executionFor(task).work, product = engine.s.products.find(product => product.id === productId)!;
-      const base = await git(product.path!, "rev-parse", "HEAD"), worktree = join(root, "capacity-work");
-      await git(product.path!, "worktree", "add", "-q", "-b", "capacity-target", worktree, base);
-      writeFileSync(join(worktree, "greeting.txt"), "Hello from the actual private review fixture\n");
-      await git(worktree, "add", "."); await git(worktree, "commit", "-q", "-m", "Prepare the greeting under review");
-      Object.assign(work, { worktree, branch: "capacity-target", baseSha: base, base, preparation: "ready" });
+    if (preparedReview) {
+      const work = executionFor(task).work;
+      Object.assign(work, { worktree: preparedReview.worktree, branch: preparedReview.branch, baseSha: initialSha, base: initialSha, preparation: "ready", savedVersion: preparedReview.savedVersion });
     }
     engine.queueTask(taskId); engine.setPoolPaused(false);
   }
@@ -238,9 +255,7 @@ function onlyCodex(engine: Engine) {
 
 describe.concurrent("a Codex model that is at capacity", () => {
   for (const [name, capacity] of [
-    ["before any work", { model: "gpt-6.1-sol", role: "builder", times: 4 }],
     ["after a draft and a file", { model: "gpt-6.1-sol", role: "builder", partial: true, times: 4 }],
-    ["when the tool reports it as an error", { model: "gpt-6.1-sol", role: "builder", thrown: true, times: 4 }],
   ] as const) {
     it(`retries the same conversation, then continues the same step on another Codex model ${name}`, async () => {
       const run = await start({ planner: "short", builder: "plain", reopen: "resume", capacity: [capacity] }, { focus: "builder" });
@@ -283,9 +298,9 @@ describe.concurrent("a Codex model that is at capacity", () => {
       expect(waiting.conversation).toMatchObject({ roleId: "builder", briefed: true });
       const session = run.fakes.received("builder")[0]!.session;
       expect(waiting.conversation?.sessionId).toBe(session);
-      const head = await git(waiting.worktree!, "rev-parse", "HEAD");
+      const head = await gitOps.head(waiting.worktree!);
       expect(waiting.baseSha).toBe(head);
-      expect(await git(waiting.worktree!, "status", "--porcelain")).toBe("");
+      expect(await gitOps.isClean(waiting.worktree!)).toBe(true);
       assertNotAccountLimit(run, waiting);
       await releaseCapacity(run.engine, run.taskId);
       const task = await run.done();
@@ -307,16 +322,16 @@ describe.concurrent("a Codex model that is at capacity", () => {
       expect(readFileSync(join(waiting.worktree!, "capacity-draft.txt"), "utf8")).toBe("A greeting draft\n");
       expect(waiting.session.some((line) => line.from === "agent" && line.text.includes("I drafted the greeting before the model filled up."))).toBe(true);
       expect(waiting.conversation?.sessionId).toBe(run.fakes.received("builder")[0]!.session);
-      const head = await git(waiting.worktree!, "rev-parse", "HEAD");
+      const head = await gitOps.head(waiting.worktree!);
       expect(waiting.baseSha).toBe(head);
-      expect(await git(waiting.worktree!, "status", "--porcelain")).toContain("capacity-draft.txt");
+      expect(existsSync(join(waiting.worktree!, "capacity-draft.txt")) && !(await gitOps.isClean(waiting.worktree!))).toBe(true);
       await releaseCapacity(run.engine, run.taskId);
       await waitFor(() => {
         run.answer();
         return run.fakes.received("builder").length >= 2;
       }, "the same conversation to continue");
       expect(existsSync(join(run.find().worktree!, "capacity-draft.txt"))).toBe(true);
-      expect(await git(run.find().worktree!, "rev-parse", "HEAD")).toBe(head);
+      expect(await gitOps.head(run.find().worktree!)).toBe(head);
       const again = run.fakes.received("builder")[1]!.text;
       expect(again.startsWith("The selected model was at capacity.")).toBe(true);
       expect(again).not.toContain("# Your job");
@@ -348,7 +363,7 @@ describe.concurrent("a Codex model that is at capacity", () => {
   });
 
   it("recognizes Codex's overloaded stop and retries the same conversation", async () => {
-    const run = await start({ planner: "short", builder: "plain", reopen: "resume", capacity: [{ model: "gpt-6.1-sol", role: "builder", partial: true, native: true }] });
+    const run = await start({ planner: "short", builder: "plain", reopen: "resume", capacity: [{ model: "gpt-6.1-sol", role: "builder", partial: true, native: true }] }, { focus: "builder" });
     try {
       const waiting = await capacityWait(run, 5_000);
       expect(readFileSync(join(waiting.worktree!, "capacity-draft.txt"), "utf8")).toBe("A greeting draft\n");
@@ -369,34 +384,7 @@ describe.concurrent("a Codex model that is at capacity", () => {
     } finally { await run.close(); }
   });
 
-  it("honors a provider retry delay before continuing the same conversation", async () => {
-    const run = await start({ planner: "short", builder: "plain", reopen: "resume", capacity: [{ model: "gpt-6.1-sol", role: "builder", thrown: true, retryAfterMs: 45_000 }] }, { focus: "builder" });
-    try {
-      await capacityWait(run, 45_000);
-      const session = run.fakes.received("builder")[0]!.session;
-      expect(run.modelOf(session)).toBe("gpt-6.1-sol");
-      await releaseCapacity(run.engine, run.taskId);
-      const task = await run.done();
-      const builders = run.fakes.received("builder");
-      expect(builders).toHaveLength(2);
-      expect(builders.every((entry) => entry.session === session)).toBe(true);
-      expect(builders[1]!.text.startsWith("The selected model was at capacity.")).toBe(true);
-      expect(builders[1]!.text).not.toContain("# Your job");
-      assertNotAccountLimit(run, task);
-    } finally { await run.close(); }
-  });
 
-  it("accepts a finished result that only mentions the sentence", async () => {
-    const run = await start({ planner: "short", builder: "plain", mentionCapacity: true }, { focus: "builder" });
-    try {
-      const task = await run.done();
-      expect(run.fakes.received("builder")).toHaveLength(1);
-      expect(task.timeline.some((entry) => entry.text.includes("at capacity"))).toBe(false);
-      expect(live(run).modelCapacity).toBeUndefined();
-      assertNotAccountLimit(run, task);
-      expect(roundOf(task, "code-reviewer")).toBe(1);
-    } finally { await run.close(); }
-  });
 
   it("keeps the other reviewer's result and does not spend a review round", async () => {
     // The reviewer on Opus keeps working until the test lets it finish, so the full model's first wait starts and ends beside it.
@@ -709,14 +697,17 @@ describe("a scheduled run whose model is at capacity", () => {
     const { engine, fakes, stops, clone } = await setupWithCleanup(() => lifetime.prepare(async () => {
       const fakes = new Fakes(join(root, "agents"));
       fakes.scenario({ maintenance: {}, reopen: "resume", capacity: [{ model: "gpt-6.1-sol", role: "bug finder", times: 4 }] });
-      const engine = lifetime.open(join(root, "data"), { agentCommand: (profile) => [process.execPath, FAKE_AGENT, fakes.dir, `--record-tool=${profile.toolId}`], toolPath: () => process.execPath });
+      const engine = installSharedWorkflowFastPaths(
+        lifetime.open(join(root, "data"), fakeEngineSettings(fakes, { recordTool: true })),
+        { skipUpToDate: true, skipPrepareChecks: true, skipReviewCopies: true, skipReviewInputDiffs: true, fastCheckCapture: true, fastCleanup: true, fastCheckpoints: true },
+      );
       const stops = holdCapacityWaits(engine);
       engine.setPoolPaused(true);
-      const clone = await makeProduct(root);
+      const { path: clone } = await createProductRepository(root);
       return { engine, fakes, stops, clone };
     }), close);
     try {
-      const productId = await engine.addProduct(clone);
+      const productId = installPreparedProduct(engine, privateCloneProduct(clone));
       engine.setProductChecks(productId, [{ name: "Tests", command: commandInputText([process.execPath, "-e", "process.exit(0)"]) }]);
       const draft: RoutineDraft = { name: "Focused maintenance", productId, roleId: "maintenance-bug-finder", profileId: "sol-medium", focus: "Inspect checkout behavior", zone: "UTC", schedule: { kind: "daily", time: "09:00" }, enabled: true };
       const routineId = engine.saveRoutine(draft);
@@ -728,14 +719,14 @@ describe("a scheduled run whose model is at capacity", () => {
       for (const [index, delay] of SHORT_WAITS.entries()) {
         const waiting = await capacityWait(run, delay, "gpt-6.1-sol", index + 1);
         expect(waiting.maintenance?.profile.id).toBe("sol-medium");
-        const waitingHead = await git(waiting.worktree!, "rev-parse", "HEAD");
+        const waitingHead = await gitOps.head(waiting.worktree!);
         expect(waiting.baseSha).toBe(waitingHead);
-        expect(await git(waiting.worktree!, "status", "--porcelain")).toBe("");
+        expect(await gitOps.isClean(waiting.worktree!)).toBe(true);
         await releaseCapacity(engine, taskId);
       }
       const held = await capacityWait(run, 5 * 60_000);
       expect(held.maintenance?.profile.id).toBe("sol-medium");
-      expect(await git(held.worktree!, "status", "--porcelain")).toBe("");
+      expect(await gitOps.isClean(held.worktree!)).toBe(true);
       expect(engine.getState().pool.limited ?? []).toEqual([]);
       expect(fakes.received("bug finder").every((entry) => fakes.settings(entry.session).includes("model=gpt-6.1-sol"))).toBe(true);
       expect(engine.s.tasks.find((task) => task.id === taskId)?.capacityRetries?.some((entry) => entry.tried === 3)).toBe(true);

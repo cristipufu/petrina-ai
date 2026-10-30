@@ -1,4 +1,4 @@
-import { beginAgentStep, beginYouStep, columnOf, createTaskState, endAgentStep, finishTaskStep, normalizePlan, roleForTask, startClock, stepKey,  type Id, type PlanDraftStage, type Role, type State } from "@petrina/core";
+import { beginAgentStep, beginYouStep, columnOf, createTaskState, endAgentStep, finishTaskStep, normalizePlan, openStep, recordAcceptanceStart, roleForTask, startClock, stepKey,  type JourneyStep, type Id, type PlanDraftStage, type Role, type State } from "@petrina/core";
 import { waitForProgress, type ProgressClock } from "@petrina/test-support/progress-wait";
 import { AgentWorkflow } from "../../src/agent-workflow.js";
 import { ParallelAdmissionGroup } from "../../src/parallel-admission-group.js";
@@ -52,7 +52,7 @@ function fixtureReply(text: string): Reply {
 }
 
 /** The real admission/group/selection owners; every remaining effect is explicit, private and process-free. */
-export function admissionFixture(limit: number, toolCap: number, taskCount = 9, scripted?: ScriptedAgents) {
+export function admissionFixture(limit: number, toolCap: number, taskCount = 9, scripted?: ScriptedAgents, options?: { onResult?(step: JourneyStep | undefined, metadata: { roleId: Id; profileId: Id; productId: Id; at: number }, reply: Reply): void }) {
   const selection = profileSelectionFixture(), { state, profile } = selection;
   state.tasks.length = 0;
   state.pool.limit = limit;
@@ -142,12 +142,18 @@ export function admissionFixture(limit: number, toolCap: number, taskCount = 9, 
     const { task } = scope;
     const selected = profile(parallel?.seat ?? task.agent?.profileId ?? "") ?? unexpected("missing selected profile");
     const admission = { task, profile: selected, roleId: role.id, step: stepKey(task) };
+    let resultStep: JourneyStep | undefined;
+    const identity = { roleId: role.id, profileId: selected.id, productId: scope.work.productId };
     if (!parallel) {
       workflow.qualify(admission, signal);
       task.stepClock = startClock(repositoryView(scope), role.id, clock.now());
       workflow.activate(admission);
-      beginAgentStep(task, role.id, selected.id, clock.now(), state.roles);
-    } else parallel.used(selected.id);
+      resultStep = beginAgentStep(task, role.id, selected.id, clock.now(), state.roles);
+    } else { parallel.used(selected.id); resultStep = openStep(task); }
+    if (options?.onResult) {
+      if (!resultStep) throw new Error("A consumed fixture result requires its captured step");
+      recordAcceptanceStart(task, resultStep, role.result, structuredClone);
+    }
     changed();
     const key = JSON.stringify([task.id, task.plan?.stages[task.stageIndex]?.id ?? "plan", role.id, parallel?.key]);
     const session = await agents.start({ profile: selected, cwd: scope.work.worktree ?? `scripted:planning:${task.id}`, callbacks: {
@@ -172,6 +178,7 @@ export function admissionFixture(limit: number, toolCap: number, taskCount = 9, 
         try { value = fixtureReply((await session.prompt(await answer)).text); }
         finally { answerCleanup.resolve(); questions.delete(id); }
       }
+      options?.onResult?.(resultStep, { ...identity, at: clock.now() }, value);
       return value;
     } finally {
       if (!await session.stop()) throw new Error("A scripted session did not confirm its own completion");

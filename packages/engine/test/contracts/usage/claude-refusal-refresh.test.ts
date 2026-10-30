@@ -1,40 +1,50 @@
+import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
+import { mkdirSync } from "node:fs";
 import { afterAll, expect, it, spyOn } from "bun:test";
 import { join } from "node:path";
 import { chooseProfile, limitOf } from "@petrina/core";
 import { AgentRun } from "@petrina/agent-runtime/acp-run";
-import { Engine } from "../../engine.js";
+
 import { claudeAccountReports } from "@petrina/agent-runtime/claude-account-report";
 import { ENGINE_PROFILES } from "@petrina/agent-runtime/tools";
 import { UsageLimited, type UsageInfo } from "@petrina/agent-runtime/failures";
-import { Fakes, removeDir, tempDir } from "../../fixtures.js";
+import { Fakes } from "../../fixtures.js";
 
-const roots: string[] = [];
-afterAll(() => roots.forEach(removeDir));
+const engineCases = engineCaseFixtures();
+afterAll(() => engineCases.close());
 const opus = ENGINE_PROFILES.find(profile => profile.id === "opus-high")!;
 const sonnet = ENGINE_PROFILES.find(profile => profile.id === "sonnet-high")!;
 
 it("keeps a refused model or shared window until reset despite later account and live readings", async () => {
+  return engineCases.use("petrina-claude-refusal-refresh-", async caseOwner => {
   for (const kind of ["seven_day_opus", "five_hour"]) {
-    const root = tempDir("petrina-claude-refusal-refresh-"); roots.push(root);
+    const root = join(caseOwner.root, kind);
+    mkdirSync(root);
     const fakes = new Fakes(join(root, "fake"));
     fakes.scenario({ limited: [{ model: "opus", type: kind, resetsInMs: 72 * 3_600_000 }] });
-    const engine = new Engine(join(root, "data"), { admissionsClosed: true, agentCommand: () => undefined, toolPath: () => process.execPath });
-    await engine.waitUntilReady(); await Promise.all([...engine.backgroundWork]);
+    const engine = caseOwner.open(join(root, "data"), { admissionsClosed: true, agentCommand: () => undefined, toolPath: () => process.execPath });
+    await caseOwner.run(engine, async () => { await engine.waitUntilReady(); await Promise.all([...engine.backgroundWork]); });
     engine.setPoolPaused(true);
     engine.s.products.push({ id: "p", name: "Product", repo: "local/p", tone: "blue" });
     const task = engine.task(engine.addTask({ productId: "p", title: "A task", backlog: true }))!;
     const reports: UsageInfo[] = [];
-    const run = await AgentRun.start({ profile: opus, cwd: root, command: [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), fakes.dir], browser: false,
-      signal: new AbortController().signal, callbacks: { onActivity() {}, onPlanStep() {}, onPermission: async () => "deny", onUsage: report => { reports.push(report); engine.recordUsage(report); } },
-    });
+    const opening = engine.agentCleanup.opening(task.id, root);
+    let run: AgentRun | undefined;
+    const closeRun = caseOwner.onStop(async () => { if (run) await engine.stopAgent(task.id, run); });
+    const started = await caseOwner.prepare(() => AgentRun.start({ profile: opus, cwd: root, command: [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), fakes.dir], browser: false,
+      signal: caseOwner.signal, onGone: opening.onGone, callbacks: { onActivity() {}, onPlanStep() {}, onPermission: async () => "deny", onCleanupIncomplete: opening.onCleanupIncomplete, onUsage: report => { reports.push(report); engine.recordUsage(report); } },
+    }));
+    run = started; opening.attach(started);
     let clock: ReturnType<typeof spyOn<typeof Date, "now">> | undefined;
     try {
-      const failure = await run.prompt("You are the Builder in Petrina.").catch(error => error);
+      const failure = await caseOwner.prepare(() => started.prompt("You are the Builder in Petrina.").catch(error => error));
       expect(failure).toBeInstanceOf(UsageLimited);
       const report = reports.find(report => report.kind === kind)!;
       const refusedAt = Date.now();
       engine.recordLimit(task, "builder", opus.id, failure);
-      clock = spyOn(Date, "now").mockReturnValue(refusedAt + 10_000);
+      clock = spyOn(Date, "now");
+      caseOwner.onStop(() => clock?.mockRestore());
+      clock.mockReturnValue(refusedAt + 10_000);
       // The native account shape may omit Opus/Sonnet, or report a little shared room.
       engine.recordAccountUsage("claude-code", claudeAccountReports({ rate_limits_available: true, rate_limits: {
         five_hour: { utilization: kind === "five_hour" ? 99 : 38 }, seven_day: { utilization: 6 },
@@ -53,6 +63,7 @@ it("keeps a refused model or shared window until reset despite later account and
       clock.mockReturnValue(report.resetsAt! + 1);
       expect(limitOf(engine.s.pool, opus, Date.now())).toBeUndefined();
       expect(chooseProfile({ pool: engine.s.pool, tools: [], profiles: ENGINE_PROFILES }, opus, Date.now()).kind).toBe("planned");
-    } finally { clock?.mockRestore(); await run.stop(); await engine.shutdown(); }
+    } finally { clock?.mockRestore(); await closeRun(); await caseOwner.stop(engine); }
   }
+  });
 });

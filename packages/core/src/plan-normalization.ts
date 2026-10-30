@@ -53,6 +53,9 @@ export function normalizePlan(input: PlanInput): Plan {
   const roles = new Map(workflowRoles(input.roles).filter((role) => !role.internal).map((role) => [role.id, role]));
   /** Every role, removed ones included, to name what Petrina left out. */
   const all = new Map(input.roles.map((role) => [role.id, role]));
+  const isDeliveryRole = (id: Id | undefined) => id !== undefined && (id === RELEASE_MANAGER || all.get(id)?.result === "delivery");
+  const isBuildRole = (roleId: Id) => roles.get(roleId)?.result === "build" || roleId === BUILDER;
+  const defaultBuilderRoleId = input.roles.find((entry) => !entry.removed && entry.category !== "maintenance" && entry.result === "build")?.id ?? BUILDER;
   const profile = (id: string | undefined, fallback: Id) => (id && input.profiles.some((entry) => entry.id === id) ? id : fallback);
   const assignment = (wanted: Id | undefined, actual: Id, reason?: string): ProfileAssignment => wanted && input.profiles.some(p => p.id === wanted) ? { profileId: wanted, by: "planner", ...(reason ? { reason } : {}) } : engineAssignment(actual);
   const changes: string[] = [];
@@ -66,11 +69,11 @@ export function normalizePlan(input: PlanInput): Plan {
     if (!named) return "the plan named a role Petrina doesn't have";
     if (named.category === "maintenance") return `the ${named.name} is a maintenance role and only runs from routines`;
     if (named.removed) return `the ${named.name} was removed from the Library`;
-    return named.id === "planner" ? "the Planner only makes the plan" : `Petrina brings in the ${named.name} itself when it is needed`;
+    return named.result === "plan" ? "the Planner only makes the plan" : `Petrina brings in the ${named.name} itself when it is needed`;
   };
   /** A step whose role can't run. Delivery is already accounted for. */
   const leftOut = (roleId: Id, title: string) => {
-    if (roleId !== RELEASE_MANAGER) say(`Petrina left out “${title}”: ${cannotRun(roleId)}.`);
+    if (!isDeliveryRole(roleId)) say(`Petrina left out “${title}”: ${cannotRun(roleId)}.`);
   };
   const stages: Stage[] = [];
   /** Reviewers that join the final review, wherever the planner put them. */
@@ -99,7 +102,7 @@ export function normalizePlan(input: PlanInput): Plan {
   result.stages.forEach((raw, index) => {
     const id = `${task.id}:s${index}`;
     const role = roles.get(raw.roleId)?.result === "delivery" || roles.get(raw.roleId)?.result === "plan" ? undefined : roles.get(raw.roleId);
-    if (raw.roleId === RELEASE_MANAGER || raw.reviewerRoleId === RELEASE_MANAGER || raw.roleIds?.includes(RELEASE_MANAGER)) deliveryLeftOut();
+    if (isDeliveryRole(raw.roleId) || isDeliveryRole(raw.reviewerRoleId) || raw.roleIds?.some(isDeliveryRole)) deliveryLeftOut();
 
     if (raw.kind === "gate") {
       if (role) stages.push({ id, kind: "gate", title: raw.title, roleId: raw.roleId, profileIds: [], gate: raw.gate === "plan" ? "plan" : "design" });
@@ -141,13 +144,13 @@ export function normalizePlan(input: PlanInput): Plan {
       // named every reviewer and nobody needs to stand in.
       const standIn = role && stepOf(role) === "review" ? role.id : CODE_REVIEWER;
       const unnamed = profiles.some((_, position) => raw.roleIds?.[position] === undefined);
-      if (standIn !== raw.roleId && raw.roleId !== RELEASE_MANAGER) notReviewer(raw.roleId, `${id}-own`, profiles[0], unnamed, raw.profileReasons?.[0]);
+      if (standIn !== raw.roleId && !isDeliveryRole(raw.roleId)) notReviewer(raw.roleId, `${id}-own`, profiles[0], unnamed, raw.profileReasons?.[0]);
       if (role && stepOf(role) === "review" && !unnamed && !raw.roleIds?.includes(role.id)) {
         say(`Petrina didn't use the ${role.name} in “${raw.title}”: the plan named every reviewer there.`);
       }
       profiles.forEach((profileId, position) => {
         const wanted = raw.roleIds?.[position] ?? standIn;
-        if (wanted === RELEASE_MANAGER) return;
+        if (isDeliveryRole(wanted)) return;
         const reviewer = roles.get(wanted);
         if (reviewer && stepOf(reviewer) === "review") reviewers.push({ roleId: reviewer.id, profileId: profile(profileId, "sol-xhigh"), assignment: raw.roleIds?.[position] !== undefined || standIn === raw.roleId ? assignment(profileId, profile(profileId, "sol-xhigh"), raw.profileReasons?.[position]) : engineAssignment(profile(profileId, "sol-xhigh")) });
         else if (notReviewer(wanted, `${id}-${position}`, profileId, true, raw.profileReasons?.[position])) reviewers.push({ roleId: CODE_REVIEWER, profileId: profile(profileId, "sol-xhigh") });
@@ -155,7 +158,7 @@ export function normalizePlan(input: PlanInput): Plan {
       // A role named beyond the chosen profiles has nobody to run it. Notes still get their own step;
       // every other unused place is named in the reason, rather than silently disappearing.
       raw.roleIds?.slice(profiles.length).forEach((roleId, index) => {
-        if (roleId === RELEASE_MANAGER) return;
+        if (isDeliveryRole(roleId)) return;
         const extra = roles.get(roleId);
         const named = all.get(roleId);
         if (named?.internal && !named.removed) say(`Petrina left the ${named.name} out of “${raw.title}”: ${cannotRun(roleId)}.`);
@@ -182,7 +185,7 @@ export function normalizePlan(input: PlanInput): Plan {
         return;
       }
       const reviewer = raw.reviewerRoleId ? roles.get(raw.reviewerRoleId) : undefined;
-      const named = raw.reviewerRoleId && raw.reviewerRoleId !== RELEASE_MANAGER ? all.get(raw.reviewerRoleId) : undefined;
+      const named = raw.reviewerRoleId && !isDeliveryRole(raw.reviewerRoleId) ? all.get(raw.reviewerRoleId) : undefined;
       if (named && !(reviewer && stepOf(reviewer) === "design-review")) say(`Petrina put the Design reviewer in the design pair instead of the ${named.name}.`);
       stages.push({
         id,
@@ -213,9 +216,9 @@ export function normalizePlan(input: PlanInput): Plan {
     say("Petrina joined the reviews that came one after another into one review.");
   }
 
-  if (!stages.some((stage) => stage.roleId === BUILDER)) {
+  if (!stages.some((stage) => isBuildRole(stage.roleId))) {
     const at = stages.findIndex((stage) => stage.kind === "review-chain");
-    const builder: Stage = { id: `${task.id}:build`, kind: "do", title: "Build", roleId: BUILDER, profileIds: ["opus-xhigh"] };
+    const builder: Stage = { id: `${task.id}:build`, kind: "do", title: "Build", roleId: defaultBuilderRoleId, profileIds: ["opus-xhigh"] };
     if (at >= 0) stages.splice(at, 0, builder);
     else stages.push(builder);
   }
@@ -241,7 +244,8 @@ export function normalizePlan(input: PlanInput): Plan {
   }
 
   if (result.risk?.level === "high") {
-    const builderTool = input.profiles.find((entry) => entry.id === onUsable(stages.find((stage) => stage.roleId === BUILDER)!.profileIds[0]!))?.toolId;
+    const builderStage = stages.find((stage) => isBuildRole(stage.roleId))!;
+    const builderTool = input.profiles.find((entry) => entry.id === onUsable(builderStage.profileIds[0]!))?.toolId;
     const other = input.profiles.filter((entry) => entry.toolId !== builderTool && !entry.standby && onUsable(entry.id) === entry.id);
     const reviewer = onUsable((other.find((entry) => entry.effort === "xhigh") ?? other[0])?.id ?? "opus-xhigh");
     stages.splice(finalReviewIndex(stages) + 1, 0, { id: `${task.id}:security`, kind: "review-chain", title: "Security review", roleId: "security-reviewer", profileIds: [reviewer], maxRounds: 2 });

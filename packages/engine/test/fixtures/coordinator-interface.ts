@@ -1,11 +1,10 @@
 import { expect } from "bun:test";
-import { runCommand } from "@petrina/test-support/commands";
 import { EngineClient } from "../client.js";
-import { CLI, engineEnv } from "../support.js";
+import { coordinationCli } from "../../src/coordination-cli.js";
 import { mcpRequest } from "../../src/mcp.js";
 import type { Result } from "../../src/coordination.js";
 
-/** Actual CLI child or MCP-to-HTTP client; neither can silently start another engine. */
+/** In-process CLI parser over HTTP client or MCP-to-HTTP client; neither can silently start another engine. */
 export function interfaceClient(kind: "cli" | "mcp", home: string) {
   const client = new EngineClient(home, () => { throw new Error("coordination cannot launch"); });
   return async (name: string, args: Record<string, unknown>, expectedCode = 0): Promise<Result> => {
@@ -17,8 +16,13 @@ export function interfaceClient(kind: "cli" | "mcp", home: string) {
     }
     const argv = name.split(".");
     for (const [key, value] of Object.entries(args)) argv.push(`--${key.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`, typeof value === "string" ? value : JSON.stringify(value));
-    const { stdout: out, stderr: err, code } = await runCommand([process.execPath, CLI, ...argv, "--json"], { env: engineEnv(home) });
-    expect(code, err).toBe(expectedCode);
-    return JSON.parse(out);
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const code = await coordinationCli([...argv, "--json"], client, {
+      log: (line) => { stdout.push(line); },
+      error: (line) => { stderr.push(line); },
+    });
+    expect(code, stderr.join("\n")).toBe(expectedCode);
+    return JSON.parse(stdout.join("\n"));
   };
 }

@@ -3,6 +3,7 @@ import { afterAll } from "bun:test";
 import { completeAll } from "@petrina/core";
 import { ENGINE_TEST_ROOT } from "../../fixtures/runtime-paths.js";
 import { nativeCoordinatorTask } from "../../fixtures/coordinator-native.js";
+import { fakeAgentSessions } from "../../fixtures/fake-agent-sessions.js";
 import { expect, it } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -116,7 +117,7 @@ for (const tool of ["codex", "grok"]) it(`offers recovery for ${tool} acceptance
     f.controller.abort(); await f.pending.catch(() => {});
     f.engine.commitNow(f.scope);
     await owner.stop(f.engine);
-    const replacement = owner.open(join(f.root, "data"), { agentCommand: () => [process.execPath, join(ENGINE_TEST_ROOT, "fake-agent.ts"), f.fakes.dir], usageCommands: { codex: null, grok: null, antigravity: null } });
+    const replacement = owner.open(join(f.root, "data"), { agentCommand: () => [process.execPath, join(ENGINE_TEST_ROOT, "fake-agent.ts"), f.fakes.dir], startAgentSession: fakeAgentSessions(f.fakes), usageCommands: { codex: null, grok: null, antigravity: null } });
     replacement.setPoolPaused(true);
     try {
       const saved = replacement.task(f.task.id)!;
@@ -329,7 +330,7 @@ it("recovers a lost acknowledgement as unconfirmed instead of sending it again",
     expect(f.task.queued[0]?.deliveries?.main?.state).toBe("sending");
     f.controller.abort(); f.release(); await f.pending.catch(() => {});
     f.engine.commitNow(f.scope); await owner.stop(f.engine);
-    const recovered = owner.open(join(f.root, "data"), { agentCommand: () => [process.execPath, join(ENGINE_TEST_ROOT, "fake-agent.ts"), f.fakes.dir], usageCommands: { codex: null, grok: null, antigravity: null } });
+    const recovered = owner.open(join(f.root, "data"), { agentCommand: () => [process.execPath, join(ENGINE_TEST_ROOT, "fake-agent.ts"), f.fakes.dir], startAgentSession: fakeAgentSessions(f.fakes), usageCommands: { codex: null, grok: null, antigravity: null } });
     recovered.setPoolPaused(true);
     try {
       const message = recovered.task(f.task.id)!.queued[0]!;

@@ -7,12 +7,15 @@ import { tempDir } from "@petrina/test-support/fixtures";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import type { Engine, EngineOptions } from "../engine.js";
 import type { MachineRecords } from "../../src/check-interruption.js";
+import { privateAgentToolProbe } from "../scripted-probes.js";
 import { directDrivers } from "./direct-drivers.js";
+import { installSharedWorkflowFastPaths } from "./shared-preparation.js";
 
 export interface RepositoryRecordOptions {
   /** Only an owner whose real Git boundary is asserted gets a repository. */
   git?: readonly ("first" | "second")[];
   machineRecords?: MachineRecords;
+  runCheckCommand?: EngineOptions["runCheckCommand"];
 }
 
 /** Saved repository inputs in a real private Engine/SQLite store, with no planning or provider transport. */
@@ -25,8 +28,12 @@ async function repositoryRecords(options: RepositoryRecordOptions, owner: { root
     return { id, name: index ? "Second" : "First", repo: `acme/${id}`, path, tone: "blue" as const };
   }));
   const start = () => {
-    const settings = { ...(options.machineRecords ? { machineRecords: options.machineRecords } : {}) };
-    return owner.open(join(root, "data"), settings);
+    const settings: EngineOptions = {
+      toolProbe: privateAgentToolProbe(),
+      ...(options.machineRecords ? { machineRecords: options.machineRecords } : {}),
+      ...(options.runCheckCommand ? { runCheckCommand: options.runCheckCommand } : {}),
+    };
+    return installSharedWorkflowFastPaths(owner.open(join(root, "data"), settings));
   };
   const engine = start();
   engine.setPoolPaused(true);

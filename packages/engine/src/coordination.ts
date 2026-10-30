@@ -357,7 +357,7 @@ export class Coordination {
       const record = result.validation as ExtraValidation | undefined;
       if (!record?.run) return { outcome: "unavailable", message: "This extra validation has no command log yet." };
       if (record.run.endedAt === undefined) return { outcome: "pending", state: record.state, extraEvidence: true, message: "The original diagnostic will be available when this run and its cleanup settle." };
-      const task = { id: record.taskId, checks: { at: record.endedAt ?? record.queuedAt, results: [record.run], sha: record.commit, tree: record.tree } } as unknown as Task;
+      const task = { id: record.taskId, checks: { at: record.endedAt ?? record.queuedAt, results: [record.run], sha: record.commit, tree: record.tree } };
       const log = await readCheckLog(e.dataDir, task, { index: 0, section: a.section, cursor: a.cursor, limit: a.limit });
       return { ...log, extraEvidence: true, validationState: record.state, ...(record.run.exitSignal ? { commandOutcome: "unfinished" } : {}) };
     }

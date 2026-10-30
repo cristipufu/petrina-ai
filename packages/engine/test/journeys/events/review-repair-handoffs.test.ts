@@ -3,13 +3,12 @@ import type { WorkflowEvent } from "@petrina/core";
 import { Coordination, type Result } from "../../../src/coordination.js";
 import { SLOW } from "../../support.js";
 import { createWorkflowEventFixtures, all } from "../../fixtures/workflow-event-native.js";
-
-const { setup, close } = createWorkflowEventFixtures();
+const { setup, close, use } = createWorkflowEventFixtures();
 afterAll(close);
-
 describe("a real workflow through the event feed", () => {
 it("keeps parallel reviewer seats apart, reconciles findings, records the repair return and the fix round's continued conversation", async () => {
-    const { engine, productId } = await setup({ planner: "parallel", reviewer: "important", fixes: "change", reviewRounds: 2, reopen: "resume" });
+  return use("petrina-events-flow-", async caseOwner => {
+    const { engine, productId } = await setup(caseOwner, { planner: "parallel", reviewer: "important", fixes: "change", reviewRounds: 2, reopen: "resume" });
     const c = new Coordination(engine);
     const before = await c.call("watch.events", { timeoutMs: 0 });
     const taskId = engine.addTask({ productId, title: "Fix the greeting", description: "A greeting file." });
@@ -77,4 +76,5 @@ it("keeps parallel reviewer seats apart, reconciles findings, records the repair
     expect(seatFinishedWithFinding.length).toBeGreaterThanOrEqual(2);
     expect(observed.at(-1)).toMatchObject({ kind: "task.finished", history: "committed" });
   });
+});
 });

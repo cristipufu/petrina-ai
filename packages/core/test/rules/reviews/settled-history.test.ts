@@ -4,12 +4,55 @@ import { settledReviewFindings } from "../../../src/settled-review-history.js";
 import { stateFixture, taskFixture } from "../../fixtures/state.js";
 
 const role = BUILT_IN_ROLES.find(role => role.id === "code-reviewer")!;
-const stage = { id: "review", title: "Review", kind: "review-chain" as const, roleId: role.id, profileIds: ["sol-high", "opus-high", "grok-high"] };
+const stage = {
+  id: "review",
+  title: "Review",
+  kind: "review-chain" as const,
+  roleId: role.id,
+  profileIds: ["sol-high", "opus-high", "grok-high"],
+};
 function finding(id = "f"): DeepMutable<Finding> {
-  return { id, text: `Full problem statement for ${id}`, where: "The affected location", productIds: ["p"], severity: "blocking", raisedBy: "sol-high", roleId: role.id, status: "fixed", confirmedBy: ["opus-high"], evidence: `Original evidence for ${id}. `.repeat(100), steps: `Original reproduction for ${id}`, votes: [{ by: "grok-high", toolId: "grok", verdict: "real", reason: `Original vote for ${id}` }], answer: { fixed: true, text: `Builder answer for ${id}`, at: 10 }, sameBug: "card", tracking: { taskId: "card" } };
+  return {
+    id,
+    text: `Full problem statement for ${id}`,
+    where: "The affected location",
+    productIds: ["p"],
+    severity: "blocking",
+    raisedBy: "sol-high",
+    roleId: role.id,
+    status: "fixed",
+    confirmedBy: ["opus-high"],
+    evidence: `Original evidence for ${id}. `.repeat(100),
+    steps: `Original reproduction for ${id}`,
+    votes: [{ by: "grok-high", toolId: "grok", verdict: "real", reason: `Original vote for ${id}` }],
+    answer: { fixed: true, text: `Builder answer for ${id}`, at: 10 },
+    sameBug: "card",
+    tracking: { taskId: "card" },
+  };
 }
 function examined(findings: readonly Finding[], extra: Partial<JourneyStep> = {}): DeepMutable<JourneyStep> {
-  return JSON.parse(JSON.stringify({ id: "checked", kind: "agent", roleId: role.id, stageId: stage.id, round: 2, sub: 0, startedAt: 20, endedAt: 30, seats: ["reviewer:0", "reviewer:1", "reviewer:2"], result: { findings, findingsSettled: true, findingChanges: { raised: [], fixed: findings.map(f => f.id), dismissed: [], claimedFixed: findings.map(f => f.id) } }, ...extra })) as DeepMutable<JourneyStep>;
+  return JSON.parse(JSON.stringify({
+    id: "checked",
+    kind: "agent",
+    roleId: role.id,
+    stageId: stage.id,
+    round: 2,
+    sub: 0,
+    startedAt: 20,
+    endedAt: 30,
+    seats: ["reviewer:0", "reviewer:1", "reviewer:2"],
+    result: {
+      findings,
+      findingsSettled: true,
+      findingChanges: {
+        raised: [],
+        fixed: findings.map(f => f.id),
+        dismissed: [],
+        claimedFixed: findings.map(f => f.id),
+      },
+    },
+    ...extra,
+  })) as DeepMutable<JourneyStep>;
 }
 function baseline(findings: readonly Finding[] = [finding()], journey = [examined(findings)]) {
   const state = stateFixture({ now: 1_000_000, products: [{ id: "p", name: "Product", repo: "local/product", tone: "blue" }] });
@@ -19,9 +62,31 @@ function baseline(findings: readonly Finding[] = [finding()], journey = [examine
 it("only shortens dated reviewer claims that stood through a completed recorded examination", () => {
   const good = finding();
   expect(settledReviewFindings(baseline([good]), BUILT_IN_ROLES)).toEqual({ f: { round: 2, step: "checked" } });
-  const variants: Partial<Finding>[] = [{ status: "open" }, { status: "dismissed" }, { status: "unverified" }, { severity: "pre-existing" }, { raisedBy: "petrina" }, { roleId: "tester" }, { answer: undefined }, { answer: { fixed: false, text: "Not fixed", at: 10 } }, { answer: { fixed: true, text: "No time" } as never }, { answer: { fixed: true, text: "New claim", at: 35 } }, { reopenedAt: 35 }, { reopenedAt: 15 }];
-  for (const change of variants) expect(settledReviewFindings(baseline([{ ...good, ...change }], [examined([good])]), BUILT_IN_ROLES)).toEqual({});
-  for (const step of [examined([good], { endedAt: undefined }), examined([good], { startedAt: 9 }), examined([good], { result: { findings: [good] } }), examined([good], { result: { findings: [good], findingsSettled: true } }), examined([{ ...good, status: "open" }])]) {
+  const variants: Partial<Finding>[] = [
+    { status: "open" },
+    { status: "dismissed" },
+    { status: "unverified" },
+    { severity: "pre-existing" },
+    { raisedBy: "petrina" },
+    { roleId: "tester" },
+    { answer: undefined },
+    { answer: { fixed: false, text: "Not fixed", at: 10 } },
+    { answer: { fixed: true, text: "No time" } as never },
+    { answer: { fixed: true, text: "New claim", at: 35 } },
+    { reopenedAt: 35 },
+    { reopenedAt: 15 },
+  ];
+  for (const change of variants) {
+    expect(settledReviewFindings(baseline([{ ...good, ...change }], [examined([good])]), BUILT_IN_ROLES)).toEqual({});
+  }
+  const incompleteSteps = [
+    examined([good], { endedAt: undefined }),
+    examined([good], { startedAt: 9 }),
+    examined([good], { result: { findings: [good] } }),
+    examined([good], { result: { findings: [good], findingsSettled: true } }),
+    examined([{ ...good, status: "open" }]),
+  ];
+  for (const step of incompleteSteps) {
     expect(settledReviewFindings(baseline([good], [step]), BUILT_IN_ROLES)).toEqual({});
   }
   const reopened = { ...good, reopenedAt: 35, answer: { fixed: true, text: "Claimed again", at: 40 } };

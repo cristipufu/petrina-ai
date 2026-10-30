@@ -12,6 +12,12 @@ describe("shared check repair episodes", () => {
   const command = (name: string, script: string) => ({ name, argv: [process.execPath, "-e", script] });
   const passing = command("Tests", "console.log('All tests pass')");
   const failing = command("Welcome page", "console.error('The welcome page is missing'); process.exit(1)");
+  const scriptedEpisodeChecks = async (req: { argv: readonly string[] }) => {
+    if (req.argv[0] !== process.execPath || req.argv[1] !== "-e") return undefined;
+    if (req.argv[2] === passing.argv[2]) return { code: 0, stdout: "All tests pass\n" };
+    if (req.argv[2] === failing.argv[2]) return { code: 1, stderr: "The welcome page is missing\n" };
+    return undefined;
+  };
   const setChecks = (engine: RepositoryRecords["engine"], productId: string, commands: readonly { name: string; argv: string[] }[]) => {
     const product = engine.s.products.find((entry) => entry.id === productId)!;
     product.checks = [...commands];
@@ -30,7 +36,7 @@ describe("shared check repair episodes", () => {
 
 
   it("recovers recorded sleep for an already waiting decision and preserves its original run across restart", async () => {
-    await withRepositoryRecords("check-interruption-recovery", { git: ["first"], machineRecords: async () => "2026-10-21 17:55:44 +0300 Sleep Entering Sleep state due to 'Clamshell Sleep':TCPKeepAlive=active Using Batt (Charge:100%) 74 secs" }, async (f) => {
+    await withRepositoryRecords("check-interruption-recovery", { git: ["first"], machineRecords: async () => "2026-10-21 17:55:44 +0300 Sleep Entering Sleep state due to 'Clamshell Sleep':TCPKeepAlive=active Using Batt (Charge:100%) 74 secs", runCheckCommand: scriptedEpisodeChecks }, async (f) => {
       let engine = f.engine;
 
       engine.setPoolPaused(false); f.task.plan = plan(); f.task.stageIndex = 2;
@@ -72,7 +78,7 @@ describe("shared check repair episodes", () => {
 
 
   it("keeps spent repairs when the required checks are replaced while a passing run is under way", async () => {
-    await withRepositoryRecords("check-replaced", { git: ["first"] }, async ({ engine, task, run: ownRun }) => {
+    await withRepositoryRecords("check-replaced", { git: ["first"], runCheckCommand: scriptedEpisodeChecks }, async ({ engine, task, run: ownRun }) => {
 
       engine.setPoolPaused(false);
       const scope = executionFor(task, "first"), checks = engine["checks"], signal = engine.stopRequested.signal;

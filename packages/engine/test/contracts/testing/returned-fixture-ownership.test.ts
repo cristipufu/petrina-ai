@@ -3,7 +3,6 @@ import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { createTaskState, type Product } from "@petrina/core";
 import type { RuntimeTask } from "@petrina/orchestrator";
-import * as commands from "@petrina/test-support/commands";
 import { rejectionOf } from "@petrina/test-support/rejections";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import * as gitSteps from "@petrina/repositories/git";
@@ -32,7 +31,16 @@ for (const helper of ["advance", "request", "recordPass"] as const) it(`owns ret
       f.engine.schedule = () => {};
       await f.run(f.engine, () => f.engine.waitUntilReady());
     }
-    if (helper === "recordPass") {
+    if (helper === "advance") {
+      const original = gitSteps.commitChanges;
+      const spy = spyOn(gitSteps, "commitChanges");
+      restore = () => spy.mockRestore();
+      spy.mockImplementation((path, message) => {
+        if (path !== f.products[0]!.path || held) return original(path, message);
+        held = true;
+        return release.promise.then(async () => { const value = await original(path, message); nativeCompleted = true; return value; });
+      });
+    } else {
       const original = gitSteps.treeOf;
       const spy = spyOn(gitSteps, "treeOf");
       restore = () => spy.mockRestore();
@@ -40,17 +48,6 @@ for (const helper of ["advance", "request", "recordPass"] as const) it(`owns ret
         if (path !== f.scope.work.worktree || held) return original(path, ref);
         held = true;
         return release.promise.then(async () => { const value = await original(path, ref); nativeCompleted = true; return value; });
-      });
-    } else {
-      const original = commands.git;
-      const spy = spyOn(commands, "git");
-      restore = () => spy.mockRestore();
-      spy.mockImplementation((path, ...args) => {
-        const selected = helper === "advance" ? path === f.products[0]!.path && args[0] === "add"
-          : path === f.scope.work.worktree && args[0] === "rev-parse" && args[1] === "HEAD^{tree}";
-        if (!selected || held) return original(path, ...args);
-        held = true;
-        return release.promise.then(async () => { const value = await original(path, ...args); nativeCompleted = true; return value; });
       });
     }
     running = f[helper]();
@@ -77,18 +74,18 @@ for (const helper of ["advance", "request", "recordPass"] as const) it(`owns ret
 for (const failure of [new Error("Controlled first main read failed"), undefined]) it(`settles every actual mains peer and retains its exact rejected result (${failure === undefined ? "undefined" : "Error"})`, async () => {
   const f = await requiredGapFixtures("Ownership control").fixture({ shared: true });
   const release = Promise.withResolvers<void>(), peerReady = Promise.withResolvers<void>();
-  const original = commands.git;
-  let peer: Promise<string> | undefined, closed = false, peerCompleted = false, restore = () => {};
+  const original = gitSteps.revParse;
+  let peer: Promise<string | undefined> | undefined, closed = false, peerCompleted = false, restore = () => {};
   let peerCompletedAtReport: boolean | undefined;
   let running: Promise<string[]> | undefined, closing: Promise<void> | undefined;
   try {
-    const spy = spyOn(commands, "git");
+    const spy = spyOn(gitSteps, "revParse");
     restore = () => spy.mockRestore();
-    spy.mockImplementation((path, ...args) => {
-      if (args[0] !== "rev-parse" || args[1] !== "main") return original(path, ...args);
+    spy.mockImplementation((path, ref) => {
+      if (ref !== "main") return original(path, ref);
       if (path === f.products[0]!.path) return peerReady.promise.then(() => { throw failure; });
-      if (path !== f.products[1]!.path) return original(path, ...args);
-      peer = release.promise.then(async () => { const value = await original(path, ...args); peerCompleted = true; return value; });
+      if (path !== f.products[1]!.path) return original(path, ref);
+      peer = release.promise.then(async () => { const value = await original(path, ref); peerCompleted = true; return value; });
       peerReady.resolve();
       return peer;
     });

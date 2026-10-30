@@ -7,9 +7,11 @@ import { createProcessLease, type ProcessLease, type ProcessLeaseProgramOptions 
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { basename, dirname, join } from "node:path";
 import { completeAll, type Task } from "@petrina/core";
+import * as gitOps from "@petrina/repositories/git";
 import type { Engine, EngineOptions } from "../engine.js";
 import { directDrivers } from "./direct-drivers.js";
-import { git, makeWorld, tempDir, taskOf, until, type World } from "../support.js";
+import { readRef } from "./shared-preparation.js";
+import { makeWorld, tempDir, taskOf, until, type World } from "../support.js";
 
 type CleanupOptions = Partial<EngineOptions>;
 export interface CleanupWorld extends Omit<World, "start"> {
@@ -120,7 +122,7 @@ export const listed = async (w: Pick<World, "clone">, path: string) => {
     catch { return join(nativeParent(dirname(path)), basename(path)); }
   };
   const location = (path: string) => join(nativeParent(dirname(path)), basename(path));
-  return (await git(w.clone, "worktree", "list", "--porcelain", "-z")).split("\0").filter((field) => field.startsWith("worktree ")).some((field) => location(field.slice("worktree ".length)) === location(path));
+  return [w.clone, ...(await gitOps.linkedWorktrees(w.clone))].some((entry) => location(entry) === location(path));
 };
 
 export async function expectUnconfirmed(engine: Engine, taskId: string): Promise<void> {
@@ -133,6 +135,6 @@ export async function expectUnconfirmed(engine: Engine, taskId: string): Promise
 export async function gone(w: Pick<World, "clone" | "dir">, task: Task): Promise<void> {
   expect(existsSync(task.worktree!), `${task.id}: ${task.worktree} ${JSON.stringify(task.cleanup)}`).toBe(false);
   expect(await listed(w, task.worktree!)).toBe(false);
-  expect(await git(w.clone, "rev-parse", task.branch!)).toMatch(/^[a-f0-9]{40}$/);
+  expect(readRef(join(w.clone, ".git"), `refs/heads/${task.branch!}`)).toMatch(/^[a-f0-9]{40}$/);
   expect(readFileSync(join(w.dir, "shared-cache", "keep"), "utf8")).toBe("shared");
 }

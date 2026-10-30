@@ -96,13 +96,22 @@ describe("shared check repair episodes", () => {
   });
 
   it("lists every product's failing checks, turns and answers at a shared check problem, and returns a change request there", async () => {
-    await withRepositoryRecords("check-problem", { git: ["first","second"] }, async ({ engine, task, id, run }) => {
+    const secondScript = "console.log('(fail) greeting > says hello'); console.error('error: expected Hello'); process.exit(1)";
+    await withRepositoryRecords("check-problem", {
+      git: ["first","second"],
+      runCheckCommand: async (req) => {
+        if (req.argv[0] !== process.execPath || req.argv[1] !== "-e") return undefined;
+        if (req.argv[2] === failing.argv[2]) return { code: 1, stderr: "The welcome page is missing\n" };
+        if (req.argv[2] === secondScript) return { code: 1, stdout: "(fail) greeting > says hello\n", stderr: "error: expected Hello\n" };
+        return undefined;
+      },
+    }, async ({ engine, task, id, run }) => {
       engine.setPoolPaused(false);
       task.plan = plan();
       task.stageIndex = 1;
       const first = executionFor(task, "first"), second = executionFor(task, "second");
       const checks = engine["checks"], signal = engine.stopRequested.signal;
-      const secondChecks = [command("Tests", "console.log('(fail) greeting > says hello'); console.error('error: expected Hello'); process.exit(1)")];
+      const secondChecks = [command("Tests", secondScript)];
       setChecks(engine, "first", [failing]); setChecks(engine, "second", secondChecks);
       await run(() => checks.runProductChecks(first, [failing], signal));
       await run(() => checks.runProductChecks(second, secondChecks, signal));

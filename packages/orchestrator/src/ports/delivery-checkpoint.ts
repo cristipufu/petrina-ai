@@ -30,5 +30,5 @@ export interface DeliveryCheckpointEffects {
   committedCode(task: RuntimeTask): Promise<{ versions: Record<Id, string>; changes: Record<Id, string> }>;
   invalidateAcceptance(task: RuntimeTask, versions?: Record<Id, string>): Promise<Record<Id, string> | undefined>;
   versions(task: RuntimeTask): Promise<Record<Id, string>>;
-  acceptanceVersion(scope: RepositoryContext, versions: Record<Id, string>): Promise<string | undefined>;
+  acceptanceVersion(scope: RepositoryContext, versions?: Record<Id, string>): Promise<string | undefined>;
 }

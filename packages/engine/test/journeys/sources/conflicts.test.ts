@@ -6,14 +6,14 @@ afterAll(() => fixtures.close());
 
 describe.concurrent("review findings for a confirmed start",()=>{
 it("names the branch when its movement conflicts", async () => {
-    await fixtures.world("branch-conflict", async ({ w, engine: withEngine }) => {
+    await fixtures.world("branch-conflict", async ({ w, engine: withEngine, planned }) => {
     await branch(w);
 
     await withEngine(async engine => {
     let landed = false;
 
-      const productId = await engine.addProduct(w.clone);
-      const id = engine.addTask({ productId, title: "A greeting", description: "[quick]", startFrom: { kind: "branch", name: "release-2.x" }, delivery: "local" });
+      const productId = await w.preparedProduct(engine);
+      const id = await planned(engine, { productId, title: "A greeting", description: "[quick]", startFrom: { kind: "branch", name: "release-2.x" }, delivery: "local" }, "builder");
       const task = taskOf(await finish(engine, id, async (eng, state) => {
         if (!landed && eng.task(id)?.agent?.roleId === "builder" && state.inbox.some((item) => item.taskId === id && item.kind === "permission")) {
           landed = true;

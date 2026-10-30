@@ -58,7 +58,7 @@ export function stepOf(role: Pick<Role, "result">): RoleStep | undefined {
 /** Why a role's permission cannot change, or undefined when the coordinator may choose it. */
 export function permissionLock(role: Pick<Role, "id" | "result" | "category">): string | undefined {
   if (role.category === "maintenance") return role.result === "build" ? "Small changes with review can change the product." : "Reports only is always read-only.";
-  if (role.id === RELEASE_MANAGER) return "The Release Manager writes release notes. Petrina handles delivery itself. It can't be edited here.";
+  if (role.result === "delivery") return "The Release Manager writes release notes. Petrina handles delivery itself. It can't be edited here.";
   if (["check-discovery", "guide", "votes"].includes(role.result)) return "Petrina runs this role read-only as part of its checks.";
   switch (role.result) {
     case "plan":
@@ -106,7 +106,7 @@ const defaultOf = (id: Id) => [...BUILT_IN_ROLES, ...MAINTENANCE_ROLES].find((ro
 /** Only the changes a built-in role allows, and only those that differ from Petrina's defaults (saved data is not trusted blindly). */
 function editOf(role: Role, edit: RoleEdit | undefined): RoleEdit {
   const out: RoleEdit = {};
-  if (!edit || role.id === RELEASE_MANAGER) return out;
+  if (!edit || role.result === "delivery") return out;
   if (typeof edit.purpose === "string" && line(edit.purpose) !== role.purpose) out.purpose = line(edit.purpose);
   if (typeof edit.instructions === "string" && block(edit.instructions) !== role.instructions) out.instructions = block(edit.instructions);
   if (typeof edit.handsBack === "string" && line(edit.handsBack) !== role.handsBack) out.handsBack = line(edit.handsBack);
@@ -205,7 +205,7 @@ function findRole(roles: readonly Role[], roleId: Id): Role {
 export function editRole(changes: RoleChanges, roleId: Id, draft: RoleDraft): RoleChanges {
   const roles = libraryRoles(changes);
   const role = findRole(roles, roleId);
-  if (role.id === RELEASE_MANAGER) throw new Error(permissionLock(role)!);
+  if (role.result === "delivery") throw new Error(permissionLock(role)!);
   if ((draft.category ?? "workflow") !== (role.category ?? "workflow")) throw new Error("A role keeps its Workflow or Maintenance category.");
   if (draft.result !== role.result) throw new Error("A role keeps the kind of result it hands back. To hand back something else, add a new role.");
   const lock = permissionLock(role);
@@ -261,7 +261,7 @@ export function addRole(changes: RoleChanges, draft: RoleDraft): { changes: Role
 /** Bring back Petrina's wording and settings for a built-in role. */
 export function resetRole(changes: RoleChanges, roleId: Id): RoleChanges {
   const role = findRole(libraryRoles(changes), roleId);
-  if (role.id === RELEASE_MANAGER) throw new Error(permissionLock(role)!);
+  if (role.result === "delivery") throw new Error(permissionLock(role)!);
   if (role.added) throw new Error("Only built-in roles have Petrina's defaults to go back to.");
   const edits = { ...changes.edits };
   delete edits[roleId];
@@ -333,7 +333,7 @@ export function finalReviewIndex(stages: readonly Stage[]): number {
  * read-only (`afterReview`), because no planned role changes anything after it.
  */
 export function stepMayChange(role: Role, stages: readonly Stage[], index: number): { canEdit: boolean; afterReview: boolean } {
-  if (role.id === RELEASE_MANAGER) return { canEdit: false, afterReview: false };
+  if (role.result === "delivery") return { canEdit: false, afterReview: false };
   const review = finalReviewIndex(stages);
   const afterReview = role.canEdit && review >= 0 && index > review;
   return { canEdit: role.canEdit && !afterReview, afterReview };

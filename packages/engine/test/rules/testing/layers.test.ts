@@ -265,3 +265,86 @@ it("treats only real presentation stylesheets as assets, retaining pure and unre
   expect(packageBoundaries(new Map([["packages/core/src/model.ts", "import './view.css';"], ["packages/core/src/view.css", "body {}"]])))
     .toEqual([expect.stringContaining("stylesheets need a real presentation asset")]);
 });
+
+it("locks desktop UI to core and web/Tauri APIs while preventing engine from depending on desktop", () => {
+  expect(
+    packageBoundaries(
+      new Map([
+        ["apps/desktop/src/App.tsx", "import { columnOf } from '@petrina/core'; export const ok = () => fetch('/api');"],
+        ["packages/core/src/index.ts", "export const columnOf = () => 'backlog';"],
+      ]),
+    ),
+  ).toEqual([]);
+
+  for (const forbidden of [
+    "import type { Engine } from '../../../packages/engine/src/engine.js';",
+    "import { scopesFor } from '@petrina/orchestrator';",
+    "import { Store } from '@petrina/storage/store';",
+    "import * as git from '@petrina/repositories/git';",
+  ]) {
+    const errors = packageBoundaries(
+      new Map([
+        ["apps/desktop/src/App.tsx", forbidden],
+        ["packages/engine/src/engine.ts", "export class Engine {}"],
+        ["packages/orchestrator/src/index.ts", "export const scopesFor = () => [];"],
+        ["packages/storage/src/store.ts", "export class Store {}"],
+        ["packages/repositories/src/git.ts", "export const run = () => {};"],
+      ]),
+    );
+    expect(errors.some((error) => error.includes("apps/desktop cannot depend on"))).toBe(true);
+  }
+
+  for (const nativeLeak of [
+    "import { readFileSync } from 'node:fs';",
+    "import type { ChildProcess } from 'node:child_process';",
+    "export const spawn = () => Bun.spawn(['git']);",
+    "export const home = () => process.env.HOME;",
+  ]) {
+    expect(packageBoundaries(new Map([["apps/desktop/src/App.tsx", nativeLeak]])).length).toBeGreaterThan(0);
+  }
+
+  expect(
+    packageBoundaries(
+      new Map([["apps/desktop/package.json", JSON.stringify({ dependencies: { "@petrina/engine": "workspace:*" } })]]),
+    ),
+  ).toEqual([expect.stringContaining("violates the package direction")]);
+
+  expect(
+    packageBoundaries(
+      new Map([
+        ["packages/engine/src/server.ts", "import type { Theme } from '../../../apps/desktop/src/theme.js';"],
+        ["apps/desktop/src/theme.ts", "export type Theme = 'light' | 'dark';"],
+      ]),
+    ),
+  ).toEqual([expect.stringContaining("packages/engine cannot depend on apps/desktop")]);
+});
+
+it("rejects intra-package runtime import cycles across workspaces while allowing acyclic DAGs and type-only back references", () => {
+  expect(
+    packageBoundaries(
+      new Map([
+        ["packages/core/src/a.ts", "import { b } from './b.js'; export const a = () => b();"],
+        ["packages/core/src/b.ts", "import type { A } from './a.js'; export const b = (): A => 'ok'; export type A = string;"],
+      ]),
+    ),
+  ).toEqual([]);
+
+  expect(
+    packageBoundaries(
+      new Map([
+        ["packages/core/src/a.ts", "import { b } from './b.js'; export const a = () => b();"],
+        ["packages/core/src/b.ts", "import { a } from './a.js'; export const b = () => a();"],
+      ]),
+    ),
+  ).toEqual([expect.stringContaining("intra-package runtime import cycle (packages/core/src/a.ts <-> packages/core/src/b.ts)")]);
+
+  expect(
+    packageBoundaries(
+      new Map([
+        ["packages/engine/src/one.ts", "import './two.js';"],
+        ["packages/engine/src/two.ts", "import './three.js';"],
+        ["packages/engine/src/three.ts", "import './one.js';"],
+      ]),
+    ),
+  ).toEqual([expect.stringContaining("intra-package runtime import cycle (packages/engine/src/one.ts <-> packages/engine/src/three.ts <-> packages/engine/src/two.ts)")]);
+});

@@ -3,7 +3,10 @@
 // read from a folder standing in for GitHub's copy of the repository. No network; `gh auth status` says
 // it is logged in, unless the state says otherwise.
 // bun fake-gh.ts <state.json> <remote folder> <gh arguments…>
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { deflateSync, inflateSync } from "node:zlib";
 import { writeFixtureJson } from "@petrina/test-support/fixture-json";
 import { commitAt, gitWith } from "@petrina/test-support/commands";
 import { testGitEnv } from "@petrina/test-support/test-git-env";
@@ -76,6 +79,127 @@ export function readGitHub(path: string): FakeGitHub {
   return existsSync(path) ? (JSON.parse(readFileSync(path, "utf8")) as FakeGitHub) : { repo: "acme/demo", prs: [], releases: [], calls: [] };
 }
 
+function fastReadRefSync(gitDir: string, name: string): string | undefined {
+  const direct = join(gitDir, ...name.split("/"));
+  if (existsSync(direct)) {
+    const text = readFileSync(direct, "utf8").trim();
+    if (/^[0-9a-f]{40}$/.test(text)) return text;
+  }
+  const packed = join(gitDir, "packed-refs");
+  if (existsSync(packed)) {
+    for (const line of readFileSync(packed, "utf8").split("\n")) {
+      if (line.endsWith(` ${name}`)) {
+        const sha = line.slice(0, line.indexOf(" ")).trim();
+        if (/^[0-9a-f]{40}$/.test(sha)) return sha;
+      }
+    }
+  }
+  return undefined;
+}
+
+function writeAtomicRefSync(gitDir: string, ref: string, sha: string): void {
+  const file = join(gitDir, ...ref.split("/"));
+  mkdirSync(dirname(file), { recursive: true });
+  const tmp = `${file}.tmp.${process.pid}.${Math.random().toString(36).slice(2)}`;
+  writeFileSync(tmp, `${sha}\n`);
+  renameSync(tmp, file);
+}
+
+function hasPackFiles(objectsDir: string): boolean {
+  const packDir = join(objectsDir, "pack");
+  if (!existsSync(packDir)) return false;
+  try {
+    return readdirSync(packDir).some((name) => name.endsWith(".pack"));
+  } catch {
+    return true;
+  }
+}
+
+function isPlainSha1BareDir(gitDir: string): boolean {
+  if (!existsSync(join(gitDir, "HEAD")) || !existsSync(join(gitDir, "objects"))) return false;
+  if (hasPackFiles(join(gitDir, "objects"))) return false;
+  const cfgPath = join(gitDir, "config");
+  if (existsSync(cfgPath)) {
+    const cfg = readFileSync(cfgPath, "utf8");
+    if (/objectformat\s*=\s*sha256/i.test(cfg)) return false;
+  }
+  return true;
+}
+
+function tryFastMeanwhileMove(remote: string, releaseTag?: string): boolean {
+  try {
+    if (!isPlainSha1BareDir(remote)) return false;
+    const mainSha = fastReadRefSync(remote, "refs/heads/main");
+    if (!mainSha) return false;
+    const commitPath = join(remote, "objects", mainSha.slice(0, 2), mainSha.slice(2));
+    if (!existsSync(commitPath)) return false;
+    const raw = inflateSync(readFileSync(commitPath));
+    const nul = raw.indexOf(0);
+    if (nul <= 0 || !raw.subarray(0, nul).toString("utf8").startsWith("commit ")) return false;
+    const treeSha = /^tree ([0-9a-f]{40})$/m.exec(raw.subarray(nul + 1).toString("utf8"))?.[1];
+    if (!treeSha) return false;
+    const ts = Math.floor(Date.now() / 1000);
+    const body = Buffer.from(
+      `tree ${treeSha}\nparent ${mainSha}\nauthor Teammate <t@example.com> ${ts} +0000\ncommitter Teammate <t@example.com> ${ts} +0000\n\nA teammate's change\n`,
+      "utf8",
+    );
+    const full = Buffer.concat([Buffer.from(`commit ${body.length}\0`, "utf8"), body]);
+    const moved = createHash("sha1").update(full).digest("hex");
+    const movedPath = join(remote, "objects", moved.slice(0, 2), moved.slice(2));
+    if (!existsSync(movedPath)) {
+      mkdirSync(dirname(movedPath), { recursive: true });
+      writeFileSync(movedPath, deflateSync(full));
+    }
+    writeAtomicRefSync(remote, "refs/heads/main", moved);
+    if (releaseTag) writeAtomicRefSync(remote, `refs/tags/${releaseTag}`, moved);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function tryFastRefreshPrRef(remote: string, folder: string, pullRef: string, sha: string): boolean {
+  try {
+    if (!/^[0-9a-f]{40}$/.test(sha) || !isPlainSha1BareDir(remote)) return false;
+    if (folder !== remote) {
+      const srcObjects = existsSync(join(folder, "objects"))
+        ? join(folder, "objects")
+        : existsSync(join(folder, ".git", "objects"))
+          ? join(folder, ".git", "objects")
+          : undefined;
+      if (!srcObjects || hasPackFiles(srcObjects) || !existsSync(join(srcObjects, sha.slice(0, 2), sha.slice(2)))) {
+        return false;
+      }
+      const dstObjects = join(remote, "objects");
+      for (const fan of readdirSync(srcObjects)) {
+        if (!/^[0-9a-f]{2}$/.test(fan)) continue;
+        const srcSub = join(srcObjects, fan);
+        const dstSub = join(dstObjects, fan);
+        mkdirSync(dstSub, { recursive: true });
+        for (const obj of readdirSync(srcSub)) {
+          const dstObj = join(dstSub, obj);
+          if (!existsSync(dstObj)) cpSync(join(srcSub, obj), dstObj);
+        }
+      }
+    }
+    if (!existsSync(join(remote, "objects", sha.slice(0, 2), sha.slice(2)))) return false;
+    writeAtomicRefSync(remote, pullRef, sha);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function fastCommitAt(folder: string, name: string): Promise<string | undefined> {
+  const gitDir = existsSync(join(folder, "HEAD")) && existsSync(join(folder, "objects")) ? folder
+    : existsSync(join(folder, ".git", "HEAD")) && existsSync(join(folder, ".git", "objects")) ? join(folder, ".git")
+    : undefined;
+  if (gitDir && (name.startsWith("refs/heads/") || name.startsWith("refs/tags/")) && !name.includes("..")) {
+    return Promise.resolve(fastReadRefSync(gitDir, name));
+  }
+  return commitAt(folder, name);
+}
+
 export function writeGitHub(path: string, state: FakeGitHub): void {
   writeFixtureJson(path, state, 2);
 }
@@ -108,91 +232,114 @@ export function updateGitHub(path: string, change: (state: FakeGitHub) => void):
   }
 }
 
-export async function runFakeGitHub(input: readonly string[], onLockWait?: () => void): Promise<void> {
-  const [statePath, remote, ...args] = input;
-  let unlock = lockGitHub(statePath!, onLockWait);
-  // Unexpected exits also release this process's lock. Waiting calls release it first below.
-  process.on("exit", () => unlock());
-  const state = readGitHub(statePath!);
+export interface FakeGitHubReply { code: number; stdout: string; stderr: string }
+interface GitHubStateAccess {
+  read(): FakeGitHub;
+  change(update: (state: FakeGitHub) => void): void;
+  input(): string;
+  cwd: string;
+  mutateRemote?<T>(operation: () => Promise<T>): Promise<T>;
+  release?(): void;
+  acquire?(): void;
+}
+class Reply {
+  constructor(readonly value: FakeGitHubReply) {}
+}
+
+/** The script owns service behavior; both native CLI and in-process fixtures use these exact answers. */
+async function dispatchGitHub(remote: string, args: readonly string[], access: GitHubStateAccess): Promise<FakeGitHubReply> {
+  let state = access.read();
+  const change = (update: (state: FakeGitHub) => void) => { access.change(update); state = access.read(); };
+  const exit = (code: number, stdout: string, stderr = ""): never => { throw new Reply({ code, stdout, stderr }); };
+  const fail = (message: string): never => exit(1, "", message);
+  const mutateRemote = access.mutateRemote ?? (<T>(operation: () => Promise<T>) => operation());
+  try {
   if (args[0] === "auth" && args[1] === "status") {
-    state.logins = (state.logins ?? 0) + 1;
-    writeGitHub(statePath!, state);
+    change(state => { state.logins = (state.logins ?? 0) + 1; });
     if (state.offline) {
-      process.stderr.write("error connecting to api.github.com\n");
-      process.exit(1);
+      fail("error connecting to api.github.com");
     }
     if (state.loggedOut) {
-      process.stderr.write("You are not logged into any GitHub hosts. To log in, run: gh auth login\n");
-      process.exit(1);
+      fail("You are not logged into any GitHub hosts. To log in, run: gh auth login");
     }
-    process.stdout.write("github.com\n  ✓ Logged in to github.com account octocat (keyring)\n");
-    process.exit(0);
+    exit(0, "github.com\n  ✓ Logged in to github.com account octocat (keyring)");
   }
-  state.calls.push(args);
-  state.cwds = [...(state.cwds ?? []), process.cwd()];
-  const save = () => writeGitHub(statePath!, state);
-  save();
+  change(state => {
+    state.calls.push([...args]);
+    state.cwds = [...(state.cwds ?? []), access.cwd];
+  });
   const flag = (name: string): string | undefined => {
     const inline = args.find((arg) => arg.startsWith(`${name}=`));
     if (inline) return inline.slice(name.length + 1);
     const at = args.indexOf(name);
     return at >= 0 ? args[at + 1] : undefined;
   };
-  const exit = (code: number, out: string, err = ""): never => {
-    if (out) process.stdout.write(`${out}\n`);
-    if (err) process.stderr.write(`${err}\n`);
-    process.exit(code);
-  };
-  const fail = (message: string): never => exit(1, "", message);
   // Absent only when Git confirms it; any other failure fails this call, and the test with it.
-  const ref = (name: string): Promise<string | undefined> => commitAt(remote!, name);
+  const ref = (name: string): Promise<string | undefined> => fastCommitAt(remote!, name);
   const pick = (entry: object) => Object.fromEntries((flag("--json") ?? "").split(",").map((field) => [field, (entry as Record<string, unknown>)[field]]));
   const [noun, verb] = args;
   const command = `${noun} ${verb}`;
-  const count = (table: Record<string, number> | undefined): boolean => {
-    if (!table?.[command]) return false;
-    table[command] -= 1;
-    save();
-    return true;
+  const count = (table: "fail" | "lose" | "stale"): boolean => {
+    let consumed = false;
+    change(state => {
+      if (!state[table]?.[command]) return;
+      state[table]![command] -= 1;
+      consumed = true;
+    });
+    return consumed;
   };
   /** Wait while a hold for this call is on. */
   const held = async (): Promise<void> => {
     const hold = [state.hold, ...(state.holds ?? [])].find((entry) => entry?.command === command && (!entry.match || args.includes(entry.match)) && existsSync(entry.file));
     if (!hold) return;
-    unlock();
-    unlock = () => {};
+    access.release?.();
     writeFileSync(`${hold.file}.reached`, "");
     while (existsSync(hold.file)) await Bun.sleep(20);
     // The test may have changed GitHub meanwhile: answer from what it is now.
-    unlock = lockGitHub(statePath!);
-    Object.assign(state, readGitHub(statePath!));
+    access.acquire?.();
+    state = access.read();
   };
   /** The work is done and saved; now answer, maybe after waiting, maybe losing the answer. */
   const answer = async (out: string): Promise<never> => {
     await held();
-    if (count(state.lose)) fail("error connecting to api.github.com");
+    if (count("lose")) fail("error connecting to api.github.com");
     return exit(0, out);
   };
 
   if (state.offline) fail("error connecting to api.github.com");
   const meanwhile = state.meanwhile;
   if (meanwhile?.times && meanwhile.command === command && (!meanwhile.withTag || (args[2] && !args[2].startsWith("-")))) {
-    meanwhile.times -= 1;
-    const env = testGitEnv({ ...process.env, GIT_AUTHOR_NAME: "Teammate", GIT_AUTHOR_EMAIL: "t@example.com", GIT_COMMITTER_NAME: "Teammate", GIT_COMMITTER_EMAIL: "t@example.com" });
-    const moved = await gitWith({ env }, "--git-dir", remote!, "commit-tree", "main^{tree}", "-p", "main", "-m", "A teammate's change");
-    await gitWith({}, "--git-dir", remote!, "update-ref", "refs/heads/main", moved);
-    if (meanwhile.release) {
-      await gitWith({}, "--git-dir", remote!, "update-ref", `refs/tags/${meanwhile.release}`, moved);
-      state.releases.push({ tagName: meanwhile.release, url: `https://github.com/${state.repo}/releases/tag/${meanwhile.release}`, publishedAt: new Date().toISOString(), isDraft: false, name: meanwhile.release, body: "A teammate's release." });
-      delete meanwhile.release;
+    // Reserve this scripted change before native work; a concurrent request cannot consume it again.
+    let reserved: typeof meanwhile | undefined;
+    change(state => {
+      if (state.meanwhile?.times && state.meanwhile.command === command && (!state.meanwhile.withTag || (args[2] && !args[2].startsWith("-")))) {
+        reserved = { ...state.meanwhile };
+        state.meanwhile.times -= 1;
+        delete state.meanwhile.release;
+      }
+    });
+    if (reserved) {
+    const reservation = reserved;
+    await mutateRemote(async () => {
+    if (!tryFastMeanwhileMove(remote!, reservation.release)) {
+      const env = testGitEnv({ ...process.env, GIT_AUTHOR_NAME: "Teammate", GIT_AUTHOR_EMAIL: "t@example.com", GIT_COMMITTER_NAME: "Teammate", GIT_COMMITTER_EMAIL: "t@example.com" });
+      const moved = await gitWith({ env }, "--git-dir", remote!, "commit-tree", "main^{tree}", "-p", "main", "-m", "A teammate's change");
+      await gitWith({}, "--git-dir", remote!, "update-ref", "refs/heads/main", moved);
+      if (reservation.release) {
+        await gitWith({}, "--git-dir", remote!, "update-ref", `refs/tags/${reservation.release}`, moved);
+      }
     }
-    save();
+    if (reservation.release) {
+      change(state => state.releases.push({ tagName: reservation.release!, url: `https://github.com/${state.repo}/releases/tag/${reservation.release}`, publishedAt: new Date().toISOString(), isDraft: false, name: reservation.release!, body: "A teammate's release." }));
+    }
+    });
+    }
   }
   const positional = args[2] && !args[2].startsWith("-") ? args[2] : undefined;
   // `gh repo view` names the repository itself; everything else is pinned with --repo.
   const repo = noun === "api" ? (verb?.startsWith(`repos/${state.repo}/`) ? state.repo : undefined) : command === "repo view" ? positional ?? flag("--repo") : flag("--repo");
   if (repo !== state.repo) fail(`fake gh only knows ${state.repo}, not ${repo}`);
-  if (count(state.fail)) fail("HTTP 502: Bad Gateway (https://api.github.com/graphql)");
+  if (count("fail")) fail("HTTP 502: Bad Gateway (https://api.github.com/graphql)");
   if (state.hidden) {
     // What gh says when the login cannot see a repository: a missing release looks the same.
     if (command === "release view") fail("release not found");
@@ -200,18 +347,26 @@ export async function runFakeGitHub(input: readonly string[], onLockWait?: () =>
     fail(`GraphQL: Could not resolve to a Repository with the name '${state.repo}'. (repository)`);
   }
 
-  const refreshPr = async (pr: FakePr): Promise<void> => {
+  const refreshPr = (pr: FakePr): Promise<void> => mutateRemote(async () => {
     if (pr.state !== "OPEN") return;
     const folder = pr.isCrossRepository ? state.forks?.[pr.headRepository?.nameWithOwner ?? ""] : remote;
     if (!folder) return;
     // A deleted branch remains visible as a PR with its former head. Every other failure fails the call.
-    const sha = await commitAt(folder, `refs/heads/${pr.headRefName}`);
+    const sha = await fastCommitAt(folder, `refs/heads/${pr.headRefName}`);
     if (!sha) return;
-    if (folder !== remote) await gitWith({}, "--git-dir", remote!, "fetch", "-q", folder, sha);
-    await gitWith({}, "--git-dir", remote!, "update-ref", `refs/pull/${pr.number}/head`, sha);
+    const pullRef = `refs/pull/${pr.number}/head`;
+    const pullRefFile = join(remote!, pullRef);
+    const currentPullSha = existsSync(pullRefFile) ? readFileSync(pullRefFile, "utf8").trim() : undefined;
+    if (currentPullSha !== sha && !tryFastRefreshPrRef(remote!, folder, pullRef, sha)) {
+      if (folder !== remote) await gitWith({}, "--git-dir", remote!, "fetch", "-q", folder, sha);
+      await gitWith({}, "--git-dir", remote!, "update-ref", pullRef, sha);
+    }
+    change(state => {
+      const current = state.prs.find(entry => entry.number === pr.number);
+      if (current?.state === "OPEN") current.headRefOid = sha;
+    });
     pr.headRefOid = sha;
-    save();
-  };
+  });
   if (noun === "api") {
     const endpoint = verb!.slice(`repos/${state.repo}/`.length);
     if (!args.includes("--paginate") || !args.includes("--slurp")) fail("API lists must read every page");
@@ -230,14 +385,16 @@ export async function runFakeGitHub(input: readonly string[], onLockWait?: () =>
   if (command === "repo view") await answer(flag("--jq") === ".nameWithOwner" ? state.repo : JSON.stringify({ nameWithOwner: state.repo, defaultBranchRef: { name: "main" } }));
 
   if (command === "pr list") {
-    if (count(state.stale)) await answer("[]");
+    if (count("stale")) await answer("[]");
     const head = flag("--head");
     // GitHub moves an open pull request's head along with its branch.
     for (const pr of state.prs) {
       const sha = pr.state === "OPEN" ? await ref(`refs/heads/${pr.headRefName}`) : undefined;
-      if (sha) pr.headRefOid = sha;
+      if (sha) change(state => {
+        const current = state.prs.find(entry => entry.number === pr.number);
+        if (current?.state === "OPEN") current.headRefOid = sha;
+      });
     }
-    save();
     const limit = Number(flag("--limit") ?? 30);
     await answer(JSON.stringify(state.prs.filter((pr) => pr.headRefName === head && (flag("--state") === "all" || pr.state === "OPEN")).slice(0, limit).map(pick)));
   }
@@ -250,31 +407,38 @@ export async function runFakeGitHub(input: readonly string[], onLockWait?: () =>
   if (command === "pr edit" || command === "pr comment") {
     const pr = state.prs.find((entry) => String(entry.number) === positional);
     if (!pr) fail("Pull request not found");
-    const body = readFileSync(0, "utf8");
-    if (command === "pr edit") pr!.body = body;
+    const body = access.input();
+    change(state => {
+    const current = state.prs.find(entry => entry.number === pr!.number);
+    if (!current) fail("Pull request not found");
+    if (command === "pr edit") current!.body = body;
     else {
       const endpoint = `issues/${pr!.number}/comments?per_page=100`;
       state.pages ??= {};
       const comments = state.pages[endpoint]?.flat() ?? [];
       state.pages[endpoint] = [[...comments, { body }]];
     }
-    save(); await answer(pr!.url);
+    });
+    await answer(pr!.url);
   }
   if (command === "pr create") {
     const head = flag("--head")!;
     const base = flag("--base")!;
     const oid = await ref(`refs/heads/${head}`);
     if (!oid) fail(`pull request create failed: GraphQL: Head sha can't be blank, Head ref must be a branch`);
-    const open = state.prs.find((pr) => pr.headRefName === head && pr.baseRefName === base && pr.state === "OPEN");
-    if (open) fail(`a pull request for branch "${head}" into branch "${base}" already exists:\n${open.url}`);
-    const number = state.prs.length + 1;
-    const pr: FakePr = { number, url: `https://github.com/${state.repo}/pull/${number}`, headRefName: head, baseRefName: base, headRefOid: oid!, state: "OPEN", isCrossRepository: false, title: flag("--title") ?? "", body: readFileSync(0, "utf8") };
-    state.prs.push(pr);
-    save();
-    await answer(pr.url);
+    let url = "";
+    change(state => {
+      const open = state.prs.find(pr => pr.headRefName === head && pr.baseRefName === base && pr.state === "OPEN");
+      if (open) fail(`a pull request for branch "${head}" into branch "${base}" already exists:\n${open.url}`);
+      const number = state.prs.length + 1;
+      const pr: FakePr = { number, url: `https://github.com/${state.repo}/pull/${number}`, headRefName: head, baseRefName: base, headRefOid: oid!, state: "OPEN", isCrossRepository: false, title: flag("--title") ?? "", body: access.input() };
+      state.prs.push(pr);
+      url = pr.url;
+    });
+    await answer(url);
   }
   if (command === "release view") {
-    if (count(state.stale)) fail("release not found");
+    if (count("stale")) fail("release not found");
     const published = state.releases.filter((entry) => !entry.isDraft).sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt));
     const release = positional ? state.releases.find((entry) => entry.tagName === positional) : published[0];
     if (!release) {
@@ -288,12 +452,59 @@ export async function runFakeGitHub(input: readonly string[], onLockWait?: () =>
     if (state.releases.some((entry) => entry.tagName === tag)) fail("HTTP 422: Validation Failed: tag_name already exists");
     if (args.includes("--verify-tag") && !(await ref(`refs/tags/${tag}`))) fail(`tag ${tag} doesn't exist in the repo ${state.repo}, aborting due to --verify-tag flag`);
     if (!args.includes("--verify-tag")) fail("fake gh: Petrina always passes --verify-tag");
-    const release: FakeRelease = { tagName: tag, url: `https://github.com/${state.repo}/releases/tag/${tag}`, publishedAt: new Date().toISOString(), isDraft: false, name: flag("--title") ?? tag, body: readFileSync(0, "utf8") };
-    state.releases.push(release);
-    save();
+    const release: FakeRelease = { tagName: tag, url: `https://github.com/${state.repo}/releases/tag/${tag}`, publishedAt: new Date().toISOString(), isDraft: false, name: flag("--title") ?? tag, body: access.input() };
+    change(state => {
+      if (state.releases.some(entry => entry.tagName === tag)) fail("HTTP 422: Validation Failed: tag_name already exists");
+      state.releases.push(release);
+    });
     await answer(release.url);
   }
-  fail(`fake gh does not know: ${args.join(" ")}`);
+  return fail(`fake gh does not know: ${args.join(" ")}`);
+  } catch (error) {
+    if (error instanceof Reply) return error.value;
+    throw error;
+  }
+}
+
+// Git's ref locks still need one writer per private remote. Queue only native mutations, never held replies
+// or state edits, and remove settled entries so completed fixture roots are not retained by the worker.
+const remoteMutations = new Map<string, Promise<void>>();
+function mutateRemote<T>(remote: string, operation: () => Promise<T>): Promise<T> {
+  const pending = (remoteMutations.get(remote) ?? Promise.resolve()).then(operation);
+  const settled = pending.then(() => {}, () => {});
+  remoteMutations.set(remote, settled);
+  void settled.then(() => { if (remoteMutations.get(remote) === settled) remoteMutations.delete(remote); });
+  return pending;
+}
+
+/** Short atomic mutations only: a native Git await never blocks this worker's synchronous script edits. */
+export function fakeGitHubRequest(statePath: string, remote: string, args: readonly string[], input = "", cwd = process.cwd()): Promise<FakeGitHubReply> {
+  return dispatchGitHub(remote, args, {
+    read: () => readGitHub(statePath),
+    change: update => updateGitHub(statePath, update),
+    input: () => input, cwd,
+    mutateRemote: operation => mutateRemote(remote, operation),
+  });
+}
+
+/** Native transport contracts retain the complete request lock and real stdin/stdout/process exit. */
+export async function runFakeGitHub(input: readonly string[], onLockWait?: () => void): Promise<void> {
+  const [statePath, remote, ...args] = input;
+  let unlock = lockGitHub(statePath!, onLockWait);
+  let state = readGitHub(statePath!);
+  const release = () => { unlock(); unlock = () => {}; };
+  process.on("exit", release);
+  try {
+    const result = await dispatchGitHub(remote!, args, {
+      read: () => state,
+      change: update => { update(state); writeGitHub(statePath!, state); },
+      input: () => readFileSync(0, "utf8"), cwd: process.cwd(), release,
+      acquire: () => { unlock = lockGitHub(statePath!); state = readGitHub(statePath!); },
+    });
+    if (result.stdout) process.stdout.write(`${result.stdout}\n`);
+    if (result.stderr) process.stderr.write(`${result.stderr}\n`);
+    process.exit(result.code);
+  } finally { release(); process.off("exit", release); }
 }
 
 // A failed Git lookup fails the call with Git's own words, never as a confirmed "not found".

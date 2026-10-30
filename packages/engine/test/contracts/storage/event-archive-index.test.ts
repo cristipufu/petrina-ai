@@ -1,13 +1,12 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { executionFor } from "@petrina/orchestrator";
 import { createWorkflowEventFixtures, kinds } from "../../fixtures/workflow-event-native.js";
-
-const { fixture, close } = createWorkflowEventFixtures();
+const { fixture, close, use } = createWorkflowEventFixtures();
 afterAll(close);
-
 describe("the bounded event log", () => {
 it("validates selected archived tasks without reading their bodies, so quiet renewals over more tasks than the archive cache holds read no archive", async () => {
-    const { e, events } = fixture();
+  return use("petrina-events-", async caseOwner => {
+    const { e, events } = fixture(caseOwner);
     const taskIds: string[] = [];
     for (let index = 0; index < 17; index++) {
       const taskId = e.addTask({ productId: "product", title: `Archived ${index}` });
@@ -39,4 +38,5 @@ it("validates selected archived tasks without reading their bodies, so quiet ren
       history.get = bodies;
     }
   });
+});
 });

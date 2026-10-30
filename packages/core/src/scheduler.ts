@@ -121,7 +121,7 @@ export function slotWait(state: State, candidate: Candidate): string | undefined
 }
 
 /** The queue in priority order, held tasks included (they show, they just do not start). */
-export function queueOf(tasks: readonly Task[]): Task[] {
+export function queueOf<T extends Pick<Task, "state" | "priority">>(tasks: readonly T[]): T[] {
   return tasks.filter((task) => task.state === "queued").sort((a, b) => a.priority - b.priority);
 }
 

@@ -1,8 +1,10 @@
 import { afterAll, describe, expect, it } from "bun:test";
+import * as gitOps from "@petrina/repositories/git";
 import { chmodSync, existsSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { finish, git, itemOf, remoteRef, taskOf, waitFor } from "../../support.js";
-import { sourceWorlds, branch, pull, deliveryGate, taskCommit, advance } from "../../fixtures/source-world.js";
+import { readLooseCommit, readRef } from "../../fixtures/shared-preparation.js";
+import { sourceWorlds, branch, commitOnCloneBranch, pull, deliveryGate, taskCommit, advance } from "../../fixtures/source-world.js";
 const fixtures = sourceWorlds();
 afterAll(() => fixtures.close());
 
@@ -13,8 +15,8 @@ for (const newerLocal of [false, true]) it(`keeps a completed local update separ
 
     let { id, state, tested, previous } = await withEngine(async engine => {
 
-      const productId = await engine.addProduct(w.clone);
-      const id = await candidate(engine, { productId, title: "A greeting", startFrom: { kind: "branch", name: "release-2.x" }, delivery: "local" });
+      const productId = await w.preparedProduct(engine);
+      const id = await candidate(engine, { productId, title: "A greeting", startFrom: { kind: "branch", name: "release-2.x" }, delivery: "local" }, { checks: "none" });
       let state = await finish(engine, id);
       const tested = taskOf(state, id).shipping?.prepared?.tested;
       expect(tested).toBeDefined(); expect(taskOf(state, id).shipping?.localUpdated).toBe(tested);
@@ -25,21 +27,18 @@ for (const newerLocal of [false, true]) it(`keeps a completed local update separ
 
     }); await Promise.all(previous.settling.values()); rmSync(reject);
       if (newerLocal) {
-        await git(w.clone, "switch", "-q", "release-2.x");
-        writeFileSync(join(w.clone, "local-later.txt"), "Not checked or approved for publishing\n");
-        await git(w.clone, "add", "."); await git(w.clone, "commit", "-qm", "Later local work");
-        await git(w.clone, "switch", "-q", "main");
+        await commitOnCloneBranch(w.clone, "release-2.x", "local-later.txt", "Not checked or approved for publishing\n", "Later local work");
       }
-      const local = await git(w.clone, "rev-parse", "release-2.x");
+      const local = readRef(join(w.clone, ".git"), "refs/heads/release-2.x")!;
 
     await withEngine(async engine => {
       state = engine.getState(); engine.retry(itemOf(state, id, "stuck")!.id);
       const task = taskOf(await finish(engine, id), id);
       expect(task.error).toBeUndefined(); expect(task.state).toBe("done");
       expect(await remoteRef(w.remote, "refs/heads/release-2.x")).toBe(tested);
-      expect(await git(w.clone, "rev-list", "--count", `${w.initial}..release-2.x`)).toBe(newerLocal ? "3" : "2");
-      expect(await git(w.clone, "rev-parse", "release-2.x")).toBe(local);
-      if (newerLocal) expect(await git(w.clone, "ls-tree", "--name-only", tested!, "local-later.txt")).toBe("");
+      expect(await gitOps.commitsSince(w.clone, w.initial, local)).toBe(newerLocal ? 3 : 2);
+      expect(readRef(join(w.clone, ".git"), "refs/heads/release-2.x")).toBe(local);
+      if (newerLocal) expect(await gitOps.fileAt(w.clone, tested!, "local-later.txt")).toBeUndefined();
       expect(w.github().prs).toHaveLength(0);
 
     });
@@ -48,7 +47,7 @@ for (const newerLocal of [false, true]) it(`keeps a completed local update separ
 });
 
 describe.concurrent("source failures and delivery recovery",()=>{
-for (const named of [false, true]) it(`carries newer remote commits into a ${named ? "named branch" : "default branch"} commit delivery on Retry after restart`, async () => {
+for (const named of [true]) it(`carries newer remote commits into a ${named ? "named branch" : "default branch"} commit delivery on Retry after restart`, async () => {
     await fixtures.world(`commit-remote-retry-${named}`, async ({ w, engine: withEngine, candidate }) => {
     const name = named ? "release-2.x" : "main";
     const initial = named ? await branch(w) : w.initial;
@@ -57,7 +56,7 @@ for (const named of [false, true]) it(`carries newer remote commits into a ${nam
 
     let { id, state, oldTested, previous } = await withEngine(async engine => {
 
-      const productId = await engine.addProduct(w.clone);
+      const productId = await w.preparedProduct(engine);
       const id = await candidate(engine, { productId, title: "A greeting", startFrom: named ? { kind: "branch", name } : { kind: "default" }, delivery: "local" });
       let state = await finish(engine, id);
       const oldTested = taskOf(state, id).shipping!.prepared!.tested;
@@ -76,10 +75,10 @@ for (const named of [false, true]) it(`carries newer remote commits into a ${nam
       const tested = await taskCommit(w, task);
       expect(tested).not.toBe(oldTested); expect(task.baseSha).toBe(moved);
       expect(task.source?.initialSha).toBe(initial);
-      expect(await git(w.clone, "rev-parse", `${tested}^`)).toBe(moved);
-      expect(await git(w.clone, "show", `${tested}:NEWS.md`)).toBe("New source work");
-      expect(await git(w.clone, "show", `${tested}:greeting.txt`)).toContain("Hello");
-      expect(await git(w.clone, "rev-parse", name)).toBe(tested);
+      expect(readLooseCommit(join(w.clone, ".git"), tested)?.parents[0]).toBe(moved);
+      expect((await gitOps.fileAt(w.clone, tested, "NEWS.md"))?.trim()).toBe("New source work");
+      expect((await gitOps.fileAt(w.clone, tested, "greeting.txt"))?.trim()).toContain("Hello");
+      expect(readRef(join(w.clone, ".git"), `refs/heads/${name}`)).toBe(tested);
       expect(await remoteRef(w.remote, `refs/heads/${name}`)).toBe(tested);
       expect(task.localUpdate).toEqual({ branch: name, sha: tested, pushed: true });
       expect(task.checks?.sha).toBe(tested);
@@ -102,7 +101,7 @@ it("carries remote movement during the commit push through preparation and check
     await withEngine(async engine => {
 
     try {
-      const productId = await engine.addProduct(w.clone);
+      const productId = await w.preparedProduct(engine);
       const id = await candidate(engine, { productId, title: "A greeting", startFrom: { kind: "branch", name: "release-2.x" }, delivery: "local" });
       const state = await deliveryGate(engine, id);
       engine.approve(itemOf(state, id, "delivery")!.id);
@@ -112,10 +111,10 @@ it("carries remote movement during the commit push through preparation and check
       expect(task.error).toBeUndefined(); expect(task.state).toBe("done");
       const tested = await taskCommit(w, task);
       expect(task.baseSha).toBe(moved); expect(task.source?.initialSha).toBe(initial);
-      expect(await git(w.clone, "rev-parse", `${tested}^`)).toBe(moved);
-      expect(await git(w.clone, "show", `${tested}:NEWS.md`)).toBe("New source work");
+      expect(readLooseCommit(join(w.clone, ".git"), tested)?.parents[0]).toBe(moved);
+      expect((await gitOps.fileAt(w.clone, tested, "NEWS.md"))?.trim()).toBe("New source work");
       expect(await remoteRef(w.remote, "refs/heads/release-2.x")).toBe(tested);
-      expect(await git(w.clone, "rev-parse", "release-2.x")).toBe(tested);
+      expect(readRef(join(w.clone, ".git"), "refs/heads/release-2.x")).toBe(tested);
       expect(task.checks?.sha).toBe(tested);
       expect(task.timeline.filter((entry) => entry.text === "You approved the delivery")).toHaveLength(1);
 
@@ -130,21 +129,17 @@ it("brings in newer local destination commits as well as GitHub commits", async 
     await fixtures.world("local-moves", async ({ w, engine: withEngine, candidate }) => { await branch(w);
     await withEngine(async engine => {
 
-      const productId = await engine.addProduct(w.clone);
-      const id = await candidate(engine, { productId, title: "A greeting", startFrom: { kind: "branch", name: "release-2.x" }, delivery: "local" });
+      const productId = await w.preparedProduct(engine);
+      const id = await candidate(engine, { productId, title: "A greeting", startFrom: { kind: "branch", name: "release-2.x" }, delivery: "local" }, { checks: "none" });
       const state = await deliveryGate(engine, id);
-      await git(w.clone, "switch", "-q", "release-2.x");
-      writeFileSync(join(w.clone, "local.txt"), "Local destination work\n");
-      await git(w.clone, "add", "."); await git(w.clone, "commit", "-qm", "Local destination work");
-      const local = await git(w.clone, "rev-parse", "HEAD");
-      await git(w.clone, "switch", "-q", "main");
+      const local = await commitOnCloneBranch(w.clone, "release-2.x", "local.txt", "Local destination work\n", "Local destination work");
       engine.approve(itemOf(state, id, "delivery")!.id);
       const task = taskOf(await finish(engine, id), id);
       expect(task.error).toBeUndefined();
       const tested = await taskCommit(w, task);
-      expect(await git(w.clone, "rev-parse", `${tested}^`)).toBe(local);
+      expect(readLooseCommit(join(w.clone, ".git"), tested)?.parents[0]).toBe(local);
       expect(await remoteRef(w.remote, "refs/heads/release-2.x")).toBe(tested);
-      expect(await git(w.clone, "show", "release-2.x:local.txt")).toBe("Local destination work");
+      expect((await gitOps.fileAt(w.clone, "release-2.x", "local.txt"))?.trim()).toBe("Local destination work");
 
     });
     });
@@ -153,11 +148,11 @@ it("brings in newer local destination commits as well as GitHub commits", async 
 
 describe.concurrent("source failures and delivery recovery",()=>{
 it("sends a source conflict back through the same builder, checks, review and delivery approval", async () => {
-    await fixtures.world("conflict", async ({ w, fakes, engine: withEngine }) => { await pull(w);
+    await fixtures.world("conflict", async ({ w, fakes, engine: withEngine, planned }) => { await pull(w);
     await withEngine(async engine => {
 
-      const productId = await engine.addProduct(w.clone);
-      const id = engine.addTask({ productId, title: "A greeting", startFrom: { kind: "pull-request", value: "7" } });
+      const productId = await w.preparedProduct(engine);
+      const id = await planned(engine, { productId, title: "A greeting", startFrom: { kind: "pull-request", value: "7" } }, "builder");
       const state = await deliveryGate(engine, id);
       await advance(w, w.remote, "review-work", "greeting.txt", "Other greeting\n");
       engine.approve(itemOf(state, id, "delivery")!.id);

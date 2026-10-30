@@ -1,8 +1,10 @@
+import { engineCaseFixtures, type EngineCaseOwner } from "../../fixtures/engine-cases.js";
+import { registerFixtureRoot } from "@petrina/test-support/fixture-retention";
 import type { CheckVerification } from "../../../src/product-checks.js";
 import { nonpassingChecks } from "../../fixtures/check-verification.js";
 import { afterAll, expect, it, spyOn } from "bun:test";
 import * as childProcess from "node:child_process";
-import { chmodSync, existsSync, lstatSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { CheckRun } from "@petrina/core";
 import * as nativeChecks from "@petrina/repositories/check-runner";
@@ -11,20 +13,17 @@ import type { CheckProgress } from "../../../src/checks.js";
 import { Aborted } from "../../../src/kernel.js";
 import { executionFor } from "@petrina/orchestrator";
 import { Engine } from "../../engine.js";
-import { git, heldMachineRecords, makeProduct, noMachineRecords, powerLogSleep, removeDir, runChecks, SLOW, tempDir } from "../../fixtures.js";
+import { git, heldMachineRecords, createProductRepository, makeProduct, noMachineRecords, powerLogSleep, removeDir, runChecks, SLOW, tempDir } from "../../fixtures.js";
 import { rejectionOf } from "@petrina/test-support/rejections";
 import { FixtureOperations } from "@petrina/test-support/fixture-operations";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { CLEANUP_MS } from "@petrina/test-support/commands";
 import { waitFor } from "../../fixtures.js";
+import { installSharedWorkflowFastPaths } from "../../fixtures/shared-preparation.js";
+import { privateAgentToolProbe } from "../../scripted-probes.js";
 
-const roots: string[] = [];
-afterAll(() => roots.forEach(removeDir));
-const root = (prefix: string) => {
-  const dir = tempDir(prefix);
-  roots.push(dir);
-  return dir;
-};
+const engineCases = engineCaseFixtures();
+afterAll(() => engineCases.close());
 
 /**
  * Watch this file's own child processes for the Mac's power-log command. It is refused and recorded, never
@@ -45,17 +44,17 @@ function powerLogCommands(): { started: string[]; restore(): void } {
 const failing = (text: string) => ({ name: "Tests", argv: [process.execPath, "-e", `console.error(${JSON.stringify(text)}); process.exit(1)`] });
 
 for (const source of ["the fixture's default", "an explicit source"] as const) it.skipIf(process.platform === "win32")(`reads sleep evidence only from ${source} after failed checks and hooks, failure reuse and startup recovery`, async () => {
-  const dir = root("petrina-machine-records-");
+  return engineCases.use("petrina-machine-records-", async caseOwner => {
+  const dir = caseOwner.root;
   const home = join(dir, "data");
   const reads: (AbortSignal | undefined)[] = [];
   const own: MachineRecords = async (signal) => { reads.push(signal); return ""; };
-  const options = { agentCommand: () => undefined, terminals: () => [], ...(source === "an explicit source" ? { machineRecords: own } : {}) };
+  const options = { agentCommand: () => undefined, toolProbe: privateAgentToolProbe(), terminals: () => [], ...(source === "an explicit source" ? { machineRecords: own } : {}) };
   const commands = powerLogCommands();
-  let engine = new Engine(home, options);
+  let engine = caseOwner.open(home, options);
   engine.schedule = () => {};
   try {
-    const repo = await makeProduct(dir);
-    const base = await git(repo, "rev-parse", "HEAD");
+    const { path: repo, initialSha: base } = await createProductRepository(dir, { origin: "none" });
     await git(repo, "checkout", "-qb", "task");
     writeFileSync(join(repo, "change.txt"), "The task's change\n");
     await git(repo, "add", "change.txt");
@@ -76,9 +75,9 @@ for (const source of ["the fixture's default", "an explicit source"] as const) i
     // Reusing the saved failures takes one snapshot for the batch.
     expect((await engine["checks"].failing(scope, new AbortController().signal, checks)).kind).toBe("product-failed");
     expect(task.journey!.flatMap((step) => step.reuses ?? [])).toHaveLength(1);
-    await engine.shutdown();
+    await caseOwner.stop(engine);
     // Startup recovery takes one more for the saved failures still waiting.
-    engine = new Engine(home, options);
+    engine = caseOwner.open(home, options);
     engine.schedule = () => {};
     await Promise.allSettled([...engine.backgroundWork]);
     expect(executionFor(engine.task(task.id)!).work.checks!.results.map((run) => [run.name, run.ok, run.interruption, run.output.trim()])).toEqual(failed);
@@ -88,10 +87,13 @@ for (const source of ["the fixture's default", "an explicit source"] as const) i
     commands.restore();
     await engine.shutdown();
   }
+
+  });
 });
 
 it("keeps two direct check runs' evidence apart, and cancelling one leaves the other's collection and result unaffected", async () => {
   const dir = tempDir("petrina-machine-records-direct-");
+  registerFixtureRoot(dir);
   const stopFirst = new AbortController(), stopSecond = new AbortController();
   let commands: ReturnType<typeof powerLogCommands> | undefined;
   let firstRecords: ReturnType<typeof heldMachineRecords> | undefined, secondRecords: ReturnType<typeof heldMachineRecords> | undefined;
@@ -159,18 +161,19 @@ interface FailureOwner {
   close(): Promise<void>;
 }
 
-async function savedFailureWorld(name: string, held: ReturnType<typeof heldMachineRecords>, output: string, effects: {
+async function savedFailureWorld(caseOwner: EngineCaseOwner, name: string, held: ReturnType<typeof heldMachineRecords>, output: string, effects: {
   prepareRepository?(root: string, engine: Engine): Promise<string>;
   beforeHandoff?(owner: FailureOwner): Promise<void>;
 } = {}): Promise<FailureOwner> {
-  const dir = tempDir(`petrina-machine-records-${name}-`);
+  const dir = join(caseOwner.root, `petrina-machine-records-${name}`);
+  mkdirSync(dir);
   const controller = new AbortController();
   let current: Engine | undefined;
   let records: MachineRecords = noMachineRecords, restore: (() => void) | undefined;
   const operations = new FixtureOperations({
     async stop() {
       controller.abort();
-      const stopped = current?.shutdown();
+      const stopped = current ? caseOwner.stop(current) : Promise.resolve();
       held.answer("");
       await stopped;
     },
@@ -183,10 +186,14 @@ async function savedFailureWorld(name: string, held: ReturnType<typeof heldMachi
     allowanceMs: CLEANUP_MS * SLOW, label: `Failure-reuse fixture at ${dir}`,
     arm(expired, ms) { const timer = setTimeout(expired, ms); return () => clearTimeout(timer); },
   });
+  caseOwner.onStop(() => operations.close());
   return setupWithCleanup(async () => {
-    const engine = current = new Engine(join(dir, "data"), { agentCommand: () => undefined, terminals: () => [], machineRecords: signal => records(signal) });
+    const engine = current = caseOwner.open(join(dir, "data"), { agentCommand: () => undefined, toolProbe: privateAgentToolProbe(), terminals: () => [], machineRecords: signal => records(signal) });
+    installSharedWorkflowFastPaths(engine, { fastCheckCapture: true });
+    const prepared = await caseOwner.run(engine, async () => {
+    try {
     engine.schedule = () => {};
-    const repo = await (effects.prepareRepository ? effects.prepareRepository(dir, engine) : operations.run(() => makeProduct(dir)));
+    const repo = await (effects.prepareRepository ? effects.prepareRepository(dir, engine) : operations.run(() => makeProduct(dir, { origin: "none" })));
     const checks = [{ name: "Tests", argv: [process.execPath, "-e", `process.stdout.write(${JSON.stringify(output)});process.exit(7)`] }];
     engine.s.products.push({ id: "product", name: "Shop", repo: "local/shop", path: repo, tone: "blue", delivery: "local", checksBy: "coordinator", checks });
     const task = engine.task(engine.addTask({ productId: "product", title: `${name} engine's failure` }))!;
@@ -208,12 +215,19 @@ async function savedFailureWorld(name: string, held: ReturnType<typeof heldMachi
     } finally { restore?.(); restore = undefined; }
     records = held.source;
     const owner = { root: dir, engine, task, scope, controller, operations, runs, close: () => operations.close() };
+    caseOwner.check();
     await effects.beforeHandoff?.(owner);
-    return owner;
+    caseOwner.check();
+    return { value: owner };
+    } catch (error) { return { failure: { error } }; }
+    });
+    if (prepared.failure) throw prepared.failure.error;
+    return prepared.value;
   }, () => operations.close());
 }
 
 it("keeps two engines' evidence apart through failure reuse, and stopping one leaves the other's collection and result unaffected", async () => {
+  return engineCases.use("petrina-machine-records-", async caseOwner => {
   let sleep = "";
   // A stopped read answers with the same actual-run-overlapping sleep: arriving after the stop, it must not count.
   const stoppedRaw = heldMachineRecords(), continuingRecords = heldMachineRecords();
@@ -223,8 +237,8 @@ it("keeps two engines' evidence apart through failure reuse, and stopping one le
   } };
   let stopped: FailureOwner | undefined, continuing: FailureOwner | undefined;
   try {
-    stopped = await savedFailureWorld("stopped", stoppedRecords, "Original stopped failure");
-    continuing = await savedFailureWorld("continuing", continuingRecords, "Original continuing failure");
+    stopped = await savedFailureWorld(caseOwner, "stopped", stoppedRecords, "Original stopped failure");
+    continuing = await savedFailureWorld(caseOwner, "continuing", continuingRecords, "Original continuing failure");
     const starts = [...stopped.runs, ...continuing.runs].map(run => run.startedAt!), ends = [...stopped.runs, ...continuing.runs].map(run => run.endedAt!);
     const start = Math.min(...starts), end = Math.max(...ends);
     sleep = powerLogSleep(start - 1000, Math.ceil((end - start + 2000) / 1000));
@@ -264,24 +278,31 @@ it("keeps two engines' evidence apart through failure reuse, and stopping one le
     const errors = outcomes.flatMap(result => result.status === "rejected" ? [result.reason] : []);
     if (errors.length) throw new AggregateError(errors, "Failure-reuse fixtures could not finish cleanup");
   }
+
+  }, { allowOverlap: true });
 });
 
 it("stops the actual Engine when repository setup rejects before fixture handoff", async () => {
+  return engineCases.use("petrina-machine-records-", async caseOwner => {
   const failure = new Error("Repository setup failed before handoff");
   let observed: { root: string; engine: Engine } | undefined;
-  const outcome = await rejectionOf(savedFailureWorld("setup-failure", heldMachineRecords(), "Unused setup failure", {
+  const outcome = await rejectionOf(savedFailureWorld(caseOwner, "setup-failure", heldMachineRecords(), "Unused setup failure", {
     prepareRepository: async (root, engine) => { observed = { root, engine }; throw failure; },
   }));
   expect(outcome).toBe(failure);
   expect(observed!.engine.stopped).toBe(true);
   expect(existsSync(observed!.root)).toBe(false);
+
+  });
 });
 
 it("keeps setup cleanup pending until its actual direct check and inspected cancellation settle", async () => {
+  return engineCases.use("petrina-machine-records-", async caseOwner => {
   const failure = new Error("Fixture setup failed after starting a direct check");
   const held = heldMachineRecords(), release = Promise.withResolvers<void>();
+  caseOwner.onStop(() => release.resolve());
   let observed: FailureOwner | undefined, direct: Promise<void> | undefined, cancelled = false, settled = false;
-  const setup = savedFailureWorld("pending-handoff", held, "Saved failure", {
+  const setup = savedFailureWorld(caseOwner, "pending-handoff", held, "Saved failure", {
     beforeHandoff: async owner => {
       observed = owner;
       let reading!: Promise<CheckVerification>;
@@ -311,4 +332,6 @@ it("keeps setup cleanup pending until its actual direct check and inspected canc
     await outcome;
     await direct;
   }
+
+  });
 });

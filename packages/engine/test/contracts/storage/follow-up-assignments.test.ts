@@ -3,12 +3,11 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { Coordination } from "../../../src/coordination.js";
 import { createFollowUpFixtures, cards, failedAssignment } from "../../fixtures/follow-up-native.js";
-
-const { open, reopen, close, shutdown } = createFollowUpFixtures();
+const { open, reopen, close, use } = createFollowUpFixtures();
 afterAll(close);
-
 for (const reason of ["unavailable", "no-choice"] as const) it(`keeps an archived assignment after a failed ${reason} copy`, async () => {
-  const world = await open();
+  return use(async caseOwner => {
+  const world = await open(caseOwner);
   let release = () => {};
   try {
     const { engine } = world;
@@ -38,11 +37,12 @@ for (const reason of ["unavailable", "no-choice"] as const) it(`keeps an archive
     expect(await new Coordination(world.engine).call("task.track-finding", args)).toEqual(result);
     const retry = await new Coordination(world.engine).call("task.track-finding", { ...args, requestId: `archived-retry-${reason}` });
     expect(retry.outcome).toBe("invalid");
-  } finally { release(); await shutdown(world.engine); }
+  } finally { release(); await caseOwner.stop(world.engine); }
+  });
 });
-
 it("finishes a stranded History report on its existing card after restart, even without original pictures", async () => {
-  const world = await open();
+  return use(async caseOwner => {
+  const world = await open(caseOwner);
   let release = () => {};
   try {
     const saved = await failedAssignment(world, "no-choice");
@@ -70,5 +70,6 @@ it("finishes a stranded History report on its existing card after restart, even 
     expect(world.engine.task(automaticId)!.followUp!.reports).toHaveLength(1);
     expect(world.engine.task(manualId)!.followUp).toBeUndefined();
     expect(world.prompts).toHaveLength(checks);
-  } finally { release(); await shutdown(world.engine); }
+  } finally { release(); await caseOwner.stop(world.engine); }
+  });
 });

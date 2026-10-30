@@ -1,7 +1,10 @@
+import { join } from "node:path";
 import { acmeDemoProduct, installPreparedProduct } from "../../fixtures/prepared-product.js";
+import { queuePreparedDelivery } from "../../fixtures/queued-delivery.js";
+import { commitLooseOnRef, looseContains, readLooseBlobInCommit, readLooseCommit, readRef } from "../../fixtures/shared-preparation.js";
 // Full release/publication races retain real planning, review and delivery.
 import { afterAll, describe, expect, it } from "bun:test";
-import { releaseVersionFixtures } from "../../fixtures/release-versions.js";
+import { commitFiles, pkg, releaseVersionFixtures } from "../../fixtures/release-versions.js";
 import { coordinator, finish, git, itemOf, remoteRef, taskOf, until } from "../../support.js";
 
 const { world, close } = releaseVersionFixtures();
@@ -20,7 +23,7 @@ describe.concurrent("Release versions on real deliveries", () => {
     const firstTag = (await remoteRef(w.remote, "refs/tags/v0.1.0"))!;
     const secondTag = (await remoteRef(w.remote, "refs/tags/v0.1.1"))!;
     expect(await remoteRef(w.remote, "refs/heads/main")).toBe(secondTag);
-    expect(await git(w.clone, "merge-base", "--is-ancestor", firstTag, secondTag)).toBe("");
+    expect(looseContains(w.remote, secondTag, firstTag) === true ? "" : await git(w.clone, "merge-base", "--is-ancestor", firstTag, secondTag)).toBe("");
     expect(w.github().releases.map((entry) => entry.tagName)).toEqual(["v0.1.0", "v0.1.1"]);
     // The first release's notes come from every commit there is; the next one's from what came since.
     const [firstPrompt, secondPrompt] = w.script().releaseManagerPrompts!;
@@ -32,7 +35,8 @@ describe.concurrent("Release versions on real deliveries", () => {
     expect(secondPrompt).not.toContain("### Add greeting 1");
   }));
 
-  it("works the version and the notes out again when a release comes out before its push", () => world("meanwhile", { version: "0.1.0" }, async ({ world: w, deliver }) => {
+  it("works the version and the notes out again when a release comes out before its push", () => world("meanwhile", {}, async ({ world: w, deliver }) => {
+    await commitFiles(w, { "package.json": pkg("0.1.0") });
     // A teammate publishes v0.1.0 as Petrina looks for this delivery's release, right after getting it ready.
     w.setGitHub((github) => (github.meanwhile = { command: "release view", withTag: true, times: 1, release: "v0.1.0" }));
     const [task] = await deliver("release");
@@ -42,8 +46,8 @@ describe.concurrent("Release versions on real deliveries", () => {
     expect(prompts).toHaveLength(2);
     expect(prompts[1]).toContain("## Every commit on main since v0.1.0, oldest first (1)");
     const tested = (await remoteRef(w.remote, "refs/tags/v0.1.1"))!;
-    expect(JSON.parse(await git(w.clone, "show", `${tested}:package.json`)).version).toBe("0.1.1");
-    expect(await git(w.clone, "log", "-1", "--format=%s", tested)).toBe("Release v0.1.1");
+    expect(JSON.parse(readLooseBlobInCommit(w.remote, tested, "package.json") ?? await git(w.clone, "show", `${tested}:package.json`)).version).toBe("0.1.1");
+    expect(readLooseCommit(w.remote, tested)?.body.split("\n")[0] ?? await git(w.clone, "log", "-1", "--format=%s", tested)).toBe("Release v0.1.1");
     expect(task!.timeline.map((entry) => entry.text)).toContain("main moved on GitHub, so Petrina gets it ready again (1 of 3)");
   }));
 
@@ -54,7 +58,9 @@ describe.concurrent("Release versions on real deliveries", () => {
     expect(releasing.script().releaseManagerPrompts).toHaveLength(2);
     expect(await remoteRef(releasing.remote, "refs/heads/main")).toBe(await remoteRef(releasing.remote, "refs/tags/v0.1.0"));
     // On top of the teammate's change, as one commit: a fast-forward, never a merge.
-    expect(await git(releasing.clone, "log", "-1", "--format=%s", `${await remoteRef(releasing.remote, "refs/heads/main")}^`)).toBe("A teammate's change");
+    const releasingTip = (await remoteRef(releasing.remote, "refs/heads/main"))!;
+    const releasingParent = readLooseCommit(releasing.remote, releasingTip)?.parents[0];
+    expect(releasingParent ? readLooseCommit(releasing.remote, releasingParent)?.body.split("\n")[0] : await git(releasing.clone, "log", "-1", "--format=%s", `${releasingTip}^`)).toBe("A teammate's change");
 
     await world("moved-pr", {}, async ({ world: pr, deliver }) => {
       pr.setGitHub((github) => (github.meanwhile = { command: "pr list", times: 1 }));
@@ -68,16 +74,22 @@ describe.concurrent("Release versions on real deliveries", () => {
     await engine(async engine => {
       const productId = installPreparedProduct(engine, acmeDemoProduct(w.clone));
       engine.setProductDelivery(productId, "local", true);
-      const taskId = engine.addTask({ productId, title: "Add a greeting", description: "A greeting file. [quick]" });
+      const taskId = await queuePreparedDelivery(engine, { productId, title: "Add a greeting", description: "A greeting file. [quick]" }, { checks: "none" });
       const state = await until(engine, (current) => !!itemOf(current, taskId, "delivery"), coordinator(["plan", "design"]));
       // A teammate's commit lands on the main copy's main before the coordinator says yes.
-      await git(w.clone, "commit", "-q", "--allow-empty", "-m", "A teammate's change");
+      if (!commitLooseOnRef(join(w.clone, ".git"), { ref: "refs/heads/main", message: "A teammate's change" })) {
+        await git(w.clone, "commit", "-q", "--allow-empty", "-m", "A teammate's change");
+      }
       engine.approve(itemOf(state, taskId, "delivery")!.id);
       const task = taskOf(await finish(engine, taskId), taskId);
       expect(task.state).toBe("done");
       expect(task.timeline.map((entry) => entry.text)).toContain("Brought up to date with main (1 new commit there), with no conflicts");
-      expect(await git(w.clone, "log", "-1", "--format=%s", "main^")).toBe("A teammate's change");
-      expect(await git(w.clone, "rev-list", "--merges", "--count", "main")).toBe("0");
+      const cloneGit = join(w.clone, ".git");
+      const localTip = readRef(cloneGit, "refs/heads/main")!;
+      const localCommit = readLooseCommit(cloneGit, localTip);
+      const parentCommit = localCommit?.parents[0] ? readLooseCommit(cloneGit, localCommit.parents[0]) : undefined;
+      expect(parentCommit?.body.split("\n")[0] ?? await git(w.clone, "log", "-1", "--format=%s", "main^")).toBe("A teammate's change");
+      expect(localCommit && localCommit.parents.length <= 1 && parentCommit && parentCommit.parents.length <= 1 ? "0" : await git(w.clone, "rev-list", "--merges", "--count", "main")).toBe("0");
     });
   }));
 

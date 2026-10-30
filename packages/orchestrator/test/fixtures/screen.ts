@@ -25,7 +25,7 @@ export function screenFixture(count = 2) {
     state() { reads++; return state; }, task: id => state.tasks.find(task => task.id === id), stopped: () => stopped,
     sessionOwned: task => owned.has(task.id), waitLine: () => "Waiting for the prerequisite to land",
     column(task) { columns.push(task.id); return column.value; },
-    record(task, tone, text, roleId, profileId) { records.push({ taskId: task.id, tone, text, ...(roleId ? { roleId } : {}), ...(profileId ? { profileId } : {}) }); },
+    record(target, tone, text, roleId, profileId) { records.push({ taskId: "task" in target ? target.task.id : target.id, tone, text, ...(roleId ? { roleId } : {}), ...(profileId ? { profileId } : {}) }); },
     inboxId: () => `screen-${++ids}`, checkpoint: () => { checkpoints.push(structuredClone(state)); },
     schedule() { scheduled++; controller.syncScreen(); },
   };

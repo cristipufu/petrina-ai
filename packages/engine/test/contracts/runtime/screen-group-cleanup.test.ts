@@ -1,24 +1,24 @@
+import { engineCaseFixtures, type EngineCaseOwner } from "../../fixtures/engine-cases.js";
 import { nativeAgentProcess } from "../../native-agent.js";
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ChildProcess } from "node:child_process";
 import { onScreen, type CheckId } from "@petrina/core";
-import { Engine } from "../../engine.js";
+
 import { executionFor } from "@petrina/orchestrator";
-import { Fakes, FAKE_AGENT, git, makeProduct, removeDir, tempDir, waitFor } from "../../fixtures.js";
-
-const roots: string[] = [];
-afterAll(() => roots.forEach(removeDir));
-
+import { Fakes, FAKE_AGENT, git, createProductRepository, waitFor } from "../../fixtures.js";
+const engineCases = engineCaseFixtures();
+afterAll(() => engineCases.close());
 /** A prepared review only: no planning, building, check discovery or real screen use. */
-async function fixture() {
-  const root = tempDir("petrina-wait-screen-cleanup-"); roots.push(root);
+async function fixture(caseOwner: EngineCaseOwner) {
+  const root = caseOwner.root;
   const fakes = new Fakes(join(root, "fake"));
   fakes.scenario({ controlled: true, screenRoles: ["code reviewer"], screenModels: ["gpt-6.1-sol"], screenRoleHold: true, reopen: "resume" });
-  const clone = await makeProduct(root), base = await git(clone, "rev-parse", "HEAD");
+  const { path: clone, initialSha: base } = await createProductRepository(root); caseOwner.check();
   await git(clone, "config", "branch.autoSetupMerge", "false");
-  const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, FAKE_AGENT, fakes.dir] });
+  const engine = caseOwner.open(join(root, "data"), { agentCommand: () => [process.execPath, FAKE_AGENT, fakes.dir] });
+  return caseOwner.run(engine, async () => {
   // Drive only the group under test; competing screen admission is checked directly.
   engine.schedule = () => {};
   engine.s.setup!.checks = engine.s.tools.map(tool => ({ id: tool.id as CheckId, status: "ready", at: Date.now() }));
@@ -36,16 +36,20 @@ async function fixture() {
   other.startedAt = 25; other.state = "running";
   const hold = () => engine.setRuntimeWait(task.id, [prerequisite], "Wait for the required screen fix", "hold");
   return { engine, fakes, task, other, hold };
-}
 
+  });
+}
 describe.concurrent("screen ownership while a review closes", () => {
   it.each([false, true])("keeps the screen until an admitted reviewer's cleanup settles after its peer fails (held: %s)", async held => {
-    const f = await fixture();
+  return engineCases.use("petrina-wait-screen-cleanup-", async caseOwner => {
+    const f = await fixture(caseOwner);
     let release!: () => void;
     const gate = new Promise<void>(resolve => { release = resolve; });
+    caseOwner.onStop(() => release());
     let stopping = false;
     const owned: ChildProcess[] = [];
     try {
+    await caseOwner.run(f.engine, async () => {
       f.engine.startDriver(f.task.id);
       await waitFor(() => f.fakes.received("code reviewer").length === 2, "the prepared review's two stand-ins to start");
       const first = f.fakes.received("code reviewer").find(entry => JSON.parse(readFileSync(join(f.fakes.dir, "conversations", `${entry.session}.json`), "utf8")).model === "gpt-6.1-sol")!;
@@ -75,10 +79,12 @@ describe.concurrent("screen ownership while a review closes", () => {
       expect(f.engine.runs.has(f.task.id)).toBe(false);
       expect(f.engine.askScreen(f.other, "builder", "sol-high", "Check another window")).toBe(true);
       expect(onScreen(f.engine.getState().tasks)?.id).toBe(f.other.id);
-    } finally {
-      release(); await f.engine.shutdown();
+
+    });
+} finally {
+      release(); await caseOwner.stop(f.engine);
       expect(owned.every(child => child.exitCode !== null || child.signalCode !== null)).toBe(true);
     }
   });
-
+});
 });

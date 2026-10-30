@@ -5,7 +5,8 @@ import { UsageRecording } from "@petrina/orchestrator";
 // Account reports, limit wakeups and profile/stand-in selection.
 import { nextExpiry, untilWords, usableAgentTools, withLimit, type CheckId, type Id, type AgentProfile } from "@petrina/core";
 import { type RepositoryContext } from "@petrina/orchestrator";
-import { notReady, type Kernel, type MTask, type MState, type EngineOptions } from "./kernel.js";
+import { notReady, type RuntimeTask, type RuntimeState, type EngineOptions } from "./engine-options.js";
+import type { Kernel } from "./kernel.js";
 import { contractFor } from "./roles.js";
 import { ADAPTERS } from "@petrina/agent-runtime/tools";
 import type { UsageReader } from "@petrina/agent-runtime/usage-reader";
@@ -100,8 +101,8 @@ export class UsageCoordinator {
   }
 
   /** Only Builders return to an earlier step conversation; an interrupted turn keeps its own. */
-  builderConversation(target: MTask | RepositoryContext, plannedId: Id) { return this.selection.builderConversation(target, plannedId); }
-  choose(plannedId: Id, target?: MTask | RepositoryContext, roleId?: Id, room?: (toolId: Id, profile: AgentProfile) => boolean, reviewerKey?: string): Selection | undefined {
+  builderConversation(target: RuntimeTask | RepositoryContext, plannedId: Id) { return this.selection.builderConversation(target, plannedId); }
+  choose(plannedId: Id, target?: RuntimeTask | RepositoryContext, roleId?: Id, room?: (toolId: Id, profile: AgentProfile) => boolean, reviewerKey?: string): Selection | undefined {
     return this.selection.choose(plannedId, target, roleId, room, reviewerKey);
   }
 
@@ -136,9 +137,9 @@ export class UsageCoordinator {
   }
 
   /** A turn ended because its tool ran out: who is out and until when is kept, and the task's timeline says so. */
-  recordLimit(task: MTask, roleId: Id, profileId: Id, error: UsageLimited): void {
+  recordLimit(task: RuntimeTask, roleId: Id, profileId: Id, error: UsageLimited): void {
     this.k.tracking.limitHit(task, roleId, profileId, error);
-    this.k.s.pool.limited = withLimit(this.k.s.pool.limited, { toolId: error.toolId, source: error.source, ...(error.model ? { model: error.model } : {}), ...(error.retry ? { retry: true } : {}), until: error.until, reason: error.reason, at: Date.now() }) as MState["pool"]["limited"];
+    this.k.s.pool.limited = withLimit(this.k.s.pool.limited, { toolId: error.toolId, source: error.source, ...(error.model ? { model: error.model } : {}), ...(error.retry ? { retry: true } : {}), until: error.until, reason: error.reason, at: Date.now() }) as RuntimeState["pool"]["limited"];
     const outcome = error.retry ? `could not continue (${error.reason}); retry after ${untilWords(error.until, Date.now())}` : `ran out of usage (${error.reason}), until ${untilWords(error.until, Date.now())}`;
     this.k.log(task, "warn", `${this.k.role(roleId, task)?.name ?? roleId} on ${this.k.named(profileId)} ${outcome}`, roleId, profileId);
     this.armLimitTimer();
@@ -149,7 +150,7 @@ export class UsageCoordinator {
    * The selected model is full for this task only. Usage meters are left unchanged.
    * Every effort of that model stays out of this task until the short retry.
    */
-  recordModelCapacity(task: MTask, roleId: Id, profileId: Id, error: ModelAtCapacity, waitMs = MODEL_CAPACITY_WAIT_MS): void {
+  recordModelCapacity(task: RuntimeTask, roleId: Id, profileId: Id, error: ModelAtCapacity, waitMs = MODEL_CAPACITY_WAIT_MS): void {
     const now = Date.now();
     recordModelCapacity(task, profileId, error, waitMs, now);
     this.k.log(task, "warn", `${this.k.role(roleId, task)?.name ?? roleId} on ${this.k.named(profileId)} stopped because the selected model is at capacity`, roleId, profileId);

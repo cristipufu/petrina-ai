@@ -1,13 +1,17 @@
+import { afterAll } from "bun:test";
+import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
 import { ScriptedAgents, scriptedResult } from "../../scripted-agents.js";
 import { scriptedToolProbe } from "../../scripted-probes.js";
 import { expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { NOTES_HANDOFF_RULE, type CheckId } from "@petrina/core";
-import { Engine } from "../../engine.js";
 import { EARLIER_REPORTS_RULE } from "../../../src/context.js";
 import { executionFor } from "@petrina/orchestrator";
-import { git, makeProduct, removeDir, tempDir } from "../../fixtures.js";
+import { createProductRepository } from "../../fixtures.js";
+const engineCases = engineCaseFixtures();
+afterAll(() => engineCases.close());
+
 
 const HANDED_BACK = "What earlier agents on this task handed back";
 const SUMMARY = "Private test copies resolve dependencies differently by path.";
@@ -17,7 +21,8 @@ const LIMIT = "Not run: no Windows machine was available, so the Windows behavio
 const COMMENTARY = "Commentary only: the fixture already uses Windows directory links.";
 
 it("hands a notes report's facts, sources and limits on exactly as returned, never its commentary, in fresh and continued inputs", async () => {
-  const root = tempDir("petrina-notes-handoff-");
+  return engineCases.use("petrina-notes-handoff-", async caseOwner => {
+  const root = caseOwner.root;
   const agents = new ScriptedAgents((prompt, _signal, callbacks) => {
     if (prompt.result === "notes") {
       if (prompt.roleId === "researcher") {
@@ -34,21 +39,21 @@ it("hands a notes report's facts, sources and limits on exactly as returned, nev
     openings: (role: string) => agents.received().filter(prompt => prompt.roleId === role && prompt.turn === 1).map(prompt => prompt.text),
     prompts: (role: string) => agents.received().filter(prompt => prompt.roleId === role).map(prompt => prompt.text),
   };
-  const engine = new Engine(join(root, "data"), { startAgentSession: agents.start, toolProbe: scriptedToolProbe({ "claude-code": { status: "ready" }, codex: { status: "ready" }, grok: { status: "ready" }, antigravity: { status: "not-installed" }, gh: { status: "not-installed" }, git: { status: "ready" }, node: { status: "ready" } }) });
+  const engine = caseOwner.open(join(root, "data"), { startAgentSession: agents.start, toolProbe: scriptedToolProbe({ "claude-code": { status: "ready" }, codex: { status: "ready" }, grok: { status: "ready" }, antigravity: { status: "not-installed" }, gh: { status: "not-installed" }, git: { status: "ready" }, node: { status: "ready" } }) });
   try {
     engine.schedule = () => {};
     engine.s.setup!.checks = engine.s.tools.map(tool => ({ id: tool.id as CheckId, status: "ready" }));
     engine.s.tools.forEach(tool => { tool.status = "ready"; });
-    const repo = await makeProduct(root);
+    const { path: repo, initialSha: baseSha } = await createProductRepository(root);
     engine.s.products.push({ id: "p", name: "Product", path: repo, repo: "local/product", tone: "blue" });
     const task = engine.task(engine.addTask({ productId: "p", title: "Reach installed dependencies", description: "Make private test copies reliably reach installed dependencies.", backlog: true }))!;
     const scope = executionFor(task);
-    Object.assign(scope.work, { worktree: repo, branch: "main", base: "main", baseSha: await git(repo, "rev-parse", "HEAD") });
+    Object.assign(scope.work, { worktree: repo, branch: "main", base: "main", baseSha });
     const research = { id: "research", kind: "do" as const, roleId: "researcher", title: "Research", profileIds: ["sol-high"] };
     const screens = { id: "screens", kind: "do" as const, roleId: "ux-designer", title: "Screens", profileIds: ["sol-high"] };
     const build = { id: "build", kind: "do" as const, roleId: "builder", title: "Build", profileIds: ["sol-high"] };
     task.plan = { rationale: "Research, build, then review", plannerProfileId: "sol-high", stages: [research, build, screens, { id: "review", kind: "review-chain", roleId: "code-reviewer", title: "Review", profileIds: ["grok-high"] }] };
-    const run = async (stage: typeof research, fixing = false) => {
+    const run = async (stage: typeof research, fixing = false) => caseOwner.run(engine, async () => {
       task.stageIndex = task.plan!.stages.indexOf(stage);
       task.fixing = fixing;
       await engine["work"].runDo(scope, stage, new AbortController().signal);
@@ -57,7 +62,7 @@ it("hands a notes report's facts, sources and limits on exactly as returned, nev
       // The journey keeps the exact message the agent really received.
       expect(readFileSync(input.exact!.file, "utf8")).toBe(fakes.received().at(-1)!.text);
       return input;
-    };
+    });
 
     await run(research);
     expect(fakes.openings("researcher")[0]!.split(NOTES_HANDOFF_RULE)).toHaveLength(2);
@@ -102,5 +107,7 @@ it("hands a notes report's facts, sources and limits on exactly as returned, nev
     expect(restarted.sections.find(section => section.title === HANDED_BACK)?.body).toBe(current);
     expect(fakes.prompts("builder").at(-1)).toContain(`## ${HANDED_BACK}\n${current}`);
     for (const prompt of fakes.prompts("builder")) expect(prompt).not.toContain(COMMENTARY);
-  } finally { await engine.shutdown(); removeDir(root); }
+  } finally { await caseOwner.stop(engine);  }
+
+  });
 });

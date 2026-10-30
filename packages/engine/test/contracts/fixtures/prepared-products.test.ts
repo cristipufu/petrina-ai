@@ -5,7 +5,8 @@ import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { fixtureFiles } from "@petrina/test-support/fixture-files";
 import { tempDir } from "@petrina/test-support/fixtures";
 import { directDrivers, closeDirectDrivers } from "../../fixtures/direct-drivers.js";
-import { installPreparedProduct, type PreparedProduct } from "../../fixtures/prepared-product.js";
+import { installPreparedProduct, privateCloneProduct, type PreparedProduct } from "../../fixtures/prepared-product.js";
+import { privateAgentToolProbe } from "../../scripted-probes.js";
 import { makeWorld } from "../../support.js";
 import { makeProduct } from "@petrina/test-support/repositories";
 
@@ -21,7 +22,8 @@ for (const format of ["sha1", "sha256"] as const) it(`prepares known ${format} p
       makeWorld("prepared-api", { objectFormat: format, address: "https://github.com/acme/api.git", owner: { root: join(root, "api"), open: (data, options) => owner.open(data, options) } }),
     ]);
     if (!shop || !api) throw new Error("Both actual private product recipes are required");
-    const actual = owner.open(join(root, "actual-data"), { agentCommand: () => undefined });
+    const probe = privateAgentToolProbe();
+    const actual = owner.open(join(root, "actual-data"), { agentCommand: () => undefined, toolProbe: probe });
     const expected = await owner.run(actual, async () => {
       await actual.waitUntilReady(); actual.setPoolPaused(true);
       expect(await actual.addProduct(shop.clone)).toBe("demo");
@@ -31,7 +33,7 @@ for (const format of ["sha1", "sha256"] as const) it(`prepares known ${format} p
       return structuredClone(actual.s.products);
     });
     await owner.stop(actual);
-    const data = join(root, "prepared-data"), prepared = owner.open(data, { agentCommand: () => undefined });
+    const data = join(root, "prepared-data"), prepared = owner.open(data, { agentCommand: () => undefined, toolProbe: probe });
     const recipes: PreparedProduct[] = [
       { id: "demo", name: "Clone", repo: "acme/demo", tone: "blue", path: shop.clone,
         remote: "https://github.com/acme/demo.git", defaultBranch: "main", delivery: "pull-request", approveDelivery: true },
@@ -60,7 +62,7 @@ for (const format of ["sha1", "sha256"] as const) it(`prepares known ${format} p
     }), restore);
     restore();
     await owner.stop(prepared);
-    const restarted = owner.open(data, { agentCommand: () => undefined });
+    const restarted = owner.open(data, { agentCommand: () => undefined, toolProbe: probe });
     await owner.run(restarted, async () => {
       await restarted.waitUntilReady();
       expect(restarted.s.products).toEqual(expected);
@@ -77,15 +79,18 @@ for (const format of ["sha1", "sha256"] as const) it(`calibrates declared ${form
   const root = tempDir(`petrina-prepared-local-${format}-`), owner = directDrivers(root); fixtures.add(owner);
   await setupWithCleanup(() => owner.prepare(async () => {
     const path = await makeProduct(join(root, "product"), { origin: "none", objectFormat: format });
-    const actual = owner.open(join(root, "actual-data"), { agentCommand: () => undefined });
+    const privatePath = await makeProduct(join(root, "private-product"), { objectFormat: format });
+    const probe = privateAgentToolProbe();
+    const actual = owner.open(join(root, "actual-data"), { agentCommand: () => undefined, toolProbe: probe });
     const expected = await owner.run(actual, async () => {
       await actual.waitUntilReady(); actual.setPoolPaused(true);
       expect(await actual.addProduct(path, "Local product")).toBe("clone");
       expect(Object.hasOwn(actual.s.products[0]!, "remote")).toBe(false);
+      expect(await actual.addProduct(privatePath, "Private copy")).toBe("clone-2");
       return structuredClone(actual.s.products);
     });
     await owner.stop(actual);
-    const data = join(root, "prepared-data"), prepared = owner.open(data, { agentCommand: () => undefined });
+    const data = join(root, "prepared-data"), prepared = owner.open(data, { agentCommand: () => undefined, toolProbe: probe });
     await owner.run(prepared, async () => {
       await prepared.waitUntilReady(); prepared.setPoolPaused(true); await Promise.all([...prepared.backgroundWork]);
       const native = Bun.spawn;
@@ -93,23 +98,26 @@ for (const format of ["sha1", "sha256"] as const) it(`calibrates declared ${form
       const watch = spyOn(Bun, "spawn");
       try {
         watch.mockImplementation(((...args: Parameters<typeof Bun.spawn>) => {
-          if (args[0][0] === "git" && args[1]?.cwd === path) calls++;
+          if (args[0][0] === "git" && [path, privatePath].includes(String(args[1]?.cwd))) calls++;
           return Reflect.apply(native, Bun, args);
         }) as typeof Bun.spawn);
         expect(installPreparedProduct(prepared, { id: "clone", name: "Local product", repo: "local/clone", tone: "blue", path,
           defaultBranch: "main", delivery: "local", approveDelivery: true })).toBe("clone");
+        expect(installPreparedProduct(prepared, { ...privateCloneProduct(privatePath), id: "clone-2", name: "Private copy", tone: "green" })).toBe("clone-2");
         expect(calls).toBe(0);
       } finally { watch.mockRestore(); }
       expect(prepared.s.products).toEqual(expected);
       expect(prepared.tracking.log.productIdTaken("clone")).toBe(true);
+      expect(prepared.tracking.log.productIdTaken("clone-2")).toBe(true);
       expect(prepared.s.products[0]!.checks).toBeUndefined(); expect(prepared.s.products[0]!.checkSetup).toBeUndefined();
     });
     await owner.stop(prepared);
-    const reopened = owner.open(data, { agentCommand: () => undefined });
+    const reopened = owner.open(data, { agentCommand: () => undefined, toolProbe: probe });
     await owner.run(reopened, async () => {
       await reopened.waitUntilReady();
       expect(reopened.s.products).toEqual(expected);
       expect(reopened.tracking.log.productIdTaken("clone")).toBe(true);
+      expect(reopened.tracking.log.productIdTaken("clone-2")).toBe(true);
     });
     await owner.stop(reopened);
   }), () => owner.close());

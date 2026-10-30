@@ -4,7 +4,7 @@ import { existsSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync
 import { join } from "node:path";
 import { slotUses, TAKE_OVER_WORDS } from "@petrina/core";
 import { waitFor } from "@petrina/test-support/fixtures";
-import { git } from "@petrina/test-support/commands";
+import { readLooseCommit, readWorktreeCommit } from "../../fixtures/shared-preparation.js";
 
 import { sessionState } from "@petrina/agent-runtime/terminal";
 import { takeoverFixtures, takeoverDir, LAUNCHER } from "../../fixtures/takeover.js";
@@ -16,7 +16,8 @@ const SECRET = "petrina-test-secret-value-1234";
 
 describe.skipIf(!posix)("take over a builder in the terminal, then hand back", () => {
   it("saves its unfinished work, keeps its seat, refuses while the app is open, and the same agent finishes on the same conversation", async () => {
-    const run = await start({ planner: "short", builder: "work", reopen: "resume" });
+  return fixtures.use(async caseOwner => {
+    const run = await start(caseOwner, { planner: "short", builder: "work", reopen: "resume" });
     try {
       await waitFor(() => run.fakes.marked("builder-working"), "the builder to draft");
       const before = await run.working("builder");
@@ -41,9 +42,10 @@ describe.skipIf(!posix)("take over a builder in the terminal, then hand back", (
       expect(item).toMatchObject({ kind: "driving", blocking: false, roleId: "builder" });
       // The builder's unfinished work was saved as its own commit before the terminal opened.
       expect(task.driving!.saved?.files).toEqual(["notes.txt"]);
-      expect(await git(task.worktree!, "log", "-1", "--format=%s", task.driving!.saved!.sha)).toBe("Add a greeting (unfinished work)");
-      expect(task.driving!.head).toBe(await git(task.worktree!, "rev-parse", "HEAD"));
-      expect(task.savedVersion).toEqual({ commit: task.driving!.head, tree: await git(task.worktree!, "rev-parse", "HEAD^{tree}") });
+      expect(readLooseCommit(join(run.product, ".git"), task.driving!.saved!.sha)?.body.split(/\r?\n/)[0]).toBe("Add a greeting (unfinished work)");
+      const drivingCommit = readWorktreeCommit(task.worktree!)!;
+      expect(task.driving!.head).toBe(drivingCommit.commit);
+      expect(task.savedVersion).toEqual({ commit: task.driving!.head, tree: drivingCommit.tree });
       expect(task.timeline.some((entry) => entry.text === "Saved the Builder's unfinished work as one commit (1 file)")).toBe(true);
 
       // Pause and Cancel wait for the hand back; pausing the pool changes nothing.
@@ -81,10 +83,11 @@ describe.skipIf(!posix)("take over a builder in the terminal, then hand back", (
       await engine.handBack(run.taskId, "Fixed the colour by hand");
       task = run.task();
       expect(task.driving).toBeUndefined();
-      expect(task.savedVersion).toEqual({ commit: await git(task.worktree!, "rev-parse", "HEAD"), tree: await git(task.worktree!, "rev-parse", "HEAD^{tree}") });
+      const handedBackCommit = readWorktreeCommit(task.worktree!)!;
+      expect(task.savedVersion).toEqual({ commit: handedBackCommit.commit, tree: handedBackCommit.tree });
       expect(engine.getState().inbox.some((entry) => entry.kind === "driving")).toBe(false);
       expect(existsSync(takeoverDir(run.data, run.taskId))).toBe(false);
-      expect(await git(task.worktree!, "log", "-1", "--format=%s")).toBe("Add a greeting (changes made by hand)");
+      expect(handedBackCommit.body.split(/\r?\n/)[0]).toBe("Add a greeting (changes made by hand)");
       const note = task.notes!.at(-1)!.text;
       // This workflow checks the hand-back evidence, not how fast the machine finishes it.
       // Duration wording is checked separately with explicit elapsed times.
@@ -121,9 +124,11 @@ describe.skipIf(!posix)("take over a builder in the terminal, then hand back", (
       expect(done.handChanges).toBeUndefined();
       expect(done.steps!.filter((step) => step.roleId === "builder")).toHaveLength(1);
       // Everything done by hand and by the agent landed.
-      for (const file of ["notes.txt", "by-hand.txt", "committed-by-hand.txt"]) expect(await git(run.product, "show", `main:${file}`)).toBeTruthy();
-      expect(await git(run.product, "show", "main:greeting.txt")).toBe("Hello");
+      for (const file of ["notes.txt", "by-hand.txt", "committed-by-hand.txt"]) expect(readFileSync(join(run.product, file), "utf8").trim()).toBeTruthy();
+      expect(readFileSync(join(run.product, "greeting.txt"), "utf8").replace(/\r?\n$/, "")).toBe("Hello");
 
     } finally { await run.close(); }
+
   });
+});
 });

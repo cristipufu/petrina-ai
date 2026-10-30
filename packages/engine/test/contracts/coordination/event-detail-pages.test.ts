@@ -1,13 +1,12 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { EVENT_BYTES } from "../../../src/workflow-events.js";
 import { createWorkflowEventFixtures, all } from "../../fixtures/workflow-event-native.js";
-
-const { fixture, close } = createWorkflowEventFixtures();
+const { fixture, close, use } = createWorkflowEventFixtures();
 afterAll(close);
-
 describe("focused monitoring evidence regressions", () => {
 it("bounds nested causes and complete replies and pages every omitted finding and product", async () => {
-    const { e, c, events } = fixture();
+  return use("petrina-events-", async caseOwner => {
+    const { e, c, events } = fixture(caseOwner);
     const taskId = e.addTask({ productId: "product", title: "Complete compact pages" });
     const task = e.task(taskId)!;
     task.journey = [{ id: "j1", kind: "agent", roleId: "code-reviewer", profileId: "opus-high", round: 1, sub: 0, startedAt: 1, trigger: { reason: "Diagnostic ".repeat(9000) } }];
@@ -46,4 +45,5 @@ it("bounds nested causes and complete replies and pages every omitted finding an
     e.commit(task);
     expect((await readAll(review.id)).raised).toHaveLength(35);
   });
+});
 });

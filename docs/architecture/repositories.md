@@ -109,4 +109,4 @@ One shared delivery approval covers all repositories and the companion wording. 
 
 The task lands only when every published repository has landed. An open PR keeps it Waiting for merge. A PR closed without merging requires an explicit coordinator decision and keeps dependents blocked. Removing a finished product preserves shared history under the remaining products; removing its last product removes the task and its embedded history.
 
-The regression cases live in `packages/engine/test/repositories.test.ts` and the source, review-settlement and delivery tests. Historical acceptance checklists are retained only in [the archived brief](../archive/shared-tasks.md).
+The regression cases live under `packages/core/test/rules/repositories/`, `packages/repositories/test/contracts/`, and `packages/engine/test/` (`contracts/fixtures/repositories.test.ts`, source, review-settlement and delivery suites). Historical acceptance checklists are retained only in [the archived brief](../archive/shared-tasks.md).

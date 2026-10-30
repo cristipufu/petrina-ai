@@ -5,12 +5,13 @@ import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { executionFor } from "@petrina/orchestrator";
 import { directDrivers } from "../../fixtures/direct-drivers.js";
 import { tempDir } from "../../fixtures.js";
+import { privateAgentToolProbe } from "../../scripted-probes.js";
 
 /** Real Turns adapter/recovery/selection; only the unrelated native session attempt is substituted. */
 async function fixture(member: boolean) {
   const root = tempDir("petrina-recovery-callbacks-"), owner = directDrivers(root);
   return setupWithCleanup(() => owner.prepare(async () => {
-    const engine = owner.open(join(root, "data"), { agentCommand: () => undefined }); engine.schedule = () => {};
+    const engine = owner.open(join(root, "data"), { agentCommand: () => undefined, toolProbe: privateAgentToolProbe() }); engine.schedule = () => {};
     await engine.waitUntilReady(); engine.setPoolPaused(false);
     engine.s.tools = engine.s.tools.map(tool => ({ ...tool, status: "ready" }));
     engine.s.setup!.checks = ["codex", "claude-code", "grok", "antigravity"].map(id => ({ id: id as "codex", status: "ready" }));

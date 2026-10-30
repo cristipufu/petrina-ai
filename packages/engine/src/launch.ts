@@ -208,6 +208,7 @@ export async function launch(options: LaunchOptions): Promise<void> {
     }
     engine = new Engine(home, { ...options.engine, admissionsClosed: true });
     await engine.waitUntilReady();
+    await engine.startupSweep;
     lifecycle = new EngineLifecycle(engine, lifecycleStore, async (restart) => {
       const reconnectPort = server!.port;
       lifecycle?.close();

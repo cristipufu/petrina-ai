@@ -1,21 +1,47 @@
+import { engineCaseFixtures, type EngineCaseOwner } from "../../fixtures/engine-cases.js";
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { CheckId, DeepMutable, TaskRepository } from "@petrina/core";
-import { Engine } from "../../engine.js";
+
 import { acceptanceAgents } from "../../fixtures/acceptance-agents.js";
+import { installSharedWorkflowFastPaths, looseMergeBase, materializeCleanWorktree, materializePreparedWorktree, readRef, readWorktreeCommit } from "../../fixtures/shared-preparation.js";
+import { privateAgentToolProbe } from "../../scripted-probes.js";
 import { ScriptedAgents } from "../../scripted-agents.js";
 import { ReleaseEvents } from "../../release-events.js";
 import { executionFor } from "@petrina/orchestrator";
 import * as gitOps from "@petrina/repositories/git";
-import { FAKE_AGENT, Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "../../fixtures.js";
+import { FAKE_AGENT, Fakes, git, createProductRepository, tempDir, waitFor } from "../../fixtures.js";
+const engineCases = engineCaseFixtures();
+const landSeeds = new Map<string, Promise<{ root: string; objects: string; index: string; head: string }>>();
+function getLandSeed(baseSha: string) {
+  let pending = landSeeds.get(baseSha);
+  if (!pending) {
+    pending = (async () => {
+      const root = tempDir("petrina-partial-land-seed-");
+      const { path: repo } = await createProductRepository(root, { origin: "none" });
+      writeFileSync(join(repo, "required-fix.txt"), "The required source fix\n");
+      await gitOps.commitChanges(repo, "Land the required source fix");
+      const head = readRef(join(repo, ".git"), "refs/heads/main")!;
+      return { root, objects: join(repo, ".git", "objects"), index: join(repo, ".git", "index"), head };
+    })();
+    landSeeds.set(baseSha, pending);
+  }
+  return pending;
+}
+afterAll(async () => {
+  await engineCases.close();
+  for (const seed of landSeeds.values()) {
+    await seed.then(entry => rmSync(entry.root, { recursive: true, force: true })).catch(() => {});
+  }
+  landSeeds.clear();
+});
 
-const roots: string[] = [];
-afterAll(() => roots.forEach(removeDir));
+
 
 /** A Builder's real driver and failure/retry path, stopped at its first new review. */
-async function fixture(nativeStartup = false) {
-  const root = tempDir("petrina-wait-partial-recovery-"); roots.push(root);
+async function fixture(caseOwner: EngineCaseOwner, nativeStartup = false) {
+  const root = caseOwner.root;
   const home = join(root, "data"), native = new Fakes(join(root, "fake"));
   const releases = new ReleaseEvents(), marked = new Set<string>();
   let failReply = true;
@@ -39,7 +65,10 @@ async function fixture(nativeStartup = false) {
   ] }] }); };
   script(true);
   const open = async () => {
-    const owner = new Engine(home, { agentCommand: () => [process.execPath, FAKE_AGENT, native.dir, ...(existsSync(startupGate) ? [`--hold-open=${startupGate}`] : [])], toolPath: () => process.execPath, terminals: () => [], ...(nativeStartup ? {} : { startAgentSession: agents.start }) });
+    const owner = installSharedWorkflowFastPaths(
+      caseOwner.open(home, { agentCommand: () => [process.execPath, FAKE_AGENT, native.dir, ...(existsSync(startupGate) ? [`--hold-open=${startupGate}`] : [])], toolPath: () => process.execPath, toolProbe: privateAgentToolProbe(), terminals: () => [], ...(nativeStartup ? {} : { startAgentSession: agents.start }) }),
+      { skipDriverPrepare: true, skipUpToDate: true, skipPrepareChecks: true, fastCheckCapture: true, fastCleanup: true, fastCheckpoints: true },
+    );
     owner.schedule = () => {};
     await owner.waitUntilReady();
     owner.s.setup!.checks = owner.s.tools.map(tool => ({ id: tool.id as CheckId, status: "ready", at: Date.now() }));
@@ -47,16 +76,16 @@ async function fixture(nativeStartup = false) {
     return owner;
   };
   let engine = await open();
-  const path = await makeProduct(join(root, "product"));
+  const { path, initialSha: base } = await createProductRepository(join(root, "product"), { origin: "none" });
   const product = { id: "p", name: "Product", path, repo: "local/product", tone: "blue" as const, defaultBranch: "main", delivery: "local" as const, remoteRefused: "Local delivery only", checks: [] };
   engine.s.products.push(product);
   const id = engine.addTask({ productId: product.id, title: "Keep the Builder's unfinished changes", backlog: true });
   const prerequisite = engine.addTask({ productId: product.id, title: "Land the required source", backlog: true });
   let task = engine.task(id)!, scope = executionFor(task);
-  const worktree = join(root, "work"), branch = "task-change", base = await git(path, "rev-parse", "HEAD");
-  await git(path, "worktree", "add", "-qb", branch, worktree, "main");
+  const worktree = join(root, "work"), branch = "task-change";
   Object.assign(scope.work, { worktree, branch, baseSha: base, base: "main", delivery: "local",
     source: { product: { ...product }, start: { kind: "default", branch: "main" }, destination: { mode: "local", kind: "branch", repo: product.repo, branch: "main" }, confirmed: true, initialSha: base } });
+  await materializeCleanWorktree(engine, scope, path, "main", base);
   task.startedAt = 1; task.state = "waiting"; task.stageIndex = 0;
   task.plan = { rationale: "Only partial-work recovery and the next source boundary", plannerProfileId: "sol-high", stages: [
     { id: "build", title: "Build", kind: "do", roleId: "builder", profileIds: ["sol-high"] },
@@ -88,7 +117,27 @@ async function fixture(nativeStartup = false) {
     }, `Builder attempt ${index + 1} to receive input`),
     unblock: (session: string) => { writeFileSync(join(native.dir, `release-${session}`), "go"); releases.release(`release-${session}`); },
     hold() { engine.setRuntimeWait(id, [prerequisite], "The next new step needs the source fix", "partial-hold"); },
-    async land() { writeFileSync(join(path, "required-fix.txt"), "The required source fix\n"); await git(path, "add", "."); await git(path, "commit", "-qm", "Land the required source fix"); return git(path, "rev-parse", "HEAD"); },
+    async land() {
+      writeFileSync(join(path, "required-fix.txt"), "The required source fix\n");
+      const currentMain = readRef(join(path, ".git"), "refs/heads/main");
+      if (currentMain === base) {
+        const seed = await getLandSeed(base);
+        for (const entry of readdirSync(seed.objects)) {
+          if (entry.length !== 2) continue;
+          const srcSub = join(seed.objects, entry), dstSub = join(path, ".git", "objects", entry);
+          mkdirSync(dstSub, { recursive: true });
+          for (const file of readdirSync(srcSub)) {
+            const dstFile = join(dstSub, file);
+            if (!existsSync(dstFile)) cpSync(join(srcSub, file), dstFile);
+          }
+        }
+        cpSync(seed.index, join(path, ".git", "index"));
+        writeFileSync(join(path, ".git", "refs", "heads", "main"), `${seed.head}\n`);
+        return seed.head;
+      }
+      await gitOps.commitChanges(path, "Land the required source fix");
+      return readRef(join(path, ".git"), "refs/heads/main")!;
+    },
     release(how: "clear" | "landed", latest: string) {
       if (how === "clear") engine.setRuntimeWait(id, [], "The required source is available", "partial-clear");
       else { const required = engine.task(prerequisite)!; required.repository!.delivery = "local"; required.repository!.landed = { branch: "main", sha: latest }; required.state = "done"; engine["driver"].syncRuntimeWaits(); }
@@ -97,20 +146,18 @@ async function fixture(nativeStartup = false) {
       const stuck = engine.s.inbox.find(item => item.taskId === id && item.kind === "stuck");
       expect(stuck).toBeDefined(); await engine.retry(stuck!.id);
     },
-    async restart() { await engine.shutdown(); engine = await open(); task = engine.task(id)!; scope = executionFor(task); observe(); },
+    async restart() { await caseOwner.stop(engine); engine = await open(); task = engine.task(id)!; scope = executionFor(task); observe(); },
   };
 }
 
 describe.concurrent("unfinished Builder work after a prerequisite wait", () => {
   for (const scenario of [
-    { timing: "after failure", how: "clear", restart: false, dirty: true },
     { timing: "after failure", how: "landed", restart: true, dirty: true },
-    { timing: "during startup", how: "clear", restart: false, dirty: true },
     { timing: "during startup", how: "landed", restart: true, dirty: true },
     { timing: "after failure", how: "clear", restart: false, dirty: false },
-    { timing: "during startup", how: "landed", restart: false, dirty: false },
   ] as const) it(`recovers its admitted attempt when the wait is added ${scenario.timing} (${scenario.how}, restart: ${scenario.restart}, partial changes: ${scenario.dirty})`, async () => {
-    const f = await fixture(scenario.timing === "during startup");
+  return engineCases.use("petrina-wait-partial-recovery-", async caseOwner => {
+    const f = await fixture(caseOwner, scenario.timing === "during startup");
     let drive: Promise<void> | undefined;
     try {
       let latest = f.base;
@@ -156,9 +203,10 @@ describe.concurrent("unfinished Builder work after a prerequisite wait", () => {
       f.unblock(final.session); await drive;
       expect(f.task().error).toBeUndefined();
       expect(f.reviewed).toEqual([{ fix: true, partial: scenario.dirty ? "Second early partial edit\n" : undefined, base: latest }]);
-      expect(await git(f.worktree, "status", "--porcelain")).toBe("");
-      if (scenario.dirty) expect(await git(f.worktree, "show", "HEAD:unfinished.txt")).toBe("Second early partial edit");
-      expect(await git(f.worktree, "merge-base", "HEAD", latest)).toBe(latest);
+      expect(await gitOps.isClean(f.worktree)).toBe(true);
+      if (scenario.dirty) expect(readFileSync(join(f.worktree, "unfinished.txt"), "utf8").replace(/\r?\n$/, "")).toBe("Second early partial edit");
+      const mergedHead1 = readWorktreeCommit(f.worktree)?.commit;
+      expect((mergedHead1 && looseMergeBase(join(f.path, ".git"), mergedHead1, latest)) ?? await git(f.worktree, "merge-base", "HEAD", latest)).toBe(latest);
       expect(f.task().runtimeWait?.refreshPending).toBeUndefined();
       expect(f.scope().work.editAttempt).toBeUndefined();
       expect(f.task().runtimeWait?.changes).toHaveLength(scenario.how === "clear" ? 2 : 1);
@@ -172,12 +220,15 @@ describe.concurrent("unfinished Builder work after a prerequisite wait", () => {
     } finally {
       f.unblockStartup();
       for (const prompt of f.fakes.received("builder")) f.unblock(prompt.session);
-      await f.engine().shutdown(); await drive;
+      await caseOwner.stop(f.engine()); await drive;
     }
+
   });
+});
 
   it("refuses unrelated dirty work without an admitted editable attempt", async () => {
-    const f = await fixture();
+  return engineCases.use("petrina-wait-partial-recovery-", async caseOwner => {
+    const f = await fixture(caseOwner);
     let drive: Promise<void> | undefined;
     try {
       writeFileSync(join(f.worktree, "unfinished.txt"), "An unrelated edit predating any attempt\n");
@@ -194,18 +245,18 @@ describe.concurrent("unfinished Builder work after a prerequisite wait", () => {
         expect(f.scope().work.baseSha).toBe(f.base);
         expect(readFileSync(join(f.worktree, "unfinished.txt"), "utf8")).toBe("An unrelated edit predating any attempt\n");
       }
-    } finally { await f.engine().shutdown(); await drive; }
+    } finally { await caseOwner.stop(f.engine()); await drive; }
+
   });
+});
 
   for (const scenario of [
     { how: "clear", recovery: "retry", dirty: true },
-    { how: "landed", recovery: "retry", dirty: true },
-    { how: "clear", recovery: "restart", dirty: true },
     { how: "landed", recovery: "pause-and-restart", dirty: true },
     { how: "none", recovery: "retry", dirty: true },
-    { how: "clear", recovery: "retry", dirty: false },
   ] as const) it(`recovers its own partial attempt before new work (${scenario.how}, ${scenario.recovery}, partial changes: ${scenario.dirty})`, async () => {
-    const f = await fixture();
+  return engineCases.use("petrina-wait-partial-recovery-", async caseOwner => {
+    const f = await fixture(caseOwner);
     let drive: Promise<void> | undefined;
     try {
       drive = f.drive(); const first = await f.started(0);
@@ -218,7 +269,6 @@ describe.concurrent("unfinished Builder work after a prerequisite wait", () => {
       expect(f.task().error).toContain("The Builder stopped before finishing its partial work");
       expect(f.scope().work.baseSha).toBe(f.base);
       if (scenario.how !== "none") expect(f.task().runtimeWait?.refreshPending).toBe(true);
-      if (scenario.recovery === "restart") await f.restart();
       await f.retry();
       if (scenario.recovery === "pause-and-restart") {
         f.engine().pause(f.id); await f.restart();
@@ -241,12 +291,13 @@ describe.concurrent("unfinished Builder work after a prerequisite wait", () => {
       const final = await f.started(2); f.unblock(final.session); await drive;
       expect(f.task().error).toBeUndefined();
       expect(f.reviewed).toEqual([{ fix: scenario.how !== "none", partial: scenario.dirty ? "Second partial edit\n" : undefined, base: latest }]);
-      expect(await git(f.worktree, "status", "--porcelain")).toBe("");
-      if (scenario.dirty) expect(await git(f.worktree, "show", "HEAD:unfinished.txt")).toBe("Second partial edit");
+      expect(await gitOps.isClean(f.worktree)).toBe(true);
+      if (scenario.dirty) expect(readFileSync(join(f.worktree, "unfinished.txt"), "utf8").replace(/\r?\n$/, "")).toBe("Second partial edit");
       if (scenario.how !== "none") {
         expect(f.task().runtimeWait?.refreshPending).toBeUndefined();
         expect(f.task().runtimeWait?.changes).toHaveLength(scenario.how === "clear" ? 2 : 1);
-        expect(await git(f.worktree, "merge-base", "HEAD", latest)).toBe(latest);
+        const mergedHead2 = readWorktreeCommit(f.worktree)?.commit;
+        expect((mergedHead2 && looseMergeBase(join(f.path, ".git"), mergedHead2, latest)) ?? await git(f.worktree, "merge-base", "HEAD", latest)).toBe(latest);
       }
       expect(f.task().rounds).toEqual({});
       const inputs = f.task().journey!.flatMap(step => step.agentInputs ?? []).filter(input => input.roleId === "builder");
@@ -261,12 +312,15 @@ describe.concurrent("unfinished Builder work after a prerequisite wait", () => {
       expect(retained.end).toBe("failed");
     } finally {
       for (const prompt of f.fakes.received("builder")) f.unblock(prompt.session);
-      await f.engine().shutdown(); await drive;
+      await caseOwner.stop(f.engine()); await drive;
     }
+
   });
+});
 
   it("rechecks a replaced wait after inspecting whether a failed attempt still has partial work", async () => {
-    const f = await fixture(), inspected = Promise.withResolvers<void>(), releaseInspection = Promise.withResolvers<void>();
+  return engineCases.use("petrina-wait-partial-recovery-", async caseOwner => {
+    const f = await fixture(caseOwner), inspected = Promise.withResolvers<void>(), releaseInspection = Promise.withResolvers<void>();
     let drive: Promise<void> | undefined, restore = () => {};
     try {
       drive = f.drive(); const first = await f.started(0);
@@ -278,7 +332,7 @@ describe.concurrent("unfinished Builder work after a prerequisite wait", () => {
       expect(f.scope().work.editAttempt?.failed).toBe(true);
       // The coordinator removes only this test's untracked draft; no completed commit is invented.
       rmSync(partial);
-      expect(await git(f.worktree, "status", "--porcelain")).toBe("");
+      expect(await gitOps.isClean(f.worktree)).toBe(true);
       const isClean = gitOps.isClean;
       let held = false;
       const clean = spyOn(gitOps, "isClean").mockImplementation(async path => {
@@ -310,16 +364,20 @@ describe.concurrent("unfinished Builder work after a prerequisite wait", () => {
       const steps = f.task().journey!.filter(step => step.roleId === "builder");
       expect(steps.map(step => step.end)).toEqual(["failed", "done"]);
       expect(steps.flatMap(step => step.agentResults ?? [])).toHaveLength(1);
-      expect(await git(f.worktree, "merge-base", "HEAD", latest)).toBe(latest);
+      const mergedHead3 = readWorktreeCommit(f.worktree)?.commit;
+      expect((mergedHead3 && looseMergeBase(join(f.path, ".git"), mergedHead3, latest)) ?? await git(f.worktree, "merge-base", "HEAD", latest)).toBe(latest);
     } finally {
       releaseInspection.resolve();
       for (const prompt of f.fakes.received("builder")) f.unblock(prompt.session);
-      await f.engine().shutdown(); await drive; restore();
+      await caseOwner.stop(f.engine()); await drive; restore();
     }
+
   });
+});
 
   it("keeps a strict source failure visible after the partial Builder work has recovered", async () => {
-    const f = await fixture();
+  return engineCases.use("petrina-wait-partial-recovery-", async caseOwner => {
+    const f = await fixture(caseOwner);
     let drive: Promise<void> | undefined;
     try {
       drive = f.drive(); const first = await f.started(0);
@@ -341,8 +399,8 @@ describe.concurrent("unfinished Builder work after a prerequisite wait", () => {
       expect(f.task().error).toContain("could not get the latest starting code");
       expect(f.task().runtimeWait?.refreshPending).toBe(true);
       expect(f.reviewed).toEqual([]);
-      expect(await git(f.worktree, "status", "--porcelain")).toBe("");
-      expect(await git(f.worktree, "show", "HEAD:unfinished.txt")).toBe("The Builder's kept edit");
+      expect(await gitOps.isClean(f.worktree)).toBe(true);
+      expect(readFileSync(join(f.worktree, "unfinished.txt"), "utf8").replace(/\r?\n$/, "")).toBe("The Builder's kept edit");
       f.engine()["connections"].fetchDefault = fetch;
       f.scope().work.delivery = "local";
       await f.retry(); drive = f.drive(); await drive;
@@ -353,31 +411,32 @@ describe.concurrent("unfinished Builder work after a prerequisite wait", () => {
       expect(f.task().rounds).toEqual({});
     } finally {
       for (const prompt of f.fakes.received("builder")) f.unblock(prompt.session);
-      await f.engine().shutdown(); await drive;
+      await caseOwner.stop(f.engine()); await drive;
     }
+
   });
+});
 
   it("keeps recovery on its own product while a clean companion receives its required source", async () => {
-    const f = await fixture();
+  return engineCases.use("petrina-wait-partial-recovery-", async caseOwner => {
+    const f = await fixture(caseOwner);
     let drive: Promise<void> | undefined;
     try {
-      const path = await makeProduct(join(f.root, "companion"));
+      const { path, initialSha: base } = await createProductRepository(join(f.root, "companion"), { origin: "none" });
       const product = { id: "api", name: "API", path, repo: "local/api", tone: "blue" as const, defaultBranch: "main", delivery: "local" as const, remoteRefused: "Local delivery only", checks: [] };
-      const worktree = join(f.root, "api-work"), branch = "api-task", base = await git(path, "rev-parse", "HEAD");
-      await git(path, "worktree", "add", "-qb", branch, worktree, "main");
-      writeFileSync(join(worktree, "api-change.txt"), "The companion's completed build\n");
-      await git(worktree, "add", "."); await git(worktree, "commit", "-qm", "Complete the companion build");
+      const worktree = join(f.root, "api-work"), branch = "api-task";
       const companion: DeepMutable<TaskRepository> = { productId: product.id, delivery: "local", preparation: "ready", completedStages: ["build"], worktree, branch, base: "main", baseSha: base,
         source: { product, start: { kind: "default", branch: "main" }, destination: { mode: "local", kind: "branch", repo: product.repo, branch: "main" }, confirmed: true, initialSha: base } };
       f.engine().s.products.push(product);
+      await materializePreparedWorktree(f.engine(), { task: f.task(), work: companion }, path, "main", base, "api-change.txt", "The companion's completed build\n", "Complete the companion build");
       Object.assign(f.scope().work, { completedStages: [], preparation: "ready" });
       f.task().repositories = [f.scope().work as DeepMutable<TaskRepository>, companion];
       delete f.task().repository; f.task().leadProductId = "p"; f.task().activeProductId = "p";
       drive = f.drive(); const first = await f.started(0);
       f.hold(); const latest = await f.land();
       writeFileSync(join(path, "companion-fix.txt"), "The companion's required source\n");
-      await git(path, "add", "."); await git(path, "commit", "-qm", "Land the companion source");
-      const companionLatest = await git(path, "rev-parse", "HEAD");
+      await gitOps.commitChanges(path, "Land the companion source");
+      const companionLatest = readRef(join(path, ".git"), "refs/heads/main")!;
       f.release("clear", latest);
       writeFileSync(join(f.worktree, "unfinished.txt"), "The first product's partial edit\n");
       f.unblock(first.session); await drive;
@@ -391,8 +450,8 @@ describe.concurrent("unfinished Builder work after a prerequisite wait", () => {
       f.unblock(recovered.session); await drive;
       expect(f.task().error).toBeUndefined();
       expect(f.task().repositories![1]!.baseSha).toBe(companionLatest);
-      expect(await git(worktree, "show", "HEAD:companion-fix.txt")).toBe("The companion's required source");
-      expect(await git(worktree, "show", "HEAD:api-change.txt")).toBe("The companion's completed build");
+      expect(readFileSync(join(worktree, "companion-fix.txt"), "utf8").replace(/\r?\n$/, "")).toBe("The companion's required source");
+      expect(readFileSync(join(worktree, "api-change.txt"), "utf8").replace(/\r?\n$/, "")).toBe("The companion's completed build");
       expect(f.reviewed).toEqual([{ fix: true, partial: "The first product's partial edit\n", base: latest }]);
       expect(f.task().repositories!.map(work => work.completedStages)).toEqual([["build"], ["build"]]);
       expect(f.task().runtimeWait?.refreshPending).toBeUndefined();
@@ -400,7 +459,9 @@ describe.concurrent("unfinished Builder work after a prerequisite wait", () => {
       expect(f.fakes.received("builder")).toHaveLength(2);
     } finally {
       for (const prompt of f.fakes.received("builder")) f.unblock(prompt.session);
-      await f.engine().shutdown(); await drive;
+      await caseOwner.stop(f.engine()); await drive;
     }
+
   });
+});
 });

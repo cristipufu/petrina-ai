@@ -1,15 +1,18 @@
 import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
+import { installPreparedProduct, privateCloneProduct } from "../../fixtures/prepared-product.js";
 import { mkdtempSync } from "node:fs";
 import { afterAll as closeOwnedCases } from "bun:test";
 import { describe, expect, it } from "bun:test";
 import { join } from "node:path";
 import { type Task } from "@petrina/core";
 import { Engine } from "../../engine.js";
-import { Fakes, makeProduct, waitFor } from "../../fixtures.js";
+import { Fakes, createProductRepository, waitFor } from "../../fixtures.js";
+import { fakeAgentSessions } from "../../fixtures/fake-agent-sessions.js";
+import { installSharedWorkflowFastPaths } from "../../fixtures/shared-preparation.js";
 import { reviewJourneyFixtures } from "../../fixtures/review.js";
+import { privateAgentToolProbe } from "../../scripted-probes.js";
 const cases = engineCaseFixtures();
 closeOwnedCases(() => cases.close());
-
 
 const {} = reviewJourneyFixtures();
 describe.concurrent("reviewers at once, then a vote", () => {
@@ -19,9 +22,19 @@ describe.concurrent("reviewers at once, then a vote", () => {
 
       const fakes = new Fakes(join(root, "fake"));
       fakes.scenario({ reviewer: "work" });
-      const options = { agentCommand: () => [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), fakes.dir] };
+      const options = {
+        agentCommand: () => [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), fakes.dir],
+        startAgentSession: fakeAgentSessions(fakes),
+        toolProbe: privateAgentToolProbe(),
+      };
+      const fastPaths = { skipDriverPrepare: true, skipUpToDate: true, skipPrepareChecks: true, skipReviewCopies: true, skipReviewInputDiffs: true, fastCheckCapture: true, fastCleanup: true } as const;
       let engine = owner.open(join(root, "data"), options);
-      const productId = await engine.addProduct(await makeProduct(root));
+      installSharedWorkflowFastPaths(engine, fastPaths);
+      const productId = await owner.run(engine, async () => {
+        const { path: repo } = await createProductRepository(root, { origin: "none" });
+        await engine.waitUntilReady(); owner.check(); engine.stopRequested.signal.throwIfAborted();
+        return installPreparedProduct(engine, privateCloneProduct(repo));
+      });
       engine.setProductDelivery(productId, "local", true);
       const taskId = engine.addTask({ productId, title: "Add a greeting", description: "[no-check]" });
       const coordinate = (current: Engine) => {
@@ -40,6 +53,7 @@ describe.concurrent("reviewers at once, then a vote", () => {
       await owner.stop(engine);
 
       engine = owner.open(join(root, "data"), options);
+      installSharedWorkflowFastPaths(engine, fastPaths);
       try {
         await owner.run(engine, async () => {
           const task = await waitFor(() => {

@@ -14,6 +14,22 @@ import { checkOutputCapture, observeCheckExecutor } from "./check-environment.js
 export const CHECK_TIMEOUT_MS = 20 * 60_000;
 const OUTPUT_KEPT = 6000;
 export type CheckProgress = { index: number; at: number } & ({ kind: "started" } | { kind: "finished"; run: CheckRun });
+export interface CheckCommandRequest {
+  readonly argv: readonly string[];
+  readonly cwd: string;
+  readonly env: NodeJS.ProcessEnv;
+  readonly timeoutMs: number;
+  readonly signal?: AbortSignal;
+  readonly onSpawn?: (pid: number) => void;
+}
+export interface CheckCommandOutcome {
+  readonly code: number;
+  readonly stdout?: string | Uint8Array;
+  readonly stderr?: string | Uint8Array;
+}
+export type CheckCommandExecutor = (
+  request: CheckCommandRequest,
+) => Promise<CheckCommandOutcome | undefined> | CheckCommandOutcome | undefined;
 
 export async function runChecks(
   cwd: string,
@@ -31,6 +47,7 @@ export async function runChecks(
   onLog?: (facts: Pick<CheckRun, "logPath" | "logFileIdentity" | "logFileLength" | "logFileBeginning">) => void,
   // Extra runs recheck admission after log creation, immediately before synchronous spawn.
   beforeStart?: () => boolean,
+  executeCommand?: CheckCommandExecutor,
 ): Promise<CheckRun[]> {
   if (signal?.aborted) return [];
   const ordered = checks.map((check, index) => ({ check, index })).filter(({ check }) => check.argv.length);
@@ -48,7 +65,9 @@ export async function runChecks(
       if (!admitted) { await log?.close(); break; }
       const started = Date.now();
       onProgress?.({ kind: "started", index, at: started });
-      const run = await runOne(check.argv, cwd, env, timeoutMs, signal, log, processList, onSpawn);
+      const run = executeCommand
+        ? await runScriptedOrNative(executeCommand, check.argv, cwd, env, timeoutMs, signal, log, processList, onSpawn)
+        : await runOne(check.argv, cwd, env, timeoutMs, signal, log, processList, onSpawn);
       const endedAt = Date.now();
       const result = { name: check.name, command: commandText(check.argv), startedAt: started, endedAt, ms: endedAt - started, ...await log?.close() };
       const output = [
@@ -151,6 +170,96 @@ async function checkLog(directory: string): Promise<CheckLog> {
  */
 type NativeCheckResult = { code: number | null; output: string; timedOut: boolean; outputComplete: boolean; execution: CheckExecution; cleanupIncomplete?: boolean; exitUnreported?: boolean; exitSignal?: string; error?: string; postStartError?: string }
   & Pick<CheckRun, "executor" | "executorError" | "outputIdentity" | "outputIdentityError">;
+
+const TEXT_ENCODER = new TextEncoder();
+const TEXT_DECODER = new TextDecoder();
+
+async function runScriptedOrNative(
+  executeCommand: CheckCommandExecutor,
+  argv: readonly string[],
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  timeoutMs: number,
+  signal?: AbortSignal,
+  log?: CheckLog,
+  processList?: (timeout: number) => Promise<string | undefined>,
+  onSpawn?: (pid: number) => void,
+): Promise<NativeCheckResult> {
+  if ("mock" in Bun.spawn) return runOne(argv, cwd, env, timeoutMs, signal, log, processList, onSpawn);
+  const executor = observeCheckExecutor(), identity = checkOutputCapture();
+  const timeoutController = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    timeoutController.abort();
+  }, timeoutMs);
+  const combinedSignal = signal ? AbortSignal.any([signal, timeoutController.signal]) : timeoutController.signal;
+  let outcome: CheckCommandOutcome | undefined;
+  try {
+    const pending = executeCommand({ argv, cwd, env, timeoutMs, signal: combinedSignal, onSpawn });
+    if (pending === undefined) {
+      clearTimeout(timer);
+      return runOne(argv, cwd, env, timeoutMs, signal, log, processList, onSpawn);
+    }
+    outcome = pending instanceof Promise
+      ? await Promise.race([
+          pending,
+          new Promise<CheckCommandOutcome>((resolve) => {
+            if (combinedSignal.aborted) { resolve({ code: 130 }); return; }
+            combinedSignal.addEventListener("abort", () => resolve({ code: 130 }), { once: true });
+          }),
+        ])
+      : pending;
+  } catch (error) {
+    clearTimeout(timer);
+    if (!signal?.aborted && !timedOut) {
+      const msg = error instanceof Error ? error.message : String(error);
+      const execution: CheckExecution = {
+        started: false, exit: { status: "unreported" }, stdout: "incomplete", stderr: "incomplete",
+        timedOut: false, cancelled: Boolean(signal?.aborted), cleanup: "not-requested", outputCleanup: "not-requested",
+        failure: { kind: "start", message: tidyOutput(msg) },
+      };
+      return { code: null, execution, ...executor, ...identity.finish(false), output: "", timedOut: false, outputComplete: false, error: msg };
+    }
+    outcome = { code: 130 };
+  } finally {
+    clearTimeout(timer);
+  }
+  if (outcome === undefined) return runOne(argv, cwd, env, timeoutMs, signal, log, processList, onSpawn);
+  let kept = "", cut = false;
+  const append = async (field: "stdout" | "stderr", chunk?: string | Uint8Array) => {
+    if (chunk === undefined) return;
+    const bytes = typeof chunk === "string" ? TEXT_ENCODER.encode(chunk) : chunk;
+    if (!bytes.byteLength) return;
+    identity.add(field, bytes);
+    const text = typeof chunk === "string" ? chunk : TEXT_DECODER.decode(bytes);
+    kept += text;
+    if (kept.length > OUTPUT_KEPT * 2) { kept = kept.slice(-OUTPUT_KEPT * 2); cut = true; }
+    await log?.write(bytes);
+  };
+  await append("stdout", outcome.stdout);
+  await append("stderr", outcome.stderr);
+  const cancelled = Boolean(signal?.aborted);
+  if (cancelled || timedOut) {
+    const execution: CheckExecution = {
+      started: true, exit: { status: "unreported" }, stdout: "eof", stderr: "eof",
+      timedOut, cancelled, cleanup: "confirmed", outputCleanup: "not-requested",
+    };
+    return {
+      code: null, execution, ...executor, ...identity.finish(true),
+      output: `${cut ? "…\n" : ""}${kept}`, timedOut, outputComplete: true,
+    };
+  }
+  const code = Number.isSafeInteger(outcome.code) && outcome.code >= 0 ? outcome.code : 1;
+  const execution: CheckExecution = {
+    started: true, exit: { status: "reported", code }, stdout: "eof", stderr: "eof",
+    timedOut: false, cancelled: false, cleanup: "not-requested", outputCleanup: "not-requested",
+  };
+  return {
+    code, execution, ...executor, ...identity.finish(true),
+    output: `${cut ? "…\n" : ""}${kept}`, timedOut: false, outputComplete: true,
+  };
+}
 
 function runOne(argv: readonly string[], cwd: string, env: NodeJS.ProcessEnv, timeoutMs: number, signal?: AbortSignal, log?: CheckLog, processList?: (timeout: number) => Promise<string | undefined>, onSpawn?: (pid: number) => void): Promise<NativeCheckResult> {
   return new Promise((resolve) => {

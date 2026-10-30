@@ -1,27 +1,29 @@
+import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
 
 import { executionFor } from "@petrina/orchestrator";
 import { afterAll, expect, it } from "bun:test";
 
 import { join } from "node:path";
 import { ROLE_STARTS } from "@petrina/core";
-import { Engine } from "../../engine.js";
 
 
 
 
 
 
-import { removeDir, tempDir } from "../../support.js";
 
-const roots: string[] = [];
-afterAll(() => roots.forEach(removeDir));
+const engineCases = engineCaseFixtures();
+afterAll(() => engineCases.close());
+
+
 
 const start = (id: string) => ROLE_STARTS.find((entry) => entry.id === id)!.draft;
 
   it("keeps added and built-in reviewers independent of each other's saved verdicts and the latest port builder", async () => {
-    const root = tempDir("petrina-added-independence-");
-    roots.push(root);
-    const engine = new Engine(join(root, "data"), { toolPath: () => process.execPath, usageCommands: { codex: null } });
+  return engineCases.use("petrina-added-independence-", async caseOwner => {
+    const root = caseOwner.root;
+
+    const engine = caseOwner.open(join(root, "data"), { toolPath: () => process.execPath, usageCommands: { codex: null } });
     try {
       engine.setPoolPaused(true);
       const added = engine.addRole(start("security"));
@@ -48,8 +50,9 @@ const start = (id: string) => ROLE_STARTS.find((entry) => entry.id === id)!.draf
       executionFor(task).work.portReview = { from: "a", onto: "b", head: "c", files: ["greeting.txt"] };
       expect(engine.choose("sol-high", task, added, undefined, "1")).toEqual(expect.objectContaining({ profile: expect.objectContaining({ toolId: "grok" }) }));
     } finally {
-      const at = roots.indexOf(root); if (at >= 0) roots.splice(at, 1);
-      await engine.shutdown();
-      removeDir(root);
+      await caseOwner.stop(engine);
+
     }
+
   });
+});

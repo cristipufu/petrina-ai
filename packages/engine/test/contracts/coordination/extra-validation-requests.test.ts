@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { checkProblem } from "@petrina/core";
 import { completeCheckExecution } from "@petrina/test-support/check-execution-facts";
 import { executionFor } from "@petrina/orchestrator";
-import { extraFixture } from "../../extra-fixtures.js";
+import { preparedServiceExtraFixture as extraFixture, extraFixture as nativeExtraFixture } from "../../extra-fixtures.js";
 
 const cases = engineCaseFixtures();
 afterAll(() => cases.close());
@@ -57,7 +57,7 @@ describe.skipIf(process.platform === "win32")("required extra validation shares 
     expect(events.filter(event => event.kind.startsWith("extra.")).map(event => event.kind)).toEqual(["extra.queued", "extra.started", "extra.stopping", "extra.finished", "extra.queued", "extra.started", "extra.stopping", "extra.finished"]);
     expect(events.filter(event => event.kind.startsWith("check."))).toEqual([]);
 
-  });
+  }, {}, { fastClientStop: true, actorLease: false, commandLease: false, scriptedNonHoldRuns: true });
 
   });
 });
@@ -90,7 +90,7 @@ describe.skipIf(process.platform === "win32")("required extra validation shares 
 });
 it.skipIf(process.platform !== "win32")("refuses an extra run on a host without supported process-group ownership", async () => {
   return cases.use("petrina-extra-", async owner => {
-  return await extraFixture(owner, async f => {
+  return await nativeExtraFixture(owner, async f => {
   const result = await f.coordination.call("validation.run", f.request("unsupported-host", ["probe", "pass"]));
   expect(result.outcome).toBe("invalid");
   expect(result.message).toContain("Unix host");

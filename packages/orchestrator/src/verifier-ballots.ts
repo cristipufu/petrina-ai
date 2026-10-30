@@ -1,4 +1,4 @@
-import { acceptsAnswer, authorProfile, ballotOf, choosePanel, decide, endAgentStep, engagedTools, findingCount, findingsNeedingVotes, inBallot, isRejectedReopenOfVerifiedFix, JOURNEY_WORDS as W, openStep, panelAnswers, planThirdAnswers, recordStepResult, replacementFor, reviewedCode, seatRemaining, type DeepMutable, type Finding, type Hunt, type Id, type PanelCandidate, type Stage, type Task, type VerifierPanel, type VerifierSeat, type Vote } from "@petrina/core";
+import { acceptsAnswer, authorProfile, ballotOf, choosePanel, decide, endAgentStep, engagedTools, findingCount, findingsNeedingVotes, inBallot, isRejectedReopenOfVerifiedFix, JOURNEY_WORDS, openStep, panelAnswers, planThirdAnswers, recordStepResult, replacementFor, reviewedCode, seatRemaining, type DeepMutable, type Finding, type Hunt, type Id, type PanelCandidate, type Stage, type Task, type VerifierPanel, type VerifierSeat, type Vote } from "@petrina/core";
 import type { RuntimeTask } from "./model.js";
 import type { PendingVerification, VerifierAnswerSource, VerifierCatalog, VerifierRecording, VerifierSelection, VerifierVerdict } from "./ports/verifiers.js";
 
@@ -57,7 +57,7 @@ export class VerifierBallots {
     const checked = task.findings.filter(finding => ids.has(finding.id));
     recordStepResult(task, { findings: checked, findingsSettled: true });
     const oneTool = panel?.rule === "bounded" && panel.usable.length === 1;
-    const outcome = W.voted(checked, { disputed, oneTool });
+    const outcome = JOURNEY_WORDS.voted(checked, { disputed, oneTool });
     this.recording.note(task, real || unresolved ? "warn" : "done", outcome);
     this.recording.changed(task);
     return outcome;
@@ -289,7 +289,7 @@ export class VerifierBallots {
     const open = openStep(task);
     if (asked && open?.kind === "agent" && open.roleId && this.catalog.roleResult(open.roleId, task) === "votes") {
       const real = findings.filter((finding) => decide(panel, panelAnswers(panel, finding, hunt))?.verdict === "real").length;
-      endAgentStep(task, { outcome: W.firstAnswers(findings.length, real, Object.keys(plan.escalations).length), reason: W.thirdAnswer(asked) }, this.recording.now());
+      endAgentStep(task, { outcome: JOURNEY_WORDS.firstAnswers(findings.length, real, Object.keys(plan.escalations).length), reason: JOURNEY_WORDS.thirdAnswer(asked) }, this.recording.now());
     }
     this.recording.checkpoint(task);
   }

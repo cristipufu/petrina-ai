@@ -1,3 +1,4 @@
+import { hasAcceptanceVersionConsumers } from "@petrina/core";
 import type { RepositoryContext } from "./repository-context.js";
 import type { WorkCompletionHost, WorkCompletionInput } from "./ports/work-completion.js";
 
@@ -11,7 +12,7 @@ export class WorkCompletion {
     this.host.endStage(scope);
     if (this.host.rerun(task)) return "continue";
     if (task.repositories && input.canEdit) {
-      await this.host.invalidateAcceptance(scope, input.testedVersions);
+      if (hasAcceptanceVersionConsumers(task)) await this.host.invalidateAcceptance(scope, input.testedVersions);
       const own = task.repositories.find((work) => work.productId === repository.productId)!;
       if (!task.repair) own.completedStages = [...new Set([...own.completedStages, input.stageId])];
       if (task.repair) {

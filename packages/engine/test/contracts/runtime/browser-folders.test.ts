@@ -1,3 +1,7 @@
+import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
+import { registerFixtureRoot } from "@petrina/test-support/fixture-retention";
+import { removeFixtureRoot } from "@petrina/test-support/fixture-roots";
+import { browserProcesses } from "@petrina/platform/browser-processes";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { expectRejection } from "@petrina/test-support/rejections";
 import { afterAll, afterEach, expect, it, spyOn } from "bun:test";
@@ -11,12 +15,16 @@ import { WaitClock } from "@petrina/storage/worklog";
 import { turnCleanupFixtures } from "../../fixtures/turn-cleanup.js";
 import { CLEANUP_INCOMPLETE } from "@petrina/platform/process-tree";
 import { refuseFolder } from "@petrina/test-support/refuse-folder";
-import { Engine } from "../../engine.js";
-import { finish, removeDir, SLOW, taskOf, tempDir, testBrowserRoot } from "../../support.js";
+import { finish, SLOW, taskOf, testBrowserRoot } from "../../support.js";
 
 import { completeAll } from "@petrina/core";
 import { nativeWorldFixtures } from "../../fixtures/native-worlds.js";
+import { installPreparedProduct, acmeDemoProduct } from "../../fixtures/prepared-product.js";
+import { installSharedWorkflowFastPaths } from "../../fixtures/shared-preparation.js";
+import { privateAgentToolProbe } from "../../scripted-probes.js";
 
+const engineCases = engineCaseFixtures();
+afterAll(() => engineCases.close());
 const worlds = nativeWorldFixtures();
 afterAll(worlds.close);
 const cleanupFixtures = turnCleanupFixtures();
@@ -42,13 +50,21 @@ it("finishes a scripted workflow unrelated to browsing while the standard browse
   const world = fixture.world;
   return fixture.engine(async engine => {
   try {
+    installSharedWorkflowFastPaths(engine, {
+      skipUpToDate: true,
+      skipPrepareChecks: true,
+      skipReviewCopies: true,
+      skipReviewInputDiffs: true,
+      fastCheckCapture: true,
+    });
     // The refusal reaches browser startup: the standard folder cannot hold a session here.
     const control = await AgentBrowser.start(undefined, process.env).then(async (browser) => { await browser.close(); return "started"; }, (error: Error) => error.message);
     expect(control).toContain("EPERM");
     expect(refusal.attempts.length).toBeGreaterThan(0);
     refusal.attempts.length = 0;
     started.mockClear();
-    const productId = await engine.addProduct(world.clone);
+    await engine.waitUntilReady(); engine.stopRequested.signal.throwIfAborted();
+    const productId = installPreparedProduct(engine, acmeDemoProduct(world.clone));
     const id = engine.addTask({ productId, title: "Greet the guest", description: "[no-check]" });
     const task = taskOf(await finish(engine, id), id);
     expect(task.error).toBeUndefined();
@@ -63,6 +79,8 @@ it("finishes a scripted workflow unrelated to browsing while the standard browse
   } finally {
     await engine.shutdown();
   }
+  }, {
+    runCheckCommand: async req => req.argv[0] === "git" && req.argv[1] === "--version" ? { code: 0, stdout: "git version 2.45.0\n" } : undefined,
   });
   }, {}, { stopPeers: cleanup });
   }, cleanup);
@@ -115,37 +133,72 @@ it("saves a failed browser cleanup's private note in the task's own log and only
 }, 90_000 * SLOW);
 
 it("keeps parallel fixtures' browser folders apart and recovers only an engine's own leftovers at startup", async () => {
+  return engineCases.use("petrina-browser-recovery-root-", async owner => {
   const first = testBrowserRoot(), second = testBrowserRoot();
-  const work = tempDir("petrina-browser-recovery-root-");
+  registerFixtureRoot(first); registerFixtureRoot(second);
+  const work = owner.root;
   const data = join(work, "data"), registry = join(data, "browser-temp");
   const outside = join(work, "product");
   mkdirSync(outside);
   writeFileSync(join(outside, "keep.txt"), "product work");
   const browsers: AgentBrowser[] = [];
-  let engine: Engine | undefined;
-  try {
+  let started: Promise<unknown> = Promise.resolve();
+  const stopBrowsers = owner.onStop(async () => {
+    // Each successful start is captured independently, even when its peer rejects.
+    await started;
+    await completeAll(browsers.map(async browser => {
+      try { await browser.close(); }
+      catch (error) {
+        // Windows deliberately reports uncertainty after this forced helper exit. Independent
+        // cleanup needs actual closed output and a readable empty native session observation.
+        const child = (browser as unknown as { child: ChildProcess }).child;
+        if (process.platform !== "win32" || !(error instanceof Error) || error.message !== "The headless browser did not stop."
+          || (child.exitCode === null && child.signalCode === null) || !child.stdout?.readableEnded || !child.stderr?.readableEnded) throw error;
+        const observed = await browserProcesses.readFolder(browser.directory);
+        if (!observed || observed.pids.length) throw new Error("The crashed browser's native cleanup remains uncertain", { cause: error });
+        removeFixtureRoot(browser.directory);
+      }
+    }));
+  });
+  owner.afterBody(async () => {
+    await stopBrowsers();
+    await owner.stopAll();
+    for (const folder of [first, second]) {
+      if (readdirSync(folder).length) throw new Error("Browser output remains after fixture cleanup; folders retained");
+      removeFixtureRoot(folder);
+    }
+  });
+
     expect(first).not.toBe(second);
     // Fixture folders are spelled as browser startup and recovery canonicalize them, even where the
     // temporary folder has another name for itself (a Windows short name such as RUNNER~1).
     expect(await Promise.all([first, second].map((root) => files.realpath(root)))).toEqual([first, second]);
     // Two fixtures start at once, each in its own folder. Both registered with this engine, then it stopped abruptly.
-    browsers.push(...await Promise.all([first, second].map((root) => AgentBrowser.start(registry, process.env, undefined, root))));
+    const openings = [first, second].map(root => owner.prepare(async () => {
+      owner.check();
+      const browser = await AgentBrowser.start(registry, process.env, undefined, root);
+      browsers[[first, second].indexOf(root)] = browser;
+      owner.check();
+      return browser;
+    }));
+    started = Promise.allSettled(openings);
+    await completeAll(openings);
     expect(browsers.map((browser) => dirname(browser.directory))).toEqual([first, second]);
     for (const browser of browsers) await crash(browser);
     writeFileSync(join(registry, "outside.json"), JSON.stringify(outside));
     expect(readdirSync(registry)).toHaveLength(3);
     // Startup recovery uses the engine's configured folder: it reaps that leftover only.
-    engine = new Engine(data, { agentCommand: () => ["fake-agent"], browser: true, browserTempRoot: first });
+    let engine = owner.open(data, { agentCommand: () => ["fake-agent"], toolProbe: privateAgentToolProbe(), browser: true, browserTempRoot: first });
     await engine.waitUntilReady();
     expect(existsSync(browsers[0]!.directory)).toBe(false);
     expect(existsSync(browsers[1]!.directory)).toBe(true);
     expect(existsSync(registry)).toBe(false);
     expect(readFileSync(join(outside, "keep.txt"), "utf8")).toBe("product work");
-    await engine.shutdown();
+    await owner.stop(engine);
     // An engine with the standard folder never reaps another fixture's folder either.
     mkdirSync(registry);
     writeFileSync(join(registry, "other.json"), JSON.stringify(browsers[1]!.directory));
-    engine = new Engine(data, { agentCommand: () => ["fake-agent"] });
+    engine = owner.open(data, { agentCommand: () => ["fake-agent"], toolProbe: privateAgentToolProbe() });
     await engine.waitUntilReady();
     expect(existsSync(browsers[1]!.directory)).toBe(true);
     expect(existsSync(registry)).toBe(false);
@@ -158,11 +211,5 @@ it("keeps parallel fixtures' browser folders apart and recovers only an engine's
     expect(readdirSync(first)).toEqual([]);
     if (process.platform === "win32") expect(existsSync(browsers[1]!.directory)).toBe(true);
     else expect(readdirSync(second)).toEqual([]);
-  } finally {
-    await engine?.shutdown();
-    for (const browser of browsers) await browser.close().catch(() => undefined);
-    removeDir(work);
-    removeDir(first);
-    removeDir(second);
-  }
+  });
 }, 60_000 * SLOW);

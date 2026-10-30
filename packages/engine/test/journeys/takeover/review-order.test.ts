@@ -1,7 +1,8 @@
 import { afterAll, describe, expect, it } from "bun:test";
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { waitFor } from "@petrina/test-support/fixtures";
-import { git } from "@petrina/test-support/commands";
 
 import { sessionState } from "@petrina/agent-runtime/terminal";
 import { takeoverFixtures, takeoverDir } from "../../fixtures/takeover.js";
@@ -12,7 +13,8 @@ const posix = process.platform !== "win32";
 
 describe.skipIf(!posix)("hand changes after every review chain", () => {
   it("runs the last review chain again once the step is done, before delivery", async () => {
-    const run = await start({ planner: "tester-after", builder: "plain", tester: "work" });
+  return fixtures.use(async caseOwner => {
+    const run = await start(caseOwner, { planner: "tester-after", builder: "plain", tester: "work" });
     try {
       await waitFor(() => run.fakes.marked("tester-working"), "the tester to start");
       await run.working("tester");
@@ -33,8 +35,10 @@ describe.skipIf(!posix)("hand changes after every review chain", () => {
       expect(milestones.findLastIndex((text) => text.startsWith("Review passed"))).toBeGreaterThan(rerun);
       expect(milestones.findLastIndex((text) => text.startsWith("Review passed"))).toBeLessThan(milestones.findIndex((text) => text.startsWith("Petrina moved main forward to it")));
       expect(done.rounds[review.id]).toBeUndefined();
-      expect(await git(run.product, "show", "main:fix.txt")).toBe("A fix");
+      expect(readFileSync(join(run.product, "fix.txt"), "utf8").replace(/\r?\n$/, "")).toBe("A fix");
 
     } finally { await run.close(); }
+
   });
+});
 });

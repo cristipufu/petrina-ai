@@ -1,12 +1,34 @@
 import type { DeepMutable } from "./flow.js";
 import type { HistoryItem } from "./history.js";
-import { AFTER_WORDS, openStep, syncRuntimeWaitJourney } from "./journey.js";
+import { openStep, syncRuntimeWaitJourney } from "./journey-recording.js";
+import { AFTER_WORDS } from "./journey-words.js";
 import type { Id, RepositoryState, TaskRepository, TaskState } from "./model.js";
-import { validateTaskDependencies } from "./task-transitions.js";
-import { publishingResult } from "./workflow-events.js";
+import { publishingResult } from "./publishing-result.js";
 
 /** Graph lookups may use compact archived records, without loading conversations. */
 export type DependencyNode = Pick<TaskState, "id"> & Partial<Pick<TaskState, "after" | "runtimeWait" | "state">>;
+
+/** Validate the complete dependency graph before changing the task. Archived records can be looked up lazily. */
+export function validateTaskDependencies(taskId: Id, after: readonly Id[], find: (id: Id) => DependencyNode | undefined): Id[] {
+  if (!find(taskId)) throw new Error("Unknown task");
+  const ids = [...new Set(after)];
+  if (ids.length > 20) throw new Error("Choose up to 20 prerequisites. Remove a task before adding another.");
+  for (const id of ids) {
+    if (id === taskId) throw new Error("A task cannot wait for itself. Remove it from the prerequisites.");
+    if (!find(id)) throw new Error("Unknown task. Remove the unavailable prerequisite and choose another task.");
+  }
+  const reaches = (from: Id, seen = new Set<Id>()): boolean => {
+    if (from === taskId) return true;
+    if (seen.has(from)) return false;
+    seen.add(from);
+    const task = find(from);
+    if (task?.state === "done" || task?.state === "cancelled") return false;
+    const runtime = task && runtimeWaitHolds(task) ? task.runtimeWait!.after : [];
+    return [...(task?.after ?? []), ...runtime].some((next) => reaches(next, seen));
+  };
+  if (ids.some((id) => reaches(id))) throw new Error("Those tasks would wait for each other. Remove a prerequisite that already waits on this task.");
+  return ids;
+}
 export type RuntimeWaitTask = Pick<TaskState, "id" | "title" | "state"> & Partial<Pick<TaskState, "repository" | "repositories" | "combinedInto">> & Partial<RepositoryState> & Pick<HistoryItem, "deliveries" | "maintenance">;
 export type RuntimeWaitLookup = (id: Id) => RuntimeWaitTask | undefined;
 

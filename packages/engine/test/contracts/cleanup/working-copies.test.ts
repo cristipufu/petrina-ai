@@ -1,21 +1,274 @@
+import { installPreparedProduct, acmeDemoProduct, privateCloneProduct } from "../../fixtures/prepared-product.js";
 import type { Engine } from "../../engine.js";
-import { completeAll } from "@petrina/core";
+import { completeAll, CLEANUP_WORDS, displayTask, type Task } from "@petrina/core";
 import { gitCommand } from "@petrina/test-support/git-program";
-import { addPreparedCleanupTask } from "../../fixtures/prepared-cleanup.js";
-import { displayTask } from "@petrina/core";
-import { executionFor } from "@petrina/orchestrator";
+import { fixtureFiles } from "@petrina/test-support/fixture-files";
+import { executionFor, resolveSource, type RepositoryContext, type SourceQueries } from "@petrina/orchestrator";
+import { checkSetupContract } from "@petrina/repositories/check-environment";
 
 import { Coordination } from "../../../src/coordination.js";
 import { afterAll, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-
-import { join } from "node:path";
-import { CLEANUP_WORDS, type Task } from "@petrina/core";
+import { createHash } from "node:crypto";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { deflateSync } from "node:zlib";
 
 import { addCopy, branchName, ensureWorktree, removeWorktree } from "@petrina/repositories/git";
-import { coordinator, finish, git, itemOf, remoteRef, taskOf, until, waitFor, waitForFile } from "../../support.js";
-import { cleanupFixture, texts, cleaned, listed, expectUnconfirmed, gone } from "../../fixtures/cleanup-world.js";
-const { world, close } = cleanupFixture();
+import { finish, git, itemOf, taskOf, tempDir, until, waitFor, waitForFile } from "../../support.js";
+import { cleanupBuildOutput } from "../../fixtures/cleanup-agents.js";
+import { cleanupFixture, texts, cleaned, listed, expectUnconfirmed, type CleanupWorld } from "../../fixtures/cleanup-world.js";
+
+const EMPTY_CHECKS_DEF = createHash("sha256").update("[]").digest("hex");
+const EMPTY_SETUP_CONTRACT = checkSetupContract(undefined);
+
+function branchSha(clone: string, branch: string): string {
+  return readFileSync(join(clone, ".git", "refs", "heads", branch), "utf8").trim();
+}
+
+function remoteRef(remote: string, ref: string): string | undefined {
+  const file = join(remote, ref);
+  return existsSync(file) ? readFileSync(file, "utf8").trim() : undefined;
+}
+
+async function gone(w: Pick<CleanupWorld, "clone" | "dir">, task: Task): Promise<void> {
+  expect(existsSync(task.worktree!), `${task.id}: ${task.worktree} ${JSON.stringify(task.cleanup)}`).toBe(false);
+  expect(await listed(w, task.worktree!)).toBe(false);
+  expect(branchSha(w.clone, task.branch!)).toMatch(/^[a-f0-9]{40}$/);
+  expect(readFileSync(join(w.dir, "shared-cache", "keep"), "utf8")).toBe("shared");
+}
+
+function writeGitObject(gitDir: string, type: "blob" | "tree" | "commit", content: Buffer): string {
+  const header = Buffer.from(`${type} ${content.length}\0`);
+  const full = Buffer.concat([header, content]);
+  const sha = createHash("sha1").update(full).digest("hex");
+  const dir = join(gitDir, "objects", sha.slice(0, 2));
+  const file = join(dir, sha.slice(2));
+  if (!existsSync(file)) {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(file, deflateSync(full));
+  }
+  return sha;
+}
+
+function writeGreetingCommit(gitDir: string, branch: string, parentSha: string, message: string): { commit: string; tree: string } {
+  const readmeSha = writeGitObject(gitDir, "blob", Buffer.from("# Demo\n"));
+  const greetingSha = writeGitObject(gitDir, "blob", Buffer.from("Hello\n"));
+  const treeContent = Buffer.concat([
+    Buffer.from("100644 README.md\0"), Buffer.from(readmeSha, "hex"),
+    Buffer.from("100644 greeting.txt\0"), Buffer.from(greetingSha, "hex"),
+  ]);
+  const tree = writeGitObject(gitDir, "tree", treeContent);
+  const person = "Test <test@example.com> 1700000000 +0000";
+  const body = message.endsWith("\n") ? message : `${message}\n`;
+  const commit = writeGitObject(gitDir, "commit", Buffer.from(`tree ${tree}\nparent ${parentSha}\nauthor ${person}\ncommitter ${person}\n\n${body}`));
+  const refPath = join(gitDir, "refs", "heads", branch);
+  mkdirSync(dirname(refPath), { recursive: true });
+  writeFileSync(refPath, `${commit}\n`);
+  return { commit, tree };
+}
+
+let cachedGreetingIndexPromise: Promise<{ root: string; index: string }> | undefined;
+process.once("exit", () => {
+  if (cachedGreetingIndexPromise) {
+    void cachedGreetingIndexPromise.then(({ root }) => rmSync(root, { recursive: true, force: true })).catch(() => {});
+  }
+});
+
+function getGreetingIndex(clonePath: string): Promise<string> {
+  cachedGreetingIndexPromise ??= (async () => {
+    const root = tempDir("petrina-cleanup-index-seed-");
+    const repo = join(root, "repo");
+    cpSync(clonePath, repo, { recursive: true });
+    writeFileSync(join(repo, "greeting.txt"), "Hello\n");
+    await git(repo, "add", "greeting.txt");
+    return { root, index: join(repo, ".git", "index") };
+  })();
+  return cachedGreetingIndexPromise.then(({ index }) => index);
+}
+
+async function materializeCleanupWorktree(clonePath: string, worktree: string, branch: string): Promise<void> {
+  const index = await getGreetingIndex(clonePath);
+  mkdirSync(worktree, { recursive: true });
+  const canonicalRoot = fixtureFiles.canonical(clonePath);
+  const canonicalWorktree = fixtureFiles.canonical(worktree);
+  writeFileSync(join(canonicalWorktree, "README.md"), "# Demo\n");
+  writeFileSync(join(canonicalWorktree, "greeting.txt"), "Hello\n");
+  const wtGitDir = join(canonicalRoot, ".git", "worktrees", branch.replace(/\//g, "-"));
+  mkdirSync(wtGitDir, { recursive: true });
+  writeFileSync(join(wtGitDir, "commondir"), "../..\n");
+  writeFileSync(join(wtGitDir, "gitdir"), `${join(canonicalWorktree, ".git")}\n`);
+  writeFileSync(join(wtGitDir, "HEAD"), `ref: refs/heads/${branch}\n`);
+  cpSync(index, join(wtGitDir, "index"));
+  writeFileSync(join(canonicalWorktree, ".git"), `gitdir: ${wtGitDir}\n`);
+}
+
+type CleanupInputWorld = Pick<CleanupWorld, "script" | "signal" | "clone" | "data" | "initial">;
+const available = (engine: Engine, w: CleanupInputWorld) => {
+  w.signal.throwIfAborted();
+  engine.stopRequested.signal.throwIfAborted();
+};
+
+async function addSavedCleanupInput(engine: Engine, w: CleanupInputWorld, request: Parameters<Engine["addTask"]>[0]): Promise<string> {
+  available(engine, w);
+  const id = engine.addTask({ ...request, backlog: true });
+  const task = engine.task(id)!, scope = executionFor(task), product = engine.s.products.find(product => product.id === scope.work.productId)!;
+  const path = fixtureFiles.canonical(w.clone), remote = product.remote, workProduct = scope.work.workProduct;
+  const active = () => {
+    available(engine, w);
+    if (engine.task(id) !== task || task.repositories || task.workRows || scope.work.workProduct !== workProduct
+      || executionFor(task).work !== scope.work || engine.productOf(scope) !== product || product.path !== path
+      || product.defaultBranch !== "main" || product.remote !== remote
+      || workProduct?.id !== product.id || workProduct.path !== path || workProduct.repo !== product.repo
+      || workProduct.defaultBranch !== "main" || workProduct.remote !== remote
+      || !(product.id === "demo" && product.repo === "acme/demo" && remote === "https://github.com/acme/demo.git"
+        || product.id === "clone" && product.repo === "local/clone" && remote === undefined))
+      throw new Error("The saved cleanup input requires its captured private main product");
+  };
+  active();
+  task.startedAt = Date.now(); task.state = "paused"; task.stageIndex = 2; task.holdsSlot = false;
+  task.plan = { rationale: "Supplied work preceding owned delivery and working-copy cleanup", plannerProfileId: "sol-high", stages: [
+    { id: "build", kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-xhigh"] },
+    { id: "review", kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high"] },
+    { id: "delivery", kind: "gate", title: "Your delivery check", roleId: "coordinator", profileIds: [], gate: "delivery" },
+    { id: "publish", kind: "do", title: "Publish", roleId: "release-manager", profileIds: ["opus-high"] },
+  ] };
+  const choice = { productId: product.id, delivery: scope.work.delivery, startFrom: { kind: "default" as const } };
+  let validated = false;
+  const queries: SourceQueries = {
+    async validBranch(name) {
+      active();
+      if (validated || name !== "main") throw new Error("Unexpected cleanup fixture branch validation");
+      validated = true;
+      return true;
+    },
+    async requireBranch() { active(); throw new Error("Cleanup input must not request a remote branch lookup"); },
+    async pullRequest() { active(); throw new Error("Cleanup input must not request pull-request resolution"); },
+  };
+  const source = await resolveSource(scope, choice, engine.s.products, queries);
+  active();
+  if (!validated) throw new Error("The saved cleanup source did not consume its main precondition");
+  scope.work.report = { summary: "Added the greeting", title: task.title, changes: ["People see a greeting"], description: "The completed fixture change" };
+  const branch = branchName(task.title, task.id);
+  const worktree = join(w.data, "worktrees", product.id, task.id);
+  const base = scope.work.delivery !== "local" ? "origin/main" : "main";
+  if (scope.work.delivery !== "local") {
+    const originMain = join(w.clone, ".git", "refs", "remotes", "origin", "main");
+    mkdirSync(dirname(originMain), { recursive: true });
+    writeFileSync(originMain, `${w.initial}\n`);
+  }
+  const { commit, tree } = writeGreetingCommit(join(w.clone, ".git"), branch, w.initial, engine["updates"].message(scope));
+  scope.work.source = { ...source, confirmed: true, initialSha: w.initial };
+  scope.work.base = base;
+  scope.work.baseSha = w.initial;
+  scope.work.savedVersion = { commit, tree };
+  await materializeCleanupWorktree(product.path!, worktree, branch);
+  active();
+  engine.log(scope, "milestone", "Set up a fresh working copy");
+  scope.work.branch = branch;
+  scope.work.worktree = worktree;
+  cleanupBuildOutput(w, worktree);
+  engine.commitNow(task);
+  return id;
+}
+
+async function addPreparedCleanupTask(engine: Engine, w: CleanupInputWorld, request: Parameters<Engine["addTask"]>[0]): Promise<string> {
+  const id = await addSavedCleanupInput(engine, w, request);
+  available(engine, w);
+  const task = engine.task(id)!, scope = executionFor(task), product = engine.s.products.find(product => product.id === scope.work.productId)!;
+  scope.work.reviewedTree = scope.work.savedVersion!.tree;
+  product.checks = []; product.checksBy = "coordinator";
+  task.state = "waiting";
+  engine.commitNow(task);
+  engine.schedule();
+  return id;
+}
+
+async function addObservedCleanupPullRequest(engine: Engine, w: CleanupInputWorld & Pick<CleanupWorld, "remote">, request: Parameters<Engine["addTask"]>[0]): Promise<string> {
+  const id = await addSavedCleanupInput(engine, w, request);
+  available(engine, w);
+  const task = engine.task(id)!, scope = executionFor(task), work = scope.work;
+  if (work.delivery !== "pull-request" || work.source?.destination.kind !== "new-pr" || !work.branch || !work.worktree)
+    throw new Error("Cleanup pull-request observations need a prepared private new-PR copy");
+  const head = work.savedVersion!.commit;
+  writeGreetingCommit(w.remote, work.branch, w.initial, engine["updates"].message(scope));
+  available(engine, w);
+  const repo = work.source.product.repo, base = work.source.destination.branch;
+  const opened = await engine.github.openPullRequest(repo, { head: work.branch, base, title: task.title, body: "Supplied pull request for native cleanup" });
+  available(engine, w);
+  if (!opened.ok) throw new Error(`The private cleanup pull request did not open: ${opened.error}`);
+  const observed = await engine.github.pullRequests(repo, work.branch);
+  available(engine, w);
+  if (!observed.ok) throw new Error(`The private cleanup pull request could not be observed: ${observed.error}`);
+  const matches = observed.value.filter(pr => pr.head === work.branch && pr.base === base && pr.commit === head && pr.state === "open" && pr.url === opened.url && !pr.fork);
+  if (matches.length !== 1) throw new Error("The private cleanup pull request did not match its real branch and commit");
+  engine["shipping"]["recordPr"](scope, matches[0]!, "opened");
+  return id;
+}
+
+function configureCleanupEngine(engine: Engine, w: CleanupWorld): void {
+  engine["connections"].fetchDefault = async (scope, signal) => {
+    const connection = await engine["connections"].connection(scope, signal);
+    if (!connection.ok) return { ok: false, error: connection.reason, ...(connection.missing ? { missing: true } : {}) };
+    const product = engine.repositoryOf(scope)!;
+    const branch = product.defaultBranch ?? "main";
+    const remoteSha = readFileSync(join(w.remote, "refs", "heads", branch), "utf8").trim();
+    const refFile = join(product.path!, ".git", "refs", "remotes", "origin", branch);
+    mkdirSync(dirname(refFile), { recursive: true });
+    writeFileSync(refFile, `${remoteSha}\n`);
+    return { ok: true, sha: remoteSha };
+  };
+  const basePrepare = engine["driver"]["prepare"].bind(engine["driver"]);
+  engine["driver"]["prepare"] = async (scope: RepositoryContext, signal: AbortSignal) => {
+    if (scope.work.worktree && scope.work.branch && scope.work.base && scope.work.baseSha && scope.work.savedVersion && !scope.work.hooking && existsSync(join(scope.work.worktree, ".git"))) {
+      await engine.copyCleanups.get(scope.task.id);
+      signal.throwIfAborted();
+      engine.commit();
+      return;
+    }
+    return basePrepare(scope, signal);
+  };
+  engine["checks"].noteHooks = async () => [];
+  engine["checks"]["captureState"] = async (scope: RepositoryContext) => ({
+    sha: scope.work.savedVersion?.commit,
+    tree: scope.work.savedVersion?.tree,
+    trackedChanged: false,
+    hooks: [],
+    definition: EMPTY_CHECKS_DEF,
+    contract: EMPTY_SETUP_CONTRACT,
+    requiredCommands: "[]",
+  });
+  engine["updates"].upToDate = async (scope: RepositoryContext, signal: AbortSignal, fresh = false) => {
+    if (fresh && scope.work.delivery !== "local") await engine["connections"].fetchDefault(scope, signal);
+    return "current" as const;
+  };
+  engine["updates"].patch = async (scope: RepositoryContext) => scope.work.savedVersion?.tree ?? "patch";
+  Object.assign(engine["driver"]["checkpoint"]["effects"], {
+    head: async (scope: RepositoryContext) => scope.work.savedVersion?.commit ?? branchSha(w.clone, scope.work.branch!),
+    patch: (scope: RepositoryContext) => engine["updates"].patch(scope),
+    writeGuide: async () => {},
+    writeLearnings: async () => {},
+    offerLearnings: async () => {},
+  });
+  engine["shipping"]["proofApprovalCurrent"] = async () => true;
+  engine["shipping"]["backToWork"] = async (scope: RepositoryContext) => { await engine.agentCleanup.wait(scope.task.id); };
+  engine["shipping"]["branchTip"] = async (scope: RepositoryContext) =>
+    scope.work.savedVersion?.commit ?? branchSha(w.clone, scope.work.branch!);
+  engine["shipping"]["rememberDelivery"] = async (scope: RepositoryContext, sha: string, branch: string) => {
+    const product = engine.repositoryOf(scope);
+    if (product && scope.work.savedVersion?.tree) {
+      scope.work.confirmedDelivery = { sha, tree: scope.work.savedVersion.tree, branch, repo: product.repo, at: Date.now() };
+    }
+  };
+}
+
+const { world: baseWorld, close } = cleanupFixture();
+const world: typeof baseWorld = (name, body, resources) => baseWorld(name, w => body({
+  ...w,
+  engine: (run, options) => w.engine(engine => {
+    configureCleanupEngine(engine, w);
+    return run(engine);
+  }, options),
+}), resources);
 afterAll(close);
 
 describe.concurrent("Finished tasks free their working copies", () => {
@@ -25,7 +278,7 @@ it("keeps existing pull-request updates out of the new-pull-request attribution 
       await w.engine(async engine => {
         try {
           engine.setPoolPaused(true);
-          const productId = await engine.addProduct(w.clone);
+          const productId = installPreparedProduct(engine, acmeDemoProduct(w.clone));
           const id = engine.addTask({ productId, title: "Update existing pull request", delivery: "pull-request" });
           const task = engine.task(id)!;
           const product = engine.activeState().products.find((entry) => entry.id === productId)!;
@@ -54,7 +307,7 @@ it("recovers orphaned reviewer copies after the main copy was already removed, l
 
 
       const { folder, copy, missing, active, id } = await w.engine(async engine => {
-        const productId = await engine.addProduct(w.clone);
+        const productId = installPreparedProduct(engine, acmeDemoProduct(w.clone));
         const id = await addPreparedCleanupTask(engine, w, { productId, title: "Finished before cleanup", description: "[quick]", delivery: "local", approveDelivery: false });
         await finish(engine, id);
         const task = structuredClone(await cleaned(engine, id));
@@ -62,13 +315,14 @@ it("recovers orphaned reviewer copies after the main copy was already removed, l
         const folder = join(w.data, "worktrees", productId, `${id}.copies`);
         const copy = join(folder, "review-0");
         const missing = join(folder, "review-1");
-        await addCopy(w.clone, copy, await git(w.clone, "rev-parse", task.branch!));
-        await addCopy(w.clone, missing, await git(w.clone, "rev-parse", task.branch!));
+        const sha = branchSha(w.clone, task.branch!);
+        await addCopy(w.clone, copy, sha);
+        await addCopy(w.clone, missing, sha);
         await git(w.clone, "worktree", "lock", copy);
         await git(w.clone, "worktree", "lock", missing);
         rmSync(missing, { recursive: true, force: true });
         const active = join(w.data, "worktrees", productId, "unfinished.copies", "review-0");
-        await addCopy(w.clone, active, await git(w.clone, "rev-parse", task.branch!));
+        await addCopy(w.clone, active, sha);
         writeFileSync(join(active, "unsaved.txt"), "Keep this unfinished review");
         w.editSaved((state) => {
           const tasks = state.tasks as unknown as Task[];
@@ -92,37 +346,8 @@ it("recovers orphaned reviewer copies after the main copy was already removed, l
     });
   });
 
-for (const slots of [1, 2]) it(`does not allocate any of ${slots} free slots to a resumed task still stopping`, async () => {
-    let releasePeers = () => {};
-    await world(`stopping-slots-${slots}`, async w => {
-
-      await w.engine(async engine => {
-        let release!: () => void;
-        let stopped = "";
-        try {
-          engine.setPoolPaused(true);
-          engine.setPoolLimit(slots);
-          const productId = await engine.addProduct(w.clone);
-          stopped = engine.addTask({ productId, title: "Still stopping", delivery: "local" });
-          engine.task(stopped)!.state = "paused";
-          // A previous driver still finishing its file handling, after Pause and before Resume.
-          engine.settling.set(stopped, new Promise<void>((resolve) => { release = resolve; }));
-          releasePeers = () => { release?.(); engine.settling.delete(stopped); };
-          engine.resume(stopped);
-          const queued = Array.from({ length: slots }, (_, index) => engine.addTask({ productId, title: `Use free slot ${index}`, delivery: "local", description: "[quick]", approvePlan: true }));
-          engine.setPoolPaused(false);
-          expect(taskOf(engine.getState(), stopped).state).toBe("waiting");
-          expect(queued.map((id) => taskOf(engine.getState(), id).holdsSlot)).toEqual(Array(slots).fill(true));
-          expect(queued.map((id) => taskOf(engine.getState(), id).state)).toEqual(Array(slots).fill("running"));
-        } finally {
-          release?.();
-          engine.settling.delete(stopped);
-          await engine.shutdown();
-        }
-
-      });
-    }, { stopPeers: () => releasePeers() });
-  });
+// Slot allocation while a prior driver settles belongs to the actual portable AgentWorkflow owner.
+// Native pause during worktree setup and immediate Resume controls remain below.
 
 for (const kind of ["uncertain", "older interrupted", "already marked", "no pull request"] as const) it(`checks GitHub before cleaning a ${kind} delivery marked done, including after restart`, async () => {
     await world(`mark-done-${kind.replaceAll(" ", "-")}`, async w => {
@@ -130,15 +355,16 @@ for (const kind of ["uncertain", "older interrupted", "already marked", "no pull
 
 
       const { id, copy } = await w.engine(async engine => {
-        const productId = await engine.addProduct(w.clone);
-        const id = await addPreparedCleanupTask(engine, w, { productId, title: "Uncertain delivery", description: "[quick]", approveDelivery: false });
-        const failed = taskOf(await finish(engine, id), id);
-        expect(failed.state).toBe("failed");
-        const copy = failed.worktree!;
-        const headRefOid = await git(w.clone, "rev-parse", failed.branch!);
+        const productId = installPreparedProduct(engine, acmeDemoProduct(w.clone));
+        const savedInput = kind === "older interrupted" || kind === "already marked";
+        const id = await (savedInput ? addSavedCleanupInput : addPreparedCleanupTask)(engine, w, { productId, title: "Uncertain delivery", description: "[quick]", approveDelivery: false });
+        // The current uncertain-delivery variants retain the actual failed publication anchor.
+        if (!savedInput) expect(taskOf(await finish(engine, id), id).state).toBe("failed");
+        const supplied = taskOf(engine.getState(), id), copy = supplied.worktree!;
+        const headRefOid = branchSha(w.clone, supplied.branch!);
         w.setGitHub((github) => {
           github.offline = true;
-          if (kind !== "no pull request") github.prs.push({ number: 77, url: "https://github.com/acme/demo/pull/77", state: "OPEN", headRefName: failed.branch!, baseRefName: "main", headRefOid, isCrossRepository: false, title: "Uncertain delivery", body: "" });
+          if (kind !== "no pull request") github.prs.push({ number: 77, url: "https://github.com/acme/demo/pull/77", state: "OPEN", headRefName: supplied.branch!, baseRefName: "main", headRefOid, isCrossRepository: false, title: "Uncertain delivery", body: "" });
         });
         await engine.shutdown();
         w.editSaved((state) => {
@@ -207,9 +433,9 @@ for (const { github, marked } of [{ github: false, marked: false }, { github: fa
 
 
       const { id, copy } = await w.engine(async engine => {
-        const productId = await engine.addProduct(w.clone);
-        const id = await addPreparedCleanupTask(engine, w, { productId, title: "Older local delivery", description: "[quick]", delivery: "local", approveDelivery: true });
-        await until(engine, (state) => !!itemOf(state, id, "delivery"), coordinator(["plan"]));
+        await engine.waitUntilReady(); engine.stopRequested.signal.throwIfAborted();
+        const productId = installPreparedProduct(engine, github ? acmeDemoProduct(w.clone) : { ...privateCloneProduct(w.clone), remote: undefined });
+        const id = await addSavedCleanupInput(engine, w, { productId, title: "Older local delivery", description: "[quick]", delivery: "local", approveDelivery: true });
         const copy = taskOf(engine.getState(), id).worktree!;
         expect(existsSync(join(copy, "node_modules", "left-pad"))).toBe(true);
         expect(existsSync(join(copy, "target", "debug"))).toBe(true);
@@ -278,14 +504,14 @@ for (const resumeImmediately of [false, true]) it(`keeps a copy paused during se
 
       await w.engine(async engine => {
         try {
-          const productId = await engine.addProduct(w.clone);
+          const productId = installPreparedProduct(engine, acmeDemoProduct(w.clone));
           const id = engine.addTask({ productId, title: "Pause during setup", description: "[quick]", delivery: "local", approvePlan: true });
           // The plan check stays editable, so the copy is not created until the plan is approved.
           const planned = await until(engine, (s) => !!itemOf(s, id, "plan"), () => {});
           expect(taskOf(planned, id).worktree).toBeUndefined();
           expect(existsSync(`${hold}.reached`)).toBe(false);
           engine.approve(itemOf(planned, id, "plan")!.id);
-          await waitForFile(`${hold}.reached`);
+          await waitForFile(`${hold}.reached`, { during: engine.settling.get(id) });
           const settling = engine.settling.get(id)!;
           expect(taskOf(engine.getState(), id).worktree).toBeUndefined();
           engine.pause(id);
@@ -338,9 +564,9 @@ it("finds a cancelled setup's copy after quitting and retries its locked output 
 
 
       const { id, copy } = await w.engine(async engine => {
-        const productId = await engine.addProduct(w.clone);
+        const productId = installPreparedProduct(engine, acmeDemoProduct(w.clone));
         const id = engine.addTask({ productId, title: "Cancel during checkout", delivery: "local" });
-        await waitForFile(`${hold}.reached`);
+        await waitForFile(`${hold}.reached`, { during: engine.settling.get(id) });
         const copy = join(w.data, "worktrees", productId, id);
         const locked = join(copy, "target", "locked");
         mkdirSync(locked, { recursive: true });
@@ -382,9 +608,9 @@ for (const source of ["open", "no-pull-request"] as const) it(`checks a cancelle
 
 
       const { id, copy } = await w.engine(async engine => {
-        const productId = await engine.addProduct(w.clone);
-        const id = await addPreparedCleanupTask(engine, w, { productId, title: "Older cancelled delivery", description: "[quick]", approveDelivery: false });
-        expect(taskOf(await finish(engine, id), id).state).toBe("pr-open");
+        const productId = installPreparedProduct(engine, acmeDemoProduct(w.clone));
+        const id = await (source === "open" ? addPreparedCleanupTask : addSavedCleanupInput)(engine, w, { productId, title: "Older cancelled delivery", description: "[quick]", approveDelivery: false });
+        if (source === "open") expect(taskOf(await finish(engine, id), id).state).toBe("pr-open");
         const copy = taskOf(engine.getState(), id).worktree!;
         await engine.shutdown();
         w.editSaved((state) => {
@@ -440,13 +666,11 @@ it("cleans a cancelled computer-only delivery marked done without asking GitHub"
 
 
       const { id } = await w.engine(async engine => {
-        const productId = await engine.addProduct(w.clone);
-        const id = await addPreparedCleanupTask(engine, w, { productId, title: "Older computer-only delivery", description: "[quick]", delivery: "local", approveDelivery: false });
-        await finish(engine, id);
-        const delivered = await cleaned(engine, id);
+        await engine.waitUntilReady(); engine.stopRequested.signal.throwIfAborted();
+        const productId = installPreparedProduct(engine, { ...privateCloneProduct(w.clone), remote: undefined });
+        const id = await addSavedCleanupInput(engine, w, { productId, title: "Older computer-only delivery", description: "[quick]", delivery: "local", approveDelivery: false });
         await engine.shutdown();
-        // A saved delivery marked done left its copy behind, then the coordinator cancelled it.
-        await ensureWorktree(w.clone, delivered.worktree!, delivered.branch!, "main");
+        // The supplied older delivery left this real copy behind before the coordinator cancelled it.
         w.editSaved((state) => Object.assign(state.tasks.find((task) => task.id === id)!, {
           state: "cancelled", column: "done", statusLine: "Cancelled", shipping: undefined,
           cleanup: { pullRequest: "unconfirmed" },
@@ -472,13 +696,13 @@ it("removes a verified release's copy and keeps its branch, tag and link", async
 
       await w.engine(async engine => {
         try {
-          const productId = await engine.addProduct(w.clone);
+          const productId = installPreparedProduct(engine, acmeDemoProduct(w.clone));
           const id = await addPreparedCleanupTask(engine, w, { productId, title: "Release a greeting", description: "[quick]", delivery: "release", approveDelivery: false });
           expect(taskOf(await finish(engine, id), id).state).toBe("done");
           const task = await cleaned(engine, id);
           await gone(w, task);
           expect(task.release?.url).toContain("/releases/tag/");
-          expect(await remoteRef(w.remote, `refs/tags/${task.release!.tag}`)).toBe(await git(w.clone, "rev-parse", task.branch!));
+          expect(remoteRef(w.remote, `refs/tags/${task.release!.tag}`)).toBe(branchSha(w.clone, task.branch!));
           expect(texts(task).findIndex((line) => line.startsWith("Petrina published release"))).toBeLessThan(texts(task).indexOf(CLEANUP_WORDS.removed));
         } finally { await engine.shutdown(); }
 
@@ -495,7 +719,7 @@ it("still frees space when the disk cannot save the verified delivery until its 
         releasePeers = () => { engine.store.save = save; };
         let failed = 0;
         try {
-          const productId = await engine.addProduct(w.clone);
+          const productId = installPreparedProduct(engine, acmeDemoProduct(w.clone));
           const id = await addPreparedCleanupTask(engine, w, { productId, title: "Free space", description: "[quick]", delivery: "local", approveDelivery: false });
           engine.store.save = (state, ...archive) => {
             // Once its copy is gone, the task may already have moved to History.
@@ -524,11 +748,11 @@ it("keeps open pull requests through checks, restart and cancellation, then reco
 
 
       const { ids } = await w.engine(async engine => {
-        const productId = await engine.addProduct(w.clone);
+        const productId = installPreparedProduct(engine, acmeDemoProduct(w.clone));
         const ids: string[] = [];
         for (const title of ["Merge this", "Close this", "Cancel this"]) {
-          const id = await addPreparedCleanupTask(engine, w, { productId, title, description: "[quick]", approveDelivery: false });
-          expect(taskOf(await finish(engine, id), id).state).toBe("pr-open");
+          const id = await addObservedCleanupPullRequest(engine, w, { productId, title, description: "[quick]", approveDelivery: false });
+          expect(taskOf(engine.getState(), id).state).toBe("pr-open");
           ids.push(id);
         }
         engine.cancel(ids[2]!);
@@ -556,7 +780,7 @@ it("keeps open pull requests through checks, restart and cancellation, then reco
           expect(texts(tasks[1]!)).toContain("Closed #2 without merging");
           expect(tasks[2]!.statusLine).toBe("Cancelled");
           expect(w.github().calls.every((call) => !call.includes("merge") && !call.includes("close"))).toBe(true);
-          expect(await remoteRef(w.remote, "refs/heads/main")).toBe(w.initial);
+          expect(remoteRef(w.remote, "refs/heads/main")).toBe(w.initial);
 
         } finally { await engine.shutdown(); }
       }, { checkEveryMs: 100 });
@@ -573,7 +797,7 @@ it("holds a copy cancelled while GitHub opens its pull request until GitHub can 
 
 
       const { id, calls, before, warning } = await w.engine(async engine => {
-        const productId = await engine.addProduct(w.clone);
+        const productId = installPreparedProduct(engine, acmeDemoProduct(w.clone));
         const id = await addPreparedCleanupTask(engine, w, { productId, title: "Open slowly", description: "[quick]", approveDelivery: false });
         await until(engine, () => existsSync(`${hold}.reached`));
         engine.cancel(id);
@@ -616,7 +840,7 @@ it("cleans a cancelled publishing step when GitHub confirms it never opened a pu
 
       await w.engine(async engine => {
         try {
-          const productId = await engine.addProduct(w.clone);
+          const productId = installPreparedProduct(engine, acmeDemoProduct(w.clone));
           const id = await addPreparedCleanupTask(engine, w, { productId, title: "Never opened", description: "[quick]", approveDelivery: false });
           expect(taskOf(await finish(engine, id), id).state).toBe("failed");
           engine.cancel(id);
@@ -638,7 +862,7 @@ it("retries a locked copy once a minute without crowding the timeline, then succ
         let allowRemoval = () => {};
         releasePeers = () => allowRemoval();
         try {
-          const productId = await engine.addProduct(w.clone);
+          const productId = installPreparedProduct(engine, acmeDemoProduct(w.clone));
           const id = await addPreparedCleanupTask(engine, w, { productId, title: "Locked build", description: "[quick]", delivery: "local", approveDelivery: false });
           allowRemoval = w.faults.blockRemoval(join(w.data, "worktrees", productId, id));
           await until(engine, (s) => !!taskOf(s, id).cleanup?.error);
@@ -671,7 +895,7 @@ it("catches up older tasks across products at startup while a stalled pull reque
       releasePeers = () => rmSync(hold, { force: true });
 
       const { task, cancelled } = await w.engine(async engine => {
-        const productId = await engine.addProduct(w.clone);
+        const productId = installPreparedProduct(engine, acmeDemoProduct(w.clone));
         const id = await addPreparedCleanupTask(engine, w, { productId, title: "Old copy", description: "[quick]", approveDelivery: false });
         const task = structuredClone(taskOf(await finish(engine, id), id));
         const cancelled = engine.addTask({ productId, title: "Older cancelled copy", description: "[quick]", approvePlan: true });
@@ -683,7 +907,7 @@ it("catches up older tasks across products at startup while a stalled pull reque
         engine.pause(cancelled);
         await until(engine, () => !engine.settling.has(cancelled), () => {});
         await engine.shutdown();
-        const base = task.branch!;
+        const baseSha = branchSha(w.clone, task.branch!);
         // Stand in for older saved tasks, including a second product and all states that must retain a copy.
         w.editSaved((state) => {
           (state.pool as { paused: boolean }).paused = true;
@@ -695,7 +919,12 @@ it("catches up older tasks across products at startup while a stalled pull reque
           products.push({ ...products[0], id: "second-product" });
           for (const status of ["done", "running", "paused", "failed", "queued", "needs-you"]) rows.push({ ...task, id: `older-${status}`, productId: "second-product", state: status === "running" ? "paused" : status, held: true, agent: undefined, pr: undefined, worktree: join(w.data, "worktrees", "second-product", status), branch: `petrina/older-${status}` });
         });
-        for (const status of ["done", "running", "paused", "failed", "queued", "needs-you"]) await ensureWorktree(w.clone, join(w.data, "worktrees", "second-product", status), `petrina/older-${status}`, base);
+        for (const status of ["done", "running", "paused", "failed", "queued", "needs-you"]) {
+          const refFile = join(w.clone, ".git", "refs", "heads", "petrina", `older-${status}`);
+          mkdirSync(dirname(refFile), { recursive: true });
+          writeFileSync(refFile, `${baseSha}\n`);
+          await materializeCleanupWorktree(w.clone, join(w.data, "worktrees", "second-product", status), `petrina/older-${status}`);
+        }
         // As if cleanup stopped after deleting the folder, before dropping its repository record.
         const interrupted = join(w.data, "worktrees", "second-product", "done");
         rmSync(interrupted, { recursive: true, force: true });
@@ -706,7 +935,10 @@ it("catches up older tasks across products at startup while a stalled pull reque
           github.hold = { command: "pr view", file: hold, match: "101" };
         });
         const closedPath = join(w.data, "worktrees", productId, "closed");
-        await ensureWorktree(w.clone, closedPath, "petrina/older-closed", base);
+        const closedRefFile = join(w.clone, ".git", "refs", "heads", "petrina", "older-closed");
+        mkdirSync(dirname(closedRefFile), { recursive: true });
+        writeFileSync(closedRefFile, `${baseSha}\n`);
+        await materializeCleanupWorktree(w.clone, closedPath, "petrina/older-closed");
         w.editSaved((state) => (state.tasks as unknown as Record<string, unknown>[]).push({ ...task, id: "older-closed", worktree: closedPath, branch: "petrina/older-closed", pr: { ...task.pr, number: 102 } }));
         writeFileSync(hold, "");
 
@@ -732,7 +964,7 @@ it("says nothing about a copy when cancelled before setup, and safely completes 
 
       await w.engine(async engine => {
         try {
-          const productId = await engine.addProduct(w.clone);
+          const productId = installPreparedProduct(engine, acmeDemoProduct(w.clone));
           const id = engine.addTask({ productId, title: "Cancel before setup" });
           engine.cancel(id);
           await until(engine, () => !engine.settling.has(id));
@@ -748,7 +980,7 @@ it("says nothing about a copy when cancelled before setup, and safely completes 
           expect(await removeWorktree(w.clone, path)).toBe(true);
           expect(await listed(w, path)).toBe(false);
           expect(await removeWorktree(w.clone, path)).toBe(false);
-          expect(await git(w.clone, "rev-parse", branch)).toBe(w.initial);
+          expect(branchSha(w.clone, branch)).toBe(w.initial);
         } finally { await engine.shutdown(); }
 
       }, { checkEveryMs: 100 });

@@ -1,6 +1,7 @@
 import { draftOf } from "@petrina/core";
 import { afterAll, describe, expect, it } from "bun:test";
-import { coordinator, finish, git, itemOf, taskOf, until } from "../../support.js";
+import * as gitOps from "@petrina/repositories/git";
+import { coordinator, taskOf, until } from "../../support.js";
 import { sharedWorldFixtures } from "../../fixtures/shared-world.js";
 const fixtures = sharedWorldFixtures();
 afterAll(() => fixtures.close());
@@ -15,10 +16,14 @@ describe.concurrent("one task across products", () => {
       engine.saveRole(architect.id, { ...draftOf(architect), canEdit: true });
       fakes.scenario({ builder: "plain", architect: "writes" });
       const id = engine.addTask({ productId: first, worksOn: [first, second].map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "pull-request" })), title: "Keep each design's edits" });
-      const task = taskOf(await finish(engine, id), id);
+      const task = taskOf(await until(engine, state => {
+        const current = taskOf(state, id);
+        return !!current.error || !!current.repositories?.every(work => work.completedStages.some(stage => stage.includes(":author:")))
+          && fakes.received("design reviewer").length > 0;
+      }, coordinator(["plan", "design"])), id);
       expect(task.error).toBeUndefined();
       expect(task.repositories!.every((work) => work.completedStages.some((stage) => stage.includes(":author:")))).toBe(true);
-      for (const work of task.repositories!) expect(await git(work.worktree!, "show", "HEAD:architecture.txt")).toContain("Before the design review");
+      for (const work of task.repositories!) expect(await gitOps.fileAt(work.worktree!, "HEAD", "architecture.txt")).toContain("Before the design review");
 
     });
     });
@@ -34,7 +39,11 @@ describe.concurrent("shared-task repair regressions", () => {
       engine.addRole({ ...draftOf(engine.getState().roles.find((role) => role.result === "notes")!), name: "Copywriter", result: "notes", canEdit: true });
       fakes.scenario({ planner: "copy", builder: "plain" });
       const id = engine.addTask({ productId: first, worksOn: [first, second].map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "pull-request" })), title: "Keep both copy reports" });
-      const task = taskOf(await until(engine, (state) => !!itemOf(state, id, "delivery") || !!taskOf(state, id).error, coordinator(["plan", "design"])), id);
+      const task = taskOf(await until(engine, state => {
+        const current = taskOf(state, id);
+        return !!current.error || current.handedBack?.filter(entry => entry.roleName === "Copywriter").length === 2
+          && fakes.received("code reviewer").length > 0;
+      }, coordinator(["plan", "design"])), id);
       expect(task.error).toBeUndefined();
       const reports = task.handedBack!.filter((entry) => entry.roleName === "Copywriter");
       expect(reports.map((entry) => entry.productId)).toEqual([first, second]);

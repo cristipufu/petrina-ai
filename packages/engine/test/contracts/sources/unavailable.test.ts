@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { type DeepMutable, type Task } from "@petrina/core";
 import { finish, git, remoteRef, taskOf } from "../../support.js";
-import { sourceWorlds, branch, pull, planGate, advance } from "../../fixtures/source-world.js";
+import { sourceWorlds, branch, pull, planGate, taskCommit, advance } from "../../fixtures/source-world.js";
 const fixtures = sourceWorlds();
 afterAll(() => fixtures.close());
 
@@ -11,9 +11,9 @@ for (const pr of [false, true]) it(`recovery confirms the tested ${pr ? "PR upda
 
     let { id, tested, previous } = await withEngine(async engine => {
 
-      const productId = await engine.addProduct(w.clone);
-      const id = await candidate(engine, { productId, title: "A greeting", startFrom: pr ? { kind: "pull-request", value: "7" } : { kind: "branch", name: "release-2.x" }, delivery: pr ? "pull-request" : "local" });
-      const done = taskOf(await finish(engine, id), id); const tested = await git(w.clone, "rev-parse", done.branch!);
+      const productId = await w.preparedProduct(engine);
+      const id = await candidate(engine, { productId, title: "A greeting", startFrom: pr ? { kind: "pull-request", value: "7" } : { kind: "branch", name: "release-2.x" }, delivery: pr ? "pull-request" : "local" }, { checks: "none" });
+      const done = taskOf(await finish(engine, id), id); const tested = await taskCommit(w, done);
 
       return { id, tested, previous: engine };
 
@@ -35,7 +35,7 @@ for (const pr of [false, true]) it(`recovery confirms the tested ${pr ? "PR upda
       expect(task.source?.initialSha).toBe(initial); expect(task.shipping).toBeUndefined();
       expect(w.github().prs).toHaveLength(pr ? 1 : 0);
       // A finished local delivery removes its working copy. The task branch still names the tested commit.
-      expect(await git(w.clone, "rev-parse", task.branch!)).toBe(tested);
+      expect(await taskCommit(w, task)).toBe(tested);
 
     });
     });
@@ -48,7 +48,7 @@ it("explains a missing branch instead of a failed pull request refresh", async (
 
     await withEngine(async engine => {
 
-      const productId = await engine.addProduct(w.clone);
+      const productId = await w.preparedProduct(engine);
       const id = engine.addTask({ productId, title: "A greeting", startFrom: { kind: "branch", name: "release-2.x" }, approvePlan: true });
       const state = await planGate(engine, id);
       const task = taskOf(state, id);

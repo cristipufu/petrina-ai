@@ -10,7 +10,6 @@ import {
   ROLE_LIMITS,
   ROLE_STARTS,
   roleProblems,
-  RELEASE_MANAGER,
   TONE_CHOICES,
   type Role,
   type RoleDraft,
@@ -106,7 +105,7 @@ function badges(role: Role): ReactNode {
 
 function RoleCard({ role, onOpen }: { role: Role; onOpen: () => void }) {
   const Icon = ROLE_ICONS[role.icon];
-  const viewOnly = role.id === RELEASE_MANAGER;
+  const viewOnly = role.result === "delivery";
   return (
     <article className="tile role-card" aria-labelledby={`role-${role.id}`}>
       <div className="head">
@@ -167,7 +166,7 @@ export function RolePanel({ state, target, onClose }: { state: State; target: Ro
   const [error, setError] = useState<string>();
   const [asking, setAsking] = useState<"discard" | "reset" | "remove">();
   const id = useId();
-  const viewOnly = role?.id === RELEASE_MANAGER;
+  const viewOnly = role?.result === "delivery";
   const naming = !role || role.added;
   const dirty = !viewOnly && JSON.stringify(draft) !== JSON.stringify(initial);
   const requestClose = () => { if (!busy) { if (dirty) setAsking("discard"); else onClose(); } };

@@ -1,7 +1,7 @@
 import { expect, it, spyOn } from "bun:test";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import * as commands from "@petrina/test-support/commands";
+import * as gitOps from "@petrina/repositories/git";
 import * as files from "@petrina/test-support/fixtures";
 import { rejectionOf } from "@petrina/test-support/rejections";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
@@ -85,14 +85,15 @@ it("joins all actual acceptance mains reads and retains the original failure unt
   });
   await setupWithCleanup(async () => {
     fixtures = acceptanceRepairFixtures();
-    const f = acquired = await fixtures.fixture({ gate: true }), original = commands.git;
-    const spy = spyOn(commands, "git"); restorers.push(() => spy.mockRestore());
-    spy.mockImplementation((path, ...args) => {
-      if (args[0] !== "rev-parse" || args[1] !== "main") return original(path, ...args);
+    const f = acquired = await fixtures.fixture({ gate: true }), original = gitOps.revParse;
+    const spy = spyOn(gitOps, "revParse"); restorers.push(() => spy.mockRestore());
+    spy.mockImplementation((path, rev) => {
+      if (rev !== "main") return original(path, rev);
       if (path === f.products[0]!.path) return ready.promise.then(() => { throw failure; });
-      if (path !== f.products[1]!.path) return original(path, ...args);
-      peer = release.promise.then(async () => { const value = await original(path, ...args); peerCompleted = true; return value; });
-      ready.resolve(); return peer;
+      if (path !== f.products[1]!.path) return original(path, rev);
+      const held = release.promise.then(async () => { const value = (await original(path, rev))!; peerCompleted = true; return value; });
+      peer = held;
+      ready.resolve(); return held;
     });
     running = f.mains();
     const reported = () => { peerCompletedAtReport = peerCompleted; };

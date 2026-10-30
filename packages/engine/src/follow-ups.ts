@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { z } from "zod";
 import { matchPrompt, extraSlot, limitOf, type AgentProfile, type FollowUpCredit, type Id, type MatchAnswer, type MatchAsk, type ReportImage } from "@petrina/core";
-import { FollowUpLinks } from "@petrina/orchestrator";
+import { FollowUpLinks, type AgentSession, type AgentSessionOptions } from "@petrina/orchestrator";
 import { AgentRun } from "@petrina/agent-runtime/acp-run";
 import { agentCommandFor } from "@petrina/agent-runtime/tools";
 import type { Kernel } from "./kernel.js";
@@ -66,7 +66,7 @@ async function askAgent(k: Kernel, stopped: AbortSignal, matchingJobs: Set<Id>, 
     // This producer cannot spend a fresh job/copy to bypass an earlier uncertain native owner.
     matchingJobs.add(id);
     let cwd: string | undefined;
-    let run: AgentRun | undefined;
+    let run: AgentSession | undefined;
     let bodyFailure: { error: unknown } | undefined;
     const answerDeadline = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -79,18 +79,23 @@ async function askAgent(k: Kernel, stopped: AbortSignal, matchingJobs: Set<Id>, 
       cwd = await mkdtemp(join(parent, "follow-up-"));
       const command = agentCommandFor(k.options, profile);
       const cleanup = k.agentCleanup.opening(id, cwd);
-      run = await AgentRun.start({
+      const launch: AgentSessionOptions = {
         profile,
         cwd,
-        env: agentEnv(process.env),
-        ...(profile.toolId === "claude-code" ? { sandbox: claudeSandbox() } : {}),
-        ...(command ? { command } : {}),
         callbacks: { onActivity() {}, onPlanStep() {}, async onPermission() { return "deny"; }, onCleanupIncomplete: cleanup.onCleanupIncomplete },
         onGone: cleanup.onGone,
         signal: AbortSignal.any([stopped, answerDeadline.signal]),
         startTimeoutMs: k.options.startTimeoutMs ?? 30_000,
         browser: false,
-      });
+      };
+      run = k.options.startAgentSession
+        ? await k.options.startAgentSession(launch, k.role("verifier")!)
+        : await AgentRun.start({
+            ...launch,
+            env: agentEnv(process.env),
+            ...(profile.toolId === "claude-code" ? { sandbox: claudeSandbox() } : {}),
+            ...(command ? { command } : {}),
+          });
       cleanup.attach(run);
       // Startup and comparison have separate budgets; opening the tool cannot consume its thinking time.
       timer = setTimeout(() => answerDeadline.abort(), 120_000);

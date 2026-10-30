@@ -3,12 +3,11 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { Coordination } from "../../../src/coordination.js";
 import { createFollowUpFixtures, cards, failedAssignment } from "../../fixtures/follow-up-native.js";
-
-const { open, reopen, close, shutdown } = createFollowUpFixtures();
+const { open, reopen, close, use } = createFollowUpFixtures();
 afterAll(close);
-
 it("finishes an archived assignment only after its original pictures are gone, leaving the finished target unchanged", async () => {
-  const world = await open();
+  return use(async caseOwner => {
+  const world = await open(caseOwner);
   let release = () => {};
   try {
     const saved = await failedAssignment(world, "no-choice");
@@ -33,5 +32,6 @@ it("finishes an archived assignment only after its original pictures are gone, l
     expect(world.engine.task(automaticId)).toEqual(before);
     expect(world.engine.task(manualId)!.followUp).toBeUndefined();
     expect(cards(world.engine)).toHaveLength(0);
-  } finally { release(); await shutdown(world.engine); }
+  } finally { release(); await caseOwner.stop(world.engine); }
+  });
 });

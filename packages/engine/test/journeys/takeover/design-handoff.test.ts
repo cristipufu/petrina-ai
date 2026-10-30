@@ -1,7 +1,8 @@
 import { afterAll, describe, expect, it } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 import { waitFor } from "@petrina/test-support/fixtures";
-import { git } from "@petrina/test-support/commands";
 
 import { sessionState } from "@petrina/agent-runtime/terminal";
 import { takeoverFixtures, takeoverDir } from "../../fixtures/takeover.js";
@@ -12,7 +13,8 @@ const posix = process.platform !== "win32";
 
 describe.skipIf(!posix)("hand changes during design", () => {
   it("clears the question the architect had open, keeps the change, and the plan carries on in order with no extra review pass", async () => {
-    const run = await start({ builder: "plain" }, "[no-check]");
+  return fixtures.use(async caseOwner => {
+    const run = await start(caseOwner, { builder: "plain" }, "[no-check]");
     try {
       const asked = await waitFor(() => run.engine().getState().inbox.find((item) => item.taskId === run.taskId && item.kind === "question"), "the architect's question");
       expect(asked).toBeTruthy();
@@ -31,8 +33,10 @@ describe.skipIf(!posix)("hand changes during design", () => {
       expect(done.timeline.some((entry) => entry.text === "Reviewing your changes: the review starts again from the first reviewer")).toBe(false);
       // Two reviewers in the chain, each once.
       expect(done.timeline.filter((entry) => entry.text === "Code reviewer started")).toHaveLength(2);
-      expect(await git(run.product, "show", "main:design-note.txt")).toBe("A sketch");
+      expect(readFileSync(join(run.product, "design-note.txt"), "utf8").trim()).toBe("A sketch");
 
     } finally { await run.close(); }
+
   });
+});
 });

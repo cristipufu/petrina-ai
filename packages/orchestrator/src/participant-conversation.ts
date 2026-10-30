@@ -44,7 +44,7 @@ export function participantConversation(catalog: { readonly profiles: readonly A
 }
 
 /** A late failure is retained until the fresh start, including across a slot wait or restart. */
-export function discardParticipant(scope: RepositoryContext, role: Role, reason: string, reviewerKey?: string): boolean {
+export function discardParticipant(scope: RepositoryContext, role: Role, reason: string, reviewerKey?: string, status?: (text: string) => void): boolean {
   const { task, work } = scope;
   const stage = task.plan?.stages[task.stageIndex];
   const prior = stage?.kind === "converge"
@@ -52,5 +52,7 @@ export function discardParticipant(scope: RepositoryContext, role: Role, reason:
     : stage?.kind === "review-chain" && reviewerKey !== undefined ? task.reviewSessions?.[stage.id]?.[reviewerKey] : undefined;
   if (!prior) return false;
   prior.freshReason = reason;
+  const kind = role.result === "findings" ? "review conversation" : "conversation";
+  status?.(`Could not go back to its own ${kind}: ${reason}. Choosing this seat again before sending instructions.`);
   return true;
 }

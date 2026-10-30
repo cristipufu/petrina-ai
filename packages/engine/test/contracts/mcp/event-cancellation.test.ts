@@ -3,18 +3,18 @@ import { type Result } from "../../../src/coordination.js";
 import { McpPending, mcpRequest } from "../../../src/mcp.js";
 import { waitFor } from "../../support.js";
 import { createWorkflowEventFixtures } from "../../fixtures/workflow-event-native.js";
-
-const { served, close, stopServer } = createWorkflowEventFixtures();
+const { served, close, use } = createWorkflowEventFixtures();
 afterAll(close);
-
 describe("waits over the local connection, MCP and the terminal", () => {
 it("ends the matching MCP wait on a cancellation notification, tolerates a late cancellation, and ends every wait when MCP closes", async () => {
-    const { e, server, client, taskId } = await served();
+  return use("petrina-events-", async caseOwner => {
+    const { e, client, taskId , stopServer} = await served(caseOwner);
     try {
       const pending = new McpPending();
+      caseOwner.onStop(() => pending.cancelAll());
       const call = (id: number | string) => mcpRequest({ jsonrpc: "2.0", id, method: "tools/call", params: { name: "petrina_watch_events", arguments: { taskIds: [taskId], timeoutMs: 60_000 } } }, client, pending);
-      const first = call(7);
-      await waitFor(() => e.events.waiting === 1, "the MCP wait");
+      const first = caseOwner.prepare(() => call(7));
+      await waitFor(() => e.events.waiting === 1, "the MCP wait", undefined, { during: first });
       await mcpRequest({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: 7 } }, client, pending);
       expect(await first).toBeUndefined();
       await waitFor(() => e.events.waiting === 0, "the cancelled wait released", 2_000);
@@ -24,8 +24,8 @@ it("ends the matching MCP wait on a cancellation notification, tolerates a late 
       expect((done!.result as { structuredContent: Result }).structuredContent.outcome).toBe("completed");
       expect(pending.cancel(8)).toBe(false);
       // Request ids keep their type: cancelling the number 7 leaves the text "7" waiting and tracked.
-      const numeric = call(7), text = call("7");
-      await waitFor(() => e.events.waiting === 2, "both mixed-id waits");
+      const numeric = caseOwner.prepare(() => call(7)), text = caseOwner.prepare(() => call("7"));
+      await waitFor(() => e.events.waiting === 2, "both mixed-id waits", undefined, { during: Promise.all([numeric, text]) });
       expect(pending.size).toBe(2);
       await mcpRequest({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: 7 } }, client, pending);
       expect(await numeric).toBeUndefined();
@@ -35,13 +35,14 @@ it("ends the matching MCP wait on a cancellation notification, tolerates a late 
       expect(pending.cancel("7")).toBe(true);
       expect(await text).toBeUndefined();
       await waitFor(() => e.events.waiting === 0, "the text wait released", 2_000);
-      const second = call(9), third = call(10);
-      await waitFor(() => e.events.waiting === 2, "two MCP waits");
+      const second = caseOwner.prepare(() => call(9)), third = caseOwner.prepare(() => call(10));
+      await waitFor(() => e.events.waiting === 2, "two MCP waits", undefined, { during: Promise.all([second, third]) });
       pending.cancelAll();
       expect(await Promise.all([second, third])).toEqual([undefined, undefined]);
       await waitFor(() => e.events.waiting === 0, "every wait released", 2_000);
     } finally {
-      await stopServer(server);
+      await stopServer();
     }
   });
+});
 });

@@ -540,8 +540,8 @@ export class EngineClient {
    * Any other command, sent as is: the engine's answer when it gives one. A failure shows in the
    * connection pill; callers that await it (keyboard controls) hear it too.
    */
-  send = (name: CommandName, args: readonly unknown[]): Promise<unknown> => {
-    const sent = this.call(name, ...args);
+  send = <K extends CommandName>(name: K, args: readonly [...Parameters<Commands[K]>]): Promise<Awaited<ReturnType<Commands[K]>>> => {
+    const sent = this.call(name, ...args) as Promise<Awaited<ReturnType<Commands[K]>>>;
     void sent.catch(() => undefined);
     return sent;
   };
@@ -550,9 +550,17 @@ export class EngineClient {
   startFirstTask = (input: FirstTask): Promise<Id> => this.callWithin(START_TIMEOUT_MS, "startFirstTask", input) as Promise<Id>;
 }
 
+function buildWindowCommands(resolve: <K extends CommandName>(name: K) => WindowCommands[K]): WindowCommands {
+  const table = {} as Record<CommandName, WindowCommands[CommandName]>;
+  for (const name of COMMAND_NAMES) table[name] = resolve(name);
+  return table as WindowCommands;
+}
+
 /** The real engine: every command over the local API, what the coordinator says through the outbox. */
 function engineStore(client: EngineClient): Store {
-  const commands = Object.fromEntries(COMMAND_NAMES.map((name) => [name, (...args: unknown[]) => client.send(name, args)])) as unknown as WindowCommands;
+  const forward = <K extends CommandName>(name: K): WindowCommands[K] =>
+    ((...args: Parameters<Commands[K]>) => client.send(name, args)) as WindowCommands[K];
+  const commands = buildWindowCommands(forward);
   return {
     ...commands,
     image: client.image,
@@ -608,11 +616,13 @@ type Simulated = Exclude<CommandName, keyof typeof DEMO_OWN>;
 
 /** The demo: the simulated squad, in the window. */
 function demoStore(simulator: Simulator): Store {
-  const simulated: { [K in Simulated]: (...args: Parameters<Commands[K]>) => unknown } = simulator;
-  const own = DEMO_OWN as Record<string, (simulator: Simulator) => unknown>;
-  const commands = Object.fromEntries(
-    COMMAND_NAMES.map((name) => [name, own[name]?.(simulator) ?? ((...args: unknown[]) => (simulated[name as Simulated] as (...args: unknown[]) => unknown).apply(simulator, args))]),
-  ) as unknown as WindowCommands;
+  const simulated: Pick<WindowCommands, Simulated> = simulator;
+  const commands = buildWindowCommands(<K extends CommandName>(name: K): WindowCommands[K] => {
+    const own = DEMO_OWN[name as keyof typeof DEMO_OWN] as ((simulator: Simulator) => WindowCommands[K]) | undefined;
+    if (own) return own(simulator);
+    const method = simulated[name as Simulated] as WindowCommands[K];
+    return ((...args: Parameters<Commands[K]>) => method.apply(simulator, args)) as WindowCommands[K];
+  });
   return {
     ...commands,
     image: async (): Promise<Blob> => { throw new Error("This demo has no saved picture."); },

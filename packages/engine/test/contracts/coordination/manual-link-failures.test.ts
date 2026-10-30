@@ -3,12 +3,11 @@ import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { Coordination } from "../../../src/coordination.js";
 import { createFollowUpFixtures, plant, settledSource } from "../../fixtures/follow-up-native.js";
-
-const { open, close, shutdown } = createFollowUpFixtures();
+const { open, close, use } = createFollowUpFixtures();
 afterAll(close);
-
 it("leaves a manual report untracked after copying or saving fails and safely retries with a fresh reference", async () => {
-  const world = await open();
+  return use(async caseOwner => {
+  const world = await open(caseOwner);
   try {
     const { engine } = world;
     const source = settledSource(engine, world.shop);
@@ -16,7 +15,9 @@ it("leaves a manual report untracked after copying or saving fails and safely re
     const targetId = engine.addTask({ productId: world.shop, kind: "bug", title: "Manual target", backlog: true });
     const c = new Coordination(engine);
     const args = { taskId: source.id, findingId: "old", targetTaskId: targetId, requestId: "copy-failed" };
-    const copy = spyOn(world.files, "copyFile").mockRejectedValue(new Error("Copy refused"));
+    const copy = spyOn(world.files, "copyFile");
+    caseOwner.onStop(() => copy.mockRestore());
+    copy.mockRejectedValue(new Error("Copy refused"));
     try {
       const result = await c.call("task.track-finding", args);
       expect(result.outcome).toBe("invalid");
@@ -27,7 +28,9 @@ it("leaves a manual report untracked after copying or saving fails and safely re
     expect((await c.call("task.track-finding", args)).outcome).toBe("invalid");
     const originalSave = engine.save.bind(engine);
     let saves = 0;
-    const save = spyOn(engine, "save").mockImplementation((...args) => {
+    const save = spyOn(engine, "save");
+    caseOwner.onStop(() => save.mockRestore());
+    save.mockImplementation((...args) => {
       if (saves++ === 0) throw new Error("Save refused");
       return originalSave(...args);
     });
@@ -49,5 +52,6 @@ it("leaves a manual report untracked after copying or saving fails and safely re
     await engine["followUps"].beforeRemoval(engine.task(source.id)!);
     await engine["cleanup"].removeCaptures(source.id);
     expect(existsSync(join(engine.dataDir, "captures", source.id))).toBe(false);
-  } finally { await shutdown(world.engine); }
+  } finally { await caseOwner.stop(world.engine); }
+  });
 });

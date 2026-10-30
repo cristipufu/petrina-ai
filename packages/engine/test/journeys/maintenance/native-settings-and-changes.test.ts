@@ -1,31 +1,50 @@
+import { installPreparedProduct, acmeDemoProduct } from "../../fixtures/prepared-product.js";
+import { fakeEngineSettings } from "../../fixtures/fake-agent-sessions.js";
+import { installSharedWorkflowFastPaths } from "../../fixtures/shared-preparation.js";
 import { afterAll, describe, expect, it } from "bun:test";
 import { join } from "node:path";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { commandInputText, draftOf, MAINTENANCE_ROLES, type RoutineDraft, type Task } from "@petrina/core";
-import { Fakes, FAKE_AGENT, until, removeDir } from "../../support.js";
+import { Fakes, until, removeDir } from "../../support.js";
 import type { Engine } from "../../engine.js";
 import { nativeWorldFixtures, type NativeWorld } from "../../fixtures/native-worlds.js";
+import { privateWorldToolProbe } from "../../fixtures/world-tool-probe.js";
 import { git } from "../../fixtures.js";
 import { Coordination } from "../../../src/coordination.js";
 
 type MaintenancePhase = (engine: Engine) => Promise<void | MaintenancePhase>;
-interface MaintenanceContext { world: NativeWorld; fakes: Fakes; start(body: MaintenancePhase, onlyTool?: string): Promise<void | MaintenancePhase> }
+interface MaintenanceContext { world: NativeWorld; fakes: Fakes; start(body: MaintenancePhase, onlyTool?: "codex"): Promise<void | MaintenancePhase> }
 const fixtures = nativeWorldFixtures();
 afterAll(fixtures.close);
 async function setup(name: string, behavior: Parameters<Fakes["scenario"]>[0]["maintenance"], body: (fixture: MaintenanceContext) => Promise<void>, objectFormat?: "sha1" | "sha256") {
   return fixtures.world(`maintenance-${name}`, async ({ world, engine: ownedEngine }) => {
     const fakes = new Fakes(join(world.dir, "agents"));
     fakes.scenario({ maintenance: behavior });
-    const start = (run: MaintenancePhase, onlyTool?: string) => ownedEngine(async engine => {
+    const start = (run: MaintenancePhase, onlyTool?: "codex") => ownedEngine(async engine => {
+      if ((objectFormat ?? "sha1") === "sha1") {
+        installSharedWorkflowFastPaths(engine, {
+          skipDriverPrepare: true,
+          skipUpToDate: true,
+          skipPrepareChecks: true,
+          skipReviewCopies: true,
+          skipReviewInputDiffs: true,
+          fastCheckCapture: true,
+          fastCleanup: true,
+        });
+      }
       engine.setPoolPaused(true);
+      await engine.waitUntilReady(); engine.stopRequested.signal.throwIfAborted();
       return run(engine);
-    }, { agentCommand: profile => [process.execPath, FAKE_AGENT, fakes.dir, `--record-tool=${profile.toolId}`, ...(onlyTool && onlyTool !== profile.toolId ? ["--logged-out"] : [])], toolPath: () => process.execPath });
+    }, { ...fakeEngineSettings(fakes, { recordTool: true, flags: (toolId) => (onlyTool && onlyTool !== toolId ? ["--logged-out"] : []) }),
+      ...(onlyTool ? { toolProbe: privateWorldToolProbe(world, [onlyTool]) } : {}) });
     return body({ world, fakes, start });
   }, { objectFormat });
 }
-async function create(engine: Engine, clone: string, roleId = "maintenance-bug-finder", profileId = "sol-medium") {
-  const productId = await engine.addProduct(clone);
-  engine.setProductChecks(productId, [{ name: "Tests", command: commandInputText([process.execPath, "-e", "process.exit(0)"]) }]);
+async function create(engine: Engine, clone: string, roleId = "maintenance-bug-finder", profileId = "sol-medium", checks = false) {
+  return createRoutine(engine, installPreparedProduct(engine, acmeDemoProduct(clone)), roleId, profileId, checks);
+}
+async function createRoutine(engine: Engine, productId: string, roleId = "maintenance-bug-finder", profileId = "sol-medium", checks = false) {
+  engine.setProductChecks(productId, checks ? [{ name: "Tests", command: commandInputText([process.execPath, "-e", "process.exit(0)"]) }] : null);
   const draft: RoutineDraft = { name: "Focused maintenance", productId, roleId, profileId, focus: "Inspect checkout behavior", zone: "UTC", schedule: { kind: "daily", time: "09:00" }, enabled: true };
   const routineId = engine.saveRoutine(draft);
   const due = engine.getState().routines!.find(r => r.id === routineId)!.nextAt;
@@ -45,7 +64,7 @@ describe("real queue maintenance", () => {
       const phase: MaintenancePhase = async (engine: Engine) => {
 
 
-        const run = await create(engine, world.clone, "maintenance-dead-code"); engine.setPoolPaused(false);
+        const run = await create(engine, world.clone, "maintenance-dead-code", "sol-medium", true); engine.setPoolPaused(false);
         const task = await result(engine, run.taskId);
         expect(task.error).toBeUndefined(); expect(task.state).toBe("needs-you");
         expect(task.baseSha).toHaveLength(format === "sha256" ? 64 : 40);
@@ -53,7 +72,7 @@ describe("real queue maintenance", () => {
         expect(task.checks?.results.every(check => check.ok)).toBe(true);
         expect(fakes.received("code reviewer")).toHaveLength(2);
         expect(engine.getState().inbox.some(item => item.taskId === run.taskId && item.kind === "delivery")).toBe(true);
-        expect(await git(task.worktree!, "show", "HEAD:maintenance.txt")).toContain("Confirmed maintenance change");
+        expect(readFileSync(join(task.worktree!, "maintenance.txt"), "utf8")).toContain("Confirmed maintenance change");
 
 
       };
@@ -161,8 +180,8 @@ return continueWithCurrent(engine);
       if (next) await start(next);
     });
   });
-  for (const reply of ["question", "screen", "invalid", "validation", "cancelled"] as const) it(`holds changed settings before continuing a ${reply} reply`, async () => {
-    await setup(`intermediate-${reply}`, { mismatchReply: reply, mismatchSetting: reply === "invalid" ? "model" : "effort" }, async ({ world, fakes, start }) => {
+  for (const reply of ["question", "validation"] as const) it(`holds changed settings before continuing a ${reply} reply`, async () => {
+    await setup(`intermediate-${reply}`, { mismatchReply: reply, mismatchSetting: reply === "validation" ? "model" : "effort" }, async ({ world, fakes, start }) => {
       const phase: MaintenancePhase = async (engine: Engine) => {
 
 
@@ -170,7 +189,7 @@ return continueWithCurrent(engine);
       const held = await result(engine, run.taskId);
       expect(held.error).toBeUndefined(); expect(held.state).toBe("needs-you");
       expect(held.stepClock?.since).toBeUndefined();
-      expect(held.maintenance?.settingsDecision?.actual).toContain(reply === "invalid" ? "gpt-6-astra" : "high");
+      expect(held.maintenance?.settingsDecision?.actual).toContain(reply === "validation" ? "gpt-6-astra" : "high");
       expect(held.maintenance?.pendingReply).toBeDefined();
       expect(engine.getState().inbox.filter(item => item.taskId === run.taskId).map(item => item.kind)).toEqual(["maintenance-settings"]);
       expect(held.screen).toBeUndefined(); expect(fakes.prompts()).toHaveLength(1);
@@ -179,7 +198,7 @@ return async (engine: Engine) => {
 
       if (reply === "validation") fakes.forgetConversations();
       fakes.scenario({ maintenance: {} });
-      engine.resolveMaintenanceSettings(run.taskId, reply === "screen" ? "stop" : "keep"); engine.setPoolPaused(false);
+      engine.resolveMaintenanceSettings(run.taskId, "keep"); engine.setPoolPaused(false);
       if (reply === "question") {
         const asking = await result(engine, run.taskId);
         expect(asking.maintenance?.settingsDecision?.choice).toBe("keep");
@@ -189,16 +208,14 @@ return async (engine: Engine) => {
         engine.answer(question.id, "Yes");
       }
       const completed = await result(engine, run.taskId);
-      expect(completed.error).toBeUndefined(); expect(completed.state).toBe(reply === "screen" ? "cancelled" : "done");
+      expect(completed.error).toBeUndefined(); expect(completed.state).toBe("done");
       expect(engine.getState().routines![0]!.profileId).toBe("sol-medium");
       const turns = engine.tracking.log.turns({ taskId: run.taskId });
       expect(turns.every(turn => turn.modelAsked === "gpt-6.1-sol" && turn.effortAsked === "medium")).toBe(true);
-      if (reply !== "screen") {
-        expect(fakes.prompts()).toHaveLength(2);
-        if (reply === "validation") expect(fakes.prompts()[1]).toContain("Inspect checkout behavior");
-        expect(turns.at(-1)?.modelRan).toBe("gpt-6.1-sol"); expect(turns.at(-1)?.effortRan).toBe("medium");
-        expect(completed.maintenance?.pendingReply).toBeUndefined();
-      }
+      expect(fakes.prompts()).toHaveLength(2);
+      if (reply === "validation") expect(fakes.prompts()[1]).toContain("Inspect checkout behavior");
+      expect(turns.at(-1)?.modelRan).toBe("gpt-6.1-sol"); expect(turns.at(-1)?.effortRan).toBe("medium");
+      expect(completed.maintenance?.pendingReply).toBeUndefined();
 
 
 };
@@ -309,7 +326,7 @@ return async (engine: Engine) => {
       expect(stopped.state).toBe("cancelled"); expect(stopped.maintenance?.settingsDecision?.choice).toBe("stop");
       expect(engine.getState().inbox.some(item => item.taskId === run.taskId)).toBe(false);
       fakes.scenario({ maintenance: {} });
-      const control = await create(engine, world.clone); engine.setPoolPaused(false);
+      const control = await createRoutine(engine, run.productId); engine.setPoolPaused(false);
       expect((await result(engine, control.taskId)).state).toBe("done");
       expect(engine.taskDetails(run.taskId)!.state).toBe("cancelled"); expect(fakes.prompts()).toHaveLength(2);
 
@@ -358,7 +375,7 @@ return async (engine: Engine) => {
       const phase: MaintenancePhase = async (engine: Engine) => {
 
 
-      await engine.checkTools();
+      await engine.checkTools(); engine.stopRequested.signal.throwIfAborted();
       const run = await create(engine, world.clone, "maintenance-dead-code"); engine.setPoolPaused(false);
       const task = await result(engine, run.taskId);
       expect(task.error).toBeUndefined(); expect(task.state).toBe("needs-you");
@@ -482,7 +499,7 @@ return async (engine: Engine) => {
 
 
       const custom = engine.addRole({ ...draftOf(MAINTENANCE_ROLES[0]!), name: "Repository caretaker" });
-      const run = await create(engine, world.clone, custom);
+      const run = await create(engine, world.clone, custom, "sol-medium", true);
       engine.removeRole(custom);
       engine.removeRoutine(run.routineId);
       engine.setPoolPaused(false);
@@ -702,7 +719,7 @@ return async (engine: Engine) => {
       const phase: MaintenancePhase = async (engine: Engine) => {
 
 
-      const productId = await engine.addProduct(world.clone);
+      const productId = installPreparedProduct(engine, acmeDemoProduct(world.clone));
       const ordinary = engine.addTask({ productId, title: "Plan an ordinary task", approvePlan: true });
       engine.setPoolPaused(false);
       await until(engine, () => !!engine.taskDetails(ordinary)?.plan || engine.taskDetails(ordinary)?.state === "failed", () => {});

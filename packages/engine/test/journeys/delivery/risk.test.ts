@@ -1,3 +1,5 @@
+import { installPreparedProduct, privateCloneProduct } from "../../fixtures/prepared-product.js";
+import { installSharedWorkflowFastPaths } from "../../fixtures/shared-preparation.js";
 import { engineCaseFixtures, type EngineCaseOwner } from "../../fixtures/engine-cases.js";
 import { mkdtempSync } from "node:fs";
 import { afterAll as closeOwnedCases } from "bun:test";
@@ -6,8 +8,9 @@ import { describe, expect, it } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { State, Task } from "@petrina/core";
+import { commitChanges } from "@petrina/repositories/git";
 import type { Scenario } from "../../fake-agent.js";
-import { git, makeProduct, waitFor } from "../../fixtures.js";
+import { makeProduct, waitFor } from "../../fixtures.js";
 const cases = engineCaseFixtures();
 closeOwnedCases(() => cases.close());
 
@@ -17,8 +20,17 @@ async function setUp(owner: EngineCaseOwner, scenario: Scenario, shipLowRisk = f
   const root = mkdtempSync(join(owner.root, "petrina-risk-"));
 
   const fakes = riskAgents(scenario.risk);
-  const engine = owner.open(join(root, "data"), { startAgentSession: fakes.start, toolProbe: fakes.toolProbe });
-  const productId = await engine.addProduct(await makeProduct(root));
+  const engine = installSharedWorkflowFastPaths(
+    owner.open(join(root, "data"), {
+      startAgentSession: fakes.start,
+      toolProbe: fakes.toolProbe,
+      runCheckCommand: async req => req.argv[0] === process.execPath && req.argv[1] === "--version" ? { code: 0, stdout: "1.3.0\n" } : undefined,
+    }),
+    { skipUpToDate: true, skipPrepareChecks: true, skipReviewCopies: true, skipReviewInputDiffs: true, fastCheckCapture: true },
+  );
+  const repo = await makeProduct(root);
+  await engine.waitUntilReady(); owner.check(); engine.stopRequested.signal.throwIfAborted();
+  const productId = installPreparedProduct(engine, privateCloneProduct(repo));
   engine.updateProduct(productId, { name: "Shop", delivery: "local", approveDelivery: true, shipLowRisk });
   // Changing only the delivery keeps the low-risk choice.
   engine.setProductDelivery(productId, "local", true);
@@ -108,8 +120,7 @@ describe.concurrent("review depth and the delivery check follow the task's risk"
           f.engine.approve(f.delivery(f.engine.getState())!.id);
           await f.step((_, task) => task?.state === "waiting", "the delivery to wait for the paused pool");
           writeFileSync(join(first.worktree!, "late.txt"), "A change after the approval\n");
-          await git(first.worktree!, "add", "late.txt");
-          await git(first.worktree!, "commit", "--quiet", "-m", "A late change");
+          await commitChanges(first.worktree!, "A late change");
           f.engine.setPoolPaused(false);
 
           const task = await f.step((state) => f.delivery(state), "the delivery check again");

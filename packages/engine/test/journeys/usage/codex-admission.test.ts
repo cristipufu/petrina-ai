@@ -1,22 +1,33 @@
+import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
 import { ScriptedAgents, scriptedResult } from "../../scripted-agents.js";
 import { ReleaseEvents } from "../../release-events.js";
 import { afterAll, describe, expect, it } from "bun:test";
+import { appendFileSync } from "node:fs";
 import { join } from "node:path";
 import { FEWER_START, slotUses, type State } from "@petrina/core";
-import { Engine } from "../../engine.js";
-import { git, makeProduct, removeDir, tempDir, waitFor } from "../../fixtures.js";
+import { makeProduct, waitFor } from "../../fixtures.js";
 import { appServer as fixtureServer } from "../../../../agent-runtime/test/fixtures/codex-account.js";
-import type { CodexScript } from "../../../../agent-runtime/test/fixtures/fake-codex.js";
-const roots: string[] = [];
-afterAll(() => roots.forEach(removeDir));
-function appServer(plan: CodexScript) { const server = fixtureServer(plan); roots.push(server.dir); return server; }
+import { registerFixtureRoot } from "@petrina/test-support/fixture-retention";
+import { removeFixtureRoot } from "@petrina/test-support/fixture-roots";
+import { installPreparedProduct, privateCloneProduct } from "../../fixtures/prepared-product.js";
+const engineCases = engineCaseFixtures();
+afterAll(() => engineCases.close());
+
 const soon = Math.floor(Date.now() / 1000) + 3600;
 
 describe("the engine slows a tool down before its limit", () => {
   it("reads Codex's usage when it starts and when a Codex agent starts, and a pool of 4 with Codex at 85% starts at most 2 Codex agents", async () => {
-    const root = tempDir("petrina-slow-");
-    roots.push(root);
-    const server = appServer({ primary: { usedPercent: 85, windowDurationMins: 10080, resetsAt: soon } });
+  return engineCases.use("petrina-slow-", async caseOwner => {
+    const root = caseOwner.root;
+
+    const server = fixtureServer({ primary: { usedPercent: 85, windowDurationMins: 10080, resetsAt: soon } });
+    registerFixtureRoot(server.dir);
+    let stopAccount: (() => Promise<void>) | undefined;
+    caseOwner.afterBody(async () => {
+      if (!stopAccount) throw new Error("The Codex account fixture has no confirmed Engine stop");
+      await stopAccount();
+      removeFixtureRoot(server.dir);
+    });
     const releases = new ReleaseEvents();
     const agents = new ScriptedAgents(async (prompt, signal) => {
       if (prompt.turn === 1) await releases.wait(prompt.sessionId, signal);
@@ -27,8 +38,9 @@ describe("the engine slows a tool down before its limit", () => {
       throw new Error(`Unexpected released quota fixture work: ${prompt.result}`);
     });
     const repo = await makeProduct(root);
-    await git(repo, "config", "branch.autoSetupMerge", "false");
-    const engine = new Engine(join(root, "data"), { agentCommand: () => ["unused-scripted-session"], startAgentSession: agents.start, usageCommands: { codex: server.command }, toolPath: () => process.execPath });
+    appendFileSync(join(repo, ".git", "config"), "\n[branch]\n\tautoSetupMerge = false\n");
+    const engine = caseOwner.open(join(root, "data"), { agentCommand: () => ["unused-scripted-session"], startAgentSession: agents.start, usageCommands: { codex: server.command }, toolPath: () => process.execPath });
+    stopAccount = () => caseOwner.stop(engine);
     try {
       engine.setPoolPaused(true);
       engine.setPoolLimit(4);
@@ -41,11 +53,13 @@ describe("the engine slows a tool down before its limit", () => {
       // The charts and scheduler share one reader and the same recorded reports.
       engine.usage({ view: "analytics", period: "today" });
       engine.usage({ view: "analytics", period: "today" });
-      await engine.usageCoordinator.readers.get("codex")!.refresh();
+      await caseOwner.run(engine, async () => { await engine.usageCoordinator.readers.get("codex")!.refresh(); });
       expect(server.asked().filter((entry) => entry.method === "account/rateLimits/read")).toHaveLength(2);
       const chart = engine.usage({ view: "analytics", period: "today" });
       expect(chart.limits.tools.find((tool) => tool.toolId === "codex")!.limits[0]!.latest.utilization).toBe(0.85);
-      const productId = await engine.addProduct(repo);
+      await engine.waitUntilReady();
+      caseOwner.check();
+      const productId = installPreparedProduct(engine, privateCloneProduct(repo));
       const ids = Array.from({ length: 4 }, (_, index) => engine.addTask({ productId, title: `Change ${index}`, description: "[no-check]" }));
       engine.setPoolPaused(false);
       // Four planners on Claude Code, which has room.
@@ -56,6 +70,7 @@ describe("the engine slows a tool down before its limit", () => {
       const unsub = engine.subscribe(() => {
         most = Math.max(most, codexSeats(engine.getState()));
       });
+      caseOwner.onStop(unsub);
       try {
         const state = await waitFor(() => {
           const current = engine.getState();
@@ -73,7 +88,9 @@ describe("the engine slows a tool down before its limit", () => {
         unsub();
       }
     } finally {
-      await engine.shutdown();
+      await caseOwner.stop(engine);
     }
+
   });
+});
 });

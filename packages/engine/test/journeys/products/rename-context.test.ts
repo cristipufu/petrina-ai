@@ -1,21 +1,30 @@
+import { afterAll } from "bun:test";
+import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
+import { installPreparedProduct, privateCloneProduct } from "../../fixtures/prepared-product.js";
 import { productRenameAgents } from "../../fixtures/product-rename-agents.js";
 import { describe, expect, it } from "bun:test";
 
 import { join } from "node:path";
 import type { Task } from "@petrina/core";
-import { Engine } from "../../engine.js";
 
 
-import { makeProduct, removeDir, tempDir, waitFor } from "../../fixtures.js";
+import { makeProduct, waitFor } from "../../fixtures.js";
+const engineCases = engineCaseFixtures();
+afterAll(() => engineCases.close());
+
 
 describe("product settings in the engine", () => {
 it("gives the next agent the saved display name while keeping the working copy and branch", async () => {
-    const root = tempDir("petrina-rename-agent-");
+  return engineCases.use("petrina-rename-agent-", async caseOwner => {
+    const root = caseOwner.root;
     const repo = await makeProduct(root);
     const fakes = productRenameAgents();
-    const engine = new Engine(join(root, "data"), fakes);
+    const engine = caseOwner.open(join(root, "data"), fakes);
     try {
-      const id = await engine.addProduct(repo, "Original product");
+      const id = await caseOwner.run(engine, async () => {
+        await engine.waitUntilReady(); caseOwner.check(); engine.stopRequested.signal.throwIfAborted();
+        return installPreparedProduct(engine, { ...privateCloneProduct(repo), name: "Original product" });
+      });
       const taskId = engine.addTask({ productId: id, title: "Use the product name" });
       const task = () => engine.getState().tasks.find((task) => task.id === taskId)! as Task;
       await waitFor(() => fakes.received("planner").length === 1, "planner to start");
@@ -31,6 +40,8 @@ it("gives the next agent the saved display name while keeping the working copy a
       expect(task().worktree).toBeDefined();
       expect(task().branch).toBeDefined();
       expect(task()).toMatchObject({ delivery: "local", approveDelivery: true });
-    } finally { await engine.shutdown(); removeDir(root); }
+    } finally { await caseOwner.stop(engine);  }
+
   });
+});
 });

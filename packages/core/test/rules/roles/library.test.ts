@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { activeRoles, addRole, BUILT_IN_ROLES, MAINTENANCE_ROLES, draftOf, editRole, FINDING_REVIEW_RULES, FINDING_REQUIREMENT_RULE, libraryRoles, NO_ROLE_CHANGES, NOTES_HANDOFF_RULE, permissionLock, removeRole, resetRole, ROLE_LIMITS, ROLE_STARTS, REPAIR_RULE, VERIFIER_RULES, stepMayChange, type Role, type RoleChanges, type RoleDraft, type Stage } from "../../../src/index.js";
+import { activeRoles, addRole, BUILT_IN_ROLES, DEFAULT_PROFILES, KNOWN_TOOLS, MAINTENANCE_ROLES, draftOf, editRole, FINDING_REVIEW_RULES, FINDING_REQUIREMENT_RULE, libraryRoles, NO_ROLE_CHANGES, normalizePlan, NOTES_HANDOFF_RULE, permissionLock, removeRole, resetRole, ROLE_LIMITS, ROLE_STARTS, REPAIR_RULE, TAKE_OVER_WORDS, takeOverBlock, VERIFIER_RULES, stepMayChange, type Role, type RoleChanges, type RoleDraft, type Stage, type Task } from "../../../src/index.js";
 
 const start = (id: string) => ROLE_STARTS.find((entry) => entry.id === id)!.draft;
 
@@ -158,5 +158,36 @@ describe("what a step may change", () => {
     expect(stepMayChange(writer, stages, 2)).toEqual({ canEdit: false, afterReview: true });
     expect(stepMayChange({ ...writer, canEdit: false }, stages, 2)).toEqual({ canEdit: false, afterReview: false });
     expect(stepMayChange(builtIn("release-manager"), stages, 3)).toEqual({ canEdit: false, afterReview: false });
+  });
+
+  it("decides delivery locks, step permissions, take-over blocks and plan normalization from role result rather than role id", () => {
+    const customDelivery: Role = { ...builtIn("release-manager"), id: "custom-shipper", name: "Shipper" };
+    expect(permissionLock(customDelivery)).toContain("can't be edited here");
+    expect(stepMayChange(customDelivery, stages, 3)).toEqual({ canEdit: false, afterReview: false });
+    const runningDelivery = { id: "t", state: "running", holdsSlot: true, agent: { roleId: "custom-shipper", profileId: "opus-xhigh", since: 1, step: 0 } } as Task;
+    expect(takeOverBlock(runningDelivery, { profiles: DEFAULT_PROFILES, tools: KNOWN_TOOLS, roles: [customDelivery] })).toBe(TAKE_OVER_WORDS.releaseManager);
+
+    const customBuilder: Role = { ...builtIn("builder"), id: "custom-maker", name: "Maker" };
+    const customPlanner: Role = { ...builtIn("planner"), id: "custom-planner", name: "Strategist" };
+    const roles = BUILT_IN_ROLES.map((role) => role.id === "builder" ? customBuilder : role.id === "planner" ? customPlanner : role.id === "release-manager" ? customDelivery : role);
+    const plan = normalizePlan({
+      task: { id: "t", delivery: "pull-request", approveDelivery: false },
+      result: {
+        rationale: "Focused build.",
+        risk: { level: "high" },
+        stages: [
+          { kind: "do", title: "Plan again", roleId: "custom-planner", profileIds: ["opus-high"] },
+          { kind: "do", title: "Ship early", roleId: "custom-shipper", profileIds: ["opus-high"] },
+          { kind: "do", title: "Make it", roleId: "custom-maker", profileIds: ["opus-xhigh"] },
+        ],
+      },
+      roles,
+      profiles: DEFAULT_PROFILES,
+      plannerProfileId: "opus-high",
+      releaseManagerProfileId: "opus-high",
+    });
+    expect(plan.stages.filter((stage) => roles.find((role) => role.id === stage.roleId)?.result === "build").map((stage) => stage.roleId)).toEqual(["custom-maker"]);
+    expect(plan.rationale).toContain("the Planner only makes the plan");
+    expect(plan.rationale).toContain("Petrina handles delivery itself");
   });
 });

@@ -1,5 +1,5 @@
 // Native provider composition; workflow retry schedules and waiting decisions stay with the host.
-import { ADAPTERS } from "./tools.js";
+import { ADAPTERS } from "./tool-catalog.js";
 import { createLimitParsing } from "./provider-refusals.js";
 
 export { UsageLimited, ModelAtCapacity, CAPACITY_WAIT } from "./failures.js";

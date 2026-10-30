@@ -3,11 +3,11 @@ import { arch, platform } from "node:os";
 import { constants, realpathSync } from "node:fs";
 import { open, realpath } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
-import { checkOutcome, openStep, runtimeWaitHolds, type DeepMutable, type ExtraValidation } from "@petrina/core";
+import { openStep, runtimeWaitHolds, type DeepMutable, type ExtraValidation } from "@petrina/core";
 import type { Kernel } from "./kernel.js";
-import { executionFor } from "@petrina/orchestrator";
+import { executionFor, ValidationRun } from "@petrina/orchestrator";
 import * as git from "@petrina/repositories/git";
-import { runChecks, CHECK_TIMEOUT_MS, checkLogBeginning, commandText } from "./checks.js";
+import { runChecks, CHECK_TIMEOUT_MS, checkLogBeginning } from "./checks.js";
 import { containerEnv, ExtraContainer } from "./extra-container.js";
 import type { Result } from "./coordination.js";
 
@@ -81,7 +81,8 @@ export class ExtraValidations {
     if (previous) throw new Error(`Extra validation is already outstanding for this task and product. Use request reference ${previous.requestId}.`);
     const saved = scope.work.savedVersion;
     if (!saved || !git.isSha(saved.commit) || !git.isSha(saved.tree)) throw new Error("Petrina has no saved version for this task yet. Hand the work back first.");
-    const workingEdits = !!scope.work.worktree && (!await git.isClean(scope.work.worktree) || await git.head(scope.work.worktree) !== saved.commit);
+    const workingStatus = scope.work.worktree ? await git.worktreeStatus(scope.work.worktree) : undefined;
+    const workingEdits = !!workingStatus && (!workingStatus.clean || workingStatus.head !== saved.commit);
     // Recheck after filesystem reads: task cancellation/removal can come from the window too.
     if (!this.k.s.tasks.includes(task) || ["done", "cancelled", "pr-open", "backlog", "paused"].includes(task.state)) throw new Error("The task changed while the version was inspected. Inspect it again.");
     const id = randomUUID(), queueOrder = this.k.checkQueue.reserveOrder(), waitingReason = this.prerequisiteWait(task.id);
@@ -147,7 +148,7 @@ export class ExtraValidations {
       if (job.stop.signal.aborted || this.k.stopped || this.k.taskAdmissionsClosed(record.taskId)) {
         place(); this.jobs.delete(record.id); if (!this.k.stopped) this.pump(); return;
       }
-      const work = this.execute(record, job.stop.signal).catch(error => this.hold(record, String(error))).finally(() => { job.work = undefined; this.k.syncIdleSleep(); });
+      const work = this.execute(record, job.stop.signal).finally(() => { job.work = undefined; this.k.syncIdleSleep(); });
       job.work = work;
       void this.k.trackWork(work);
       this.k.syncIdleSleep();
@@ -163,71 +164,26 @@ export class ExtraValidations {
     }
   }
 
-  private async execute(record: Record, signal: AbortSignal): Promise<void> {
-    let result: NonNullable<ExtraValidation["result"]> = "not run";
-    let detail = "The extra validation did not start.";
-    const admitted = () => {
-      signal.throwIfAborted();
-      if (this.k.taskAdmissionsClosed(record.taskId)) { record.resumeQueued = true; return false; }
-      return true;
-    };
-    try {
-      // Admission saves are preparation too: failure before launch must retain a truthful not-run outcome.
-      record.state = "preparing";
-      this.persist();
-      // No owned workload exists before successful preparation. Failures here release immediately.
-      record.container = await this.container.prepare(record);
-      if (admitted()) {
-        await this.container.snapshot(record);
-        if (admitted()) {
-          const runs = await runChecks(record.snapshot, [{ name: record.name, argv: this.container.runCommand(record) }], containerEnv(),
-            this.k.options.checkTimeoutMs ?? CHECK_TIMEOUT_MS, signal, join(this.k.dataDir, "checks", record.taskId), undefined, undefined,
-            this.k.options.machineRecords, pid => {
-              // This process already exists. Retain its observed identity if saving fails; the runner stops it.
-              record.clientPid = pid; this.persist();
-            }, facts => this.change(record, () => {
-              // Start ownership and the initial diagnostic are one pre-launch commit. A known
-              // failure rolls back both evidence and notifications; a crash after commit remains owned.
-              record.state = "running";
-              record.startedAt = Date.now(); record.waitingMs = record.startedAt - record.queuedAt;
-              record.run = { name: record.name, command: commandText(record.argv), ok: false, ms: 0,
-                startedAt: record.startedAt, output: "The extra validation is in progress; its command outcome is not recorded yet.", logComplete: false, ...facts };
-              this.note(record, "started", `Extra validation “${record.name}” is running.`);
-              this.persist(); // Ownership precedes synchronous process/container creation.
-            }), admitted);
-          const run = runs[0];
-          if (run) record.run = { ...run, command: commandText(record.argv) };
-          const outcome = checkOutcome(run);
-          result = signal.aborted ? "stopped" : outcome.kind === "passed" ? "passed" : outcome.kind === "failed" ? "failed" : outcome.kind === "unavailable" ? "not run" : "did not finish";
-          detail = signal.aborted ? "The task or Petrina stopped this extra validation." : result === "passed" ? "The extra validation passed; delivery still requires the configured product checks." : run?.output ?? "The command did not start.";
-        }
-      }
-    } catch (error) { detail = error instanceof Error ? error.message : String(error); }
-    if (record.startedAt === undefined && signal.aborted) {
-      // The first abort cause wins: a task stop is final, but an engine stop preserves
-      // never-started work just like crash recovery, including failed preparation.
-      if (signal.reason === "shutdown") record.resumeQueued = true;
-      else { result = "stopped"; detail = "The task stopped before the container started."; }
-    }
-    if (record.startedAt === undefined && !signal.aborted && this.k.taskAdmissionsClosed(record.taskId)) record.resumeQueued = true;
-    if (!record.resumeQueued) {
-      record.result = result; record.detail = detail;
-      record.endedAt = record.run?.endedAt ?? Date.now();
-      record.durationMs = record.run?.ms ?? (record.startedAt === undefined ? 0 : record.endedAt - record.startedAt);
-    }
-    if (record.run?.startedAt) { record.startedAt = record.run.startedAt; record.waitingMs = record.startedAt - record.queuedAt; }
-    if (record.startedAt === undefined) {
-      // Nothing could have created a container. Still remove any partially prepared snapshot.
-      this.persist();
-      if (await this.container.cleanup(record)) { if (record.resumeQueued) this.requeue(record); else this.finish(record, result, detail); }
-      else this.hold(record, "Petrina could not confirm the prepared copy's cleanup.");
-      return;
-    }
-    record.stoppingAt = Date.now(); record.state = "stopping";
-    this.note(record, "stopping", `Stopping extra validation “${record.name}” and confirming cleanup.`);
-    this.persist();
-    if (await this.container.cleanup(record)) this.finish(record, result, detail);
-    else this.hold(record, "Cleanup is unconfirmed. Make the local container service available, or stop the named container; Petrina will confirm cleanup.");
+  private execute(record: Record, signal: AbortSignal): Promise<void> {
+    const run = new ValidationRun({
+      now: () => Date.now(),
+      admissionClosed: taskId => this.k.taskAdmissionsClosed(taskId),
+      persist: () => this.persist(),
+      change: (record, apply) => this.change(record, apply),
+      note: (record, kind, words) => this.note(record, kind, words),
+      finish: (record, result, detail) => this.finish(record, result, detail),
+      requeue: record => this.requeue(record),
+      hold: (record, detail) => this.hold(record, detail),
+    }, {
+      prepare: record => this.container.prepare(record),
+      snapshot: record => (this.k.options.validationSnapshots ?? this.container).snapshot(record),
+      cleanup: record => this.container.cleanup(record),
+      run: async (record, signal, callbacks) => (await runChecks(record.snapshot,
+        [{ name: record.name, argv: this.container.runCommand(record) }], containerEnv(),
+        this.k.options.checkTimeoutMs ?? CHECK_TIMEOUT_MS, signal, join(this.k.dataDir, "checks", record.taskId), undefined, undefined,
+        this.k.options.machineRecords, callbacks.spawned, callbacks.log, callbacks.admitted, this.k.options.runCheckCommand))[0],
+    });
+    return run.execute(record, signal);
   }
 
   private hold(record: Record, detail: string): void {

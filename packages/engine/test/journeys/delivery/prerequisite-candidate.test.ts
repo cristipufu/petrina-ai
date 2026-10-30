@@ -1,17 +1,76 @@
 import { acmeDemoProduct, installPreparedProduct } from "../../fixtures/prepared-product.js";
+import * as gitOps from "@petrina/repositories/git";
+import { installSharedWorkflowFastPaths, materializePreparedWorktree, readLooseBlobInCommit, readLooseCommit, readWorktreeCommit } from "../../fixtures/shared-preparation.js";
 import { afterAll, describe, expect, it } from "bun:test";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { runtimeWaitHolds, runtimeWaitView, type CheckId, type DeliveryMode } from "@petrina/core";
-import type { Engine } from "../../engine.js";
+import type { Engine, EngineOptions } from "../../engine.js";
 import { nativeWorldFixtures, type NativeWorld } from "../../fixtures/native-worlds.js";
 import { Coordination } from "../../../src/coordination.js";
 import { commandInputText } from "../../../src/checks.js";
 import { executionFor } from "@petrina/orchestrator";
-import { git, remoteRef, waitFor } from "../../support.js";
+import { git, tempDir, waitFor } from "../../support.js";
+import { ScriptedAgents, scriptedResult } from "../../scripted-agents.js";
+import { scriptedToolProbe } from "../../scripted-probes.js";
 
 const fixtures = nativeWorldFixtures();
-afterAll(fixtures.close);
+const landSeeds = new Map<string, Promise<{ root: string; objectsDir: string; indexFile: string; sha: string }>>();
+afterAll(async () => {
+  const entries = await Promise.all([...landSeeds.values()]);
+  landSeeds.clear();
+  for (const entry of entries) rmSync(entry.root, { recursive: true, force: true });
+  await fixtures.close();
+});
+
+function getLandSeed(clone: string, initial: string, failChecks: boolean) {
+  const key = `${initial}\0${failChecks ? 1 : 0}`;
+  let pending = landSeeds.get(key);
+  if (!pending) {
+    pending = (async () => {
+      const root = tempDir("petrina-prereq-land-seed-");
+      const repo = join(root, "clone");
+      cpSync(clone, repo, { recursive: true });
+      rmSync(join(repo, ".git", "worktrees"), { recursive: true, force: true });
+      writeFileSync(join(repo, "required-fix.txt"), "The prerequisite's fix\n");
+      if (failChecks) writeFileSync(join(repo, "required-check-failure"), "The integrated product must fail this check\n");
+      await gitOps.commitChanges(repo, "Land the required fix");
+      const sha = branchRef(repo, "main");
+      return { root, objectsDir: join(repo, ".git", "objects"), indexFile: join(repo, ".git", "index"), sha };
+    })();
+    landSeeds.set(key, pending);
+  }
+  return pending;
+}
+
+function remoteRef(remote: string, ref: string): string | undefined {
+  const file = join(remote, ...ref.split("/"));
+  return existsSync(file) ? readFileSync(file, "utf8").trim() : undefined;
+}
+
+function writeRef(remote: string, ref: string, sha: string): void {
+  const file = join(remote, ...ref.split("/"));
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, `${sha}\n`);
+}
+
+function branchRef(clone: string, branch: string): string {
+  return readFileSync(join(clone, ".git", "refs", "heads", ...branch.split("/")), "utf8").trim();
+}
+
+function candidateAgents(world: NativeWorld): Pick<EngineOptions, "startAgentSession" | "toolProbe"> {
+  const agents = new ScriptedAgents(prompt => {
+    if (prompt.result !== "delivery") throw new Error(`Unexpected candidate agent participant: ${prompt.result}`);
+    world.setScript(script => { (script.releaseManagerPrompts ??= []).push(prompt.text); });
+    const commits = [...prompt.text.matchAll(/^### (.+)$/gm)].map(match => `- ${match[1]}`);
+    const notes = commits.length > 0 ? `## What's new\n${commits.join("\n")}` : "## What's new\n- Improved the product";
+    return scriptedResult({ summary: "Wrote the release notes.", notes });
+  });
+  return {
+    toolProbe: scriptedToolProbe({ "claude-code": { status: "ready" }, codex: { status: "ready" }, grok: { status: "ready" }, antigravity: { status: "not-installed" }, gh: { status: "ready" }, git: { status: "ready" }, node: { status: "ready" } }),
+    startAgentSession: agents.start,
+  };
+}
 
 /** Real approval, checks, source update and publication; planning, build and review have settled. */
 type CandidateFixture = Awaited<ReturnType<typeof prepareCandidate>>;
@@ -20,23 +79,39 @@ async function fixture(body: CandidatePhase, mode: DeliveryMode = "pull-request"
   let current: CandidateFixture | undefined;
   return fixtures.world("wait-prepared-delivery", async ({ world, engine: ownedEngine }) => {
   if (mode === "release") {
-    await git(world.remote, "update-ref", "refs/tags/v1.0.0", world.initial);
+    writeRef(world.remote, "refs/tags/v1.0.0", world.initial);
     world.setGitHub(state => state.releases.push({ tagName: "v1.0.0", url: "https://github.com/acme/demo/releases/tag/v1.0.0", publishedAt: "2025-01-01T00:00:00Z", isDraft: false, name: "v1.0.0", body: "The earlier release" }));
   }
-
-    let next = await ownedEngine(async engine => { current = await prepareCandidate(world, engine, mode, prepare); return body(current); }, { terminals: () => [] });
+    const script = join(world.dir, "check.ts");
+    const engineOptions: EngineOptions = {
+      terminals: () => [],
+      ...candidateAgents(world),
+      runCheckCommand: async (req) => {
+        if (req.argv[0] !== process.execPath || req.argv[1] !== script) return undefined;
+        if (req.argv[3]) {
+          writeFileSync(`${req.argv[3]}.started`, "The final check is running");
+          while (!existsSync(`${req.argv[3]}.release`) && !req.signal?.aborted) await Bun.sleep(5);
+          if (req.signal?.aborted) return { code: 130 };
+        }
+        const sha = readWorktreeCommit(req.cwd)!.commit;
+        const ok = !existsSync(join(req.cwd, "required-check-failure"));
+        appendFileSync(req.argv[2]!, `${JSON.stringify({ sha, fix: existsSync(join(req.cwd, "required-fix.txt")), ok })}\n`);
+        return { code: ok ? 0 : 1 };
+      },
+    };
+    let next = await ownedEngine(async engine => { current = await prepareCandidate(world, engine, mode, prepare); return body(current); }, engineOptions);
     if (next) {
       const resume = next;
-      next = await ownedEngine(async engine => { await current!.reopened(engine); return resume(current!); }, { terminals: () => [] });
+      next = await ownedEngine(async engine => { await current!.reopened(engine); return resume(current!); }, engineOptions);
     }
     if (next) {
       const resume = next;
-      await ownedEngine(async engine => { await current!.reopened(engine); return resume(current!); }, { terminals: () => [] });
+      await ownedEngine(async engine => { await current!.reopened(engine); return resume(current!); }, engineOptions);
     }
   }, mode === "release" ? { version: "1.0.0" } : {}, { stopPeers: () => current?.releaseHeldChecks() });
 }
 async function prepareCandidate(world: NativeWorld, first: Engine, mode: DeliveryMode, prepare: boolean) {
-  let engine = first;
+  let engine = installSharedWorkflowFastPaths(first, { skipDriverPrepare: false, skipUpToDate: true, fastCheckCapture: true, fastCleanup: true, fastCheckpoints: true });
   engine.schedule = () => {};
   const productId = installPreparedProduct(engine, acmeDemoProduct(world.clone));
   const id = engine.addTask({ productId, title: "Deliver the approved improvement", delivery: mode, backlog: true });
@@ -52,42 +127,47 @@ async function prepareCandidate(world: NativeWorld, first: Engine, mode: Deliver
   scope.work.source = { ...await engine["sources"].resolve(task, { productId, delivery: mode, startFrom: { kind: "default" } }), confirmed: true };
   engine.s.setup!.checks = engine.s.tools.map(tool => ({ id: tool.id as CheckId, status: "ready", at: Date.now() }));
   engine.s.tools.forEach(tool => { tool.status = "ready"; });
-  await engine["driver"]["prepare"](scope, signal);
-  writeFileSync(join(scope.work.worktree!, "task-change.txt"), "The accepted task's change\n");
-  await git(scope.work.worktree!, "add", "."); await git(scope.work.worktree!, "commit", "-qm", "Improve the product");
   scope.work.report = { summary: "Improved the product", title: "Improve the product", changes: ["An approved improvement"], description: "The approved product improvement" };
+  const seed = await materializePreparedWorktree(engine, scope, world.clone, mode === "local" ? "main" : "origin/main", world.initial, "task-change.txt", "The accepted task's change\n");
   const log = join(world.dir, "checks.jsonl"), script = join(world.dir, "check.ts");
-  writeFileSync(script, `import { appendFileSync, existsSync, writeFileSync } from "node:fs";
-import { git } from ${JSON.stringify(import.meta.resolve("@petrina/test-support/commands"))};
+  writeFileSync(script, `import { appendFileSync, existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 if (process.argv[3]) {
   writeFileSync(process.argv[3] + ".started", "The final check is running");
   while (!existsSync(process.argv[3] + ".release")) await Bun.sleep(10);
 }
-const sha = await git(process.cwd(), "rev-parse", "HEAD");
+const dotGit = join(process.cwd(), ".git");
+const gitDir = statSync(dotGit).isDirectory() ? dotGit : resolve(process.cwd(), readFileSync(dotGit, "utf8").trim().slice("gitdir: ".length));
+const head = readFileSync(join(gitDir, "HEAD"), "utf8").trim();
+const sha = head.startsWith("ref: ") ? readFileSync( resolve(gitDir, "..", "..", head.slice(5)), "utf8").trim() : head;
 const ok = !existsSync("required-check-failure");
 appendFileSync(process.argv[2], JSON.stringify({ sha, fix: existsSync("required-fix.txt"), ok }) + "\\n");
 process.exit(ok ? 0 : 1);`);
   engine.setProductChecks(productId, [{ name: "Tests", command: commandInputText([process.execPath, script, log]) }]);
   expect(await engine["shipping"]["readyToShip"](scope, signal)).toBe("ready");
-  scope.work.checkedSha = await git(scope.work.worktree!, "rev-parse", "HEAD");
-  scope.work.checkedPatch = await engine["updates"].patch(scope);
+  scope.work.checkedSha = seed.head;
+  scope.work.checkedPatch = seed.patch;
   task.stageIndex = 1;
   engine.gate(task, "delivery");
   await engine.approve(engine.s.inbox.find(item => item.taskId === id && item.kind === "delivery")!.id);
   expect(scope.work.approvedSha).toBe(scope.work.checkedSha!);
   if (prepare) expect(await engine["shipping"]["prepare"](scope, task.plan.stages[2]!, signal)).toBe("ready");
-  const before = await git(scope.work.worktree!, "rev-parse", "HEAD"), checkedBefore = evidence().length;
+  const before = branchRef(world.clone, scope.work.branch!), checkedBefore = evidence().length;
   const prerequisite = engine.addTask({ productId, title: "Land the required fix", backlog: true });
   function evidence(): { sha: string; fix: boolean; ok: boolean }[] {
     return readFileSync(log, "utf8").trim().split("\n").map(line => JSON.parse(line));
   }
   const hold = () => engine.setRuntimeWait(id, [prerequisite], "This delivery needs the landed fix", "hold-before-publish");
   const land = async (failChecks = false) => {
+    const seeded = await getLandSeed(world.clone, world.initial, failChecks);
+    cpSync(seeded.objectsDir, join(world.clone, ".git", "objects"), { recursive: true, force: true });
+    cpSync(seeded.indexFile, join(world.clone, ".git", "index"));
     writeFileSync(join(world.clone, "required-fix.txt"), "The prerequisite's fix\n");
     if (failChecks) writeFileSync(join(world.clone, "required-check-failure"), "The integrated product must fail this check\n");
-    await git(world.clone, "add", "."); await git(world.clone, "commit", "-qm", "Land the required fix");
-    await git(world.clone, "push", "-q", world.remote, "main");
-    return git(world.clone, "rev-parse", "HEAD");
+    writeRef(join(world.clone, ".git"), "refs/heads/main", seeded.sha);
+    cpSync(seeded.objectsDir, join(world.remote, "objects"), { recursive: true, force: true });
+    writeRef(world.remote, "refs/heads/main", seeded.sha);
+    return seeded.sha;
   };
   const release = (how: "automatic" | "clear", latest: string) => {
     if (how === "automatic") {
@@ -101,7 +181,8 @@ process.exit(ok ? 0 : 1);`);
   };
   const stopForRestart = async () => { engine.commitNow(); await engine.shutdown(); };
   const reopened = async (current: Engine) => {
-    engine = current; engine.schedule = () => {};
+    engine = installSharedWorkflowFastPaths(current, { skipDriverPrepare: false, skipUpToDate: true, fastCheckCapture: true, fastCleanup: true, fastCheckpoints: true });
+    engine.schedule = () => {};
     await engine.waitUntilReady();
     task = engine.task(id)!; scope = executionFor(task);
   };
@@ -120,14 +201,18 @@ process.exit(ok ? 0 : 1);`);
 async function expectFreshPublication(f: CandidateFixture, mode: DeliveryMode, latest: string) {
   const { work } = f.scope();
   const target = mode === "pull-request" ? `refs/heads/${work.branch}` : "refs/heads/main";
-  const published = (await remoteRef(f.world.remote, target))!;
+  const published = remoteRef(f.world.remote, target)!;
   expect(published).not.toBe(f.before);
-  expect(await git(f.world.remote, "show", `${published}:required-fix.txt`)).toBe("The prerequisite's fix");
-  expect(await git(f.world.remote, "merge-base", published, latest)).toBe(latest);
+  expect(readLooseBlobInCommit(f.world.remote, published, "required-fix.txt")?.trim() ?? await git(f.world.remote, "show", `${published}:required-fix.txt`)).toBe("The prerequisite's fix");
+  const commit = readLooseCommit(f.world.remote, published);
+  const isDescendant = Boolean(
+    commit && (commit.parents.includes(latest) || commit.parents.some(p => readLooseCommit(f.world.remote, p)?.parents.includes(latest))),
+  );
+  expect(isDescendant ? latest : await git(f.world.remote, "merge-base", published, latest)).toBe(latest);
   expect(f.evidence().slice(f.checkedBefore).some(run => run.sha === published && run.fix && run.ok)).toBe(true);
   expect(f.task().runtimeWait?.refreshPending).toBeUndefined();
   if (mode === "pull-request") {
-    expect(await git(work.worktree!, "rev-parse", "HEAD")).toBe(published);
+    expect(branchRef(f.world.clone, work.branch!)).toBe(published);
     expect(f.world.github().prs).toHaveLength(1);
   }
 }
@@ -143,7 +228,7 @@ describe.concurrent("publishing prepared delivery after a prerequisite wait", ()
       const latest = await f.land(); f.release(how, latest); gate.release();
       expect(await delivery).toBe("continue");
       expect(f.world.github().prs).toHaveLength(0);
-      expect(await remoteRef(f.world.remote, `refs/heads/${f.scope().work.branch}`)).toBeUndefined();
+      expect(remoteRef(f.world.remote, `refs/heads/${f.scope().work.branch}`)).toBeUndefined();
       expect(f.task().runtimeWait?.refreshPending).toBe(true);
       expect(await f.refresh()).toBe(false);
       expect(await f.publish()).toBe("stop");
@@ -237,7 +322,7 @@ return continueWithCurrent(f);
 
     try {
       expect(await f.publish()).toBe("stop");
-      expect(await remoteRef(f.world.remote, `refs/heads/${f.scope().work.branch}`)).toBe(f.before);
+      expect(remoteRef(f.world.remote, `refs/heads/${f.scope().work.branch}`)).toBe(f.before);
       expect(f.evidence()).toHaveLength(f.checkedBefore);
       expect(f.task().runtimeWait).toBeUndefined();
       expect(f.world.github().prs).toHaveLength(1);
@@ -299,7 +384,12 @@ return async (f: CandidateFixture) => {
       await expectFreshPublication(f, mode, latest);
       if (mode === "release") {
         expect(f.world.github().releases).toHaveLength(2);
-        const messages = (await git(f.world.remote, "log", "--format=%s", `${latest}..main`)).split("\n");
+        const mainTip = remoteRef(f.world.remote, "refs/heads/main")!;
+        const c0 = readLooseCommit(f.world.remote, mainTip);
+        const c1 = c0?.parents[0] ? readLooseCommit(f.world.remote, c0.parents[0]) : undefined;
+        const messages = c0 && c1 && c1.parents[0] === latest
+          ? [c0.body.split("\n")[0]!, c1.body.split("\n")[0]!]
+          : (await git(f.world.remote, "log", "--format=%s", `${latest}..main`)).split("\n");
         expect(messages).toHaveLength(2);
         expect(messages[0]).toMatch(/^Release v/);
         expect(messages[1]).toBe("Improve the product");
@@ -322,7 +412,7 @@ return async (f: CandidateFixture) => {
       expect(await f.publish()).toBe("continue");
       expect(f.evidence().slice(f.checkedBefore).some(run => run.fix && !run.ok)).toBe(true);
       expect(f.world.github().prs).toHaveLength(0);
-      expect(await remoteRef(f.world.remote, `refs/heads/${f.scope().work.branch}`)).toBeUndefined();
+      expect(remoteRef(f.world.remote, `refs/heads/${f.scope().work.branch}`)).toBeUndefined();
       expect(f.scope().work.approvedSha).toBeUndefined();
       expect(f.task().stageIndex).toBeLessThan(2);
     } finally { await f.engine().shutdown(); }

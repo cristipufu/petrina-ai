@@ -9,7 +9,7 @@ import { executionFor } from "@petrina/orchestrator";
 import { McpPending, mcpRequest } from "../../../src/mcp.js";
 
 
-import { extraFixture, connection } from "../../extra-fixtures.js";
+import { preparedServiceExtraFixture as extraFixture, connection } from "../../extra-fixtures.js";
 
 const cases = engineCaseFixtures();
 afterAll(() => cases.close());

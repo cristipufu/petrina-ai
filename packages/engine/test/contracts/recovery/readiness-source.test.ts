@@ -1,13 +1,38 @@
 import { engineCaseFixtures, type EngineCaseOwner } from "../../fixtures/engine-cases.js";
 import { afterAll, describe, expect, it } from "bun:test";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { slotUses, type CheckId } from "@petrina/core";
 
 import { executionFor } from "@petrina/orchestrator";
-import { FAKE_AGENT, Fakes, git, makeProduct, waitFor } from "../../fixtures.js";
+import * as gitOps from "@petrina/repositories/git";
+import { FAKE_AGENT, Fakes, createProductRepository, tempDir, waitFor } from "../../fixtures.js";
+import { fakeAgentSessions } from "../../fixtures/fake-agent-sessions.js";
+import { installSharedWorkflowFastPaths, materializeCleanWorktree, readRef } from "../../fixtures/shared-preparation.js";
 const cases = engineCaseFixtures();
-afterAll(() => cases.close());
+const landSeeds = new Map<string, Promise<{ root: string; objects: string; index: string; head: string }>>();
+function getLandSeed(baseSha: string) {
+  let pending = landSeeds.get(baseSha);
+  if (!pending) {
+    pending = (async () => {
+      const root = tempDir("petrina-readiness-land-seed-");
+      const { path: repo } = await createProductRepository(root, { origin: "none" });
+      writeFileSync(join(repo, "required-fix.txt"), "The required source fix\n");
+      await gitOps.commitChanges(repo, "Land the required source fix");
+      const head = readRef(join(repo, ".git"), "refs/heads/main")!;
+      return { root, objects: join(repo, ".git", "objects"), index: join(repo, ".git", "index"), head };
+    })();
+    landSeeds.set(baseSha, pending);
+  }
+  return pending;
+}
+afterAll(async () => {
+  await cases.close();
+  for (const seed of landSeeds.values()) {
+    await seed.then((entry) => rmSync(entry.root, { recursive: true, force: true })).catch(() => {});
+  }
+  landSeeds.clear();
+});
 
 
 /** A real saved Builder, native readiness handshake and driver; no unrelated planning or review. */
@@ -17,24 +42,25 @@ async function prepareFixture(owner: EngineCaseOwner, inTurn = false) {
   const gate = join(root, "readiness-held");
   owner.onStop(() => rmSync(gate, { force: true }));
   let checking = false;
-  const engine = owner.open(join(root, "data"), {
+  const engine = installSharedWorkflowFastPaths(owner.open(join(root, "data"), {
     agentCommand: profile => [process.execPath, FAKE_AGENT, fakes.dir, `--record-tool=${profile.toolId}`, ...(checking && profile.toolId === "codex" ? [`--hold-open-in-checks=${gate}`] : [])],
+    startAgentSession: fakeAgentSessions(fakes, { recordTool: true }),
     toolPath: () => process.execPath,
-  });
+  }), { skipDriverPrepare: true, skipUpToDate: false, skipPrepareChecks: true, skipReviewCopies: true, skipReviewInputDiffs: true, fastCheckCapture: true, fastCleanup: true, fastCheckpoints: true });
   engine.schedule = () => {};
   await engine.waitUntilReady();
   engine.s.setup!.checks = engine.s.tools.map(tool => ({ id: tool.id as CheckId, status: "ready", at: Date.now() }));
   engine.s.tools.forEach(tool => { tool.status = "ready"; });
-  const path = await makeProduct(join(root, "product"));
+  const { path, initialSha: base } = await createProductRepository(join(root, "product"), { origin: "none" });
   const product = { id: "p", name: "Product", path, repo: "local/product", tone: "blue" as const, defaultBranch: "main", remoteRefused: "Local delivery only", checks: [] };
   engine.s.products.push(product);
   const id = engine.addTask({ productId: "p", title: "Resume the saved Builder", backlog: true });
   const prerequisite = engine.addTask({ productId: "p", title: "Land the required source", backlog: true });
   const task = engine.task(id)!, scope = executionFor(task);
-  const worktree = join(root, "work"), branch = "task-change", base = await git(path, "rev-parse", "HEAD");
-  await git(path, "worktree", "add", "-qb", branch, worktree, "main");
+  const worktree = join(root, "work"), branch = "task-change";
   Object.assign(scope.work, { worktree, branch, baseSha: base, base: "main", delivery: "local",
     source: { product: { ...product }, start: { kind: "default", branch: "main" }, destination: { mode: "local", kind: "branch", repo: product.repo, branch: "main" }, confirmed: true, initialSha: base } });
+  await materializeCleanWorktree(engine, scope, path, "main", base);
   const build = { id: "build", title: "Build", kind: "do" as const, roleId: "builder", profileIds: ["sol-high"] };
   task.plan = { rationale: "The next Builder return needs current source", plannerProfileId: "sol-high", stages: [build,
     { id: "review", title: "Review", kind: "review-chain", roleId: "code-reviewer", profileIds: ["opus-high"] },
@@ -63,7 +89,27 @@ async function prepareFixture(owner: EngineCaseOwner, inTurn = false) {
     reached: (during: Promise<unknown>) => waitFor(() => existsSync(`${gate}.reached`), "the saved Builder's readiness handshake", undefined, { during }),
     unblock: () => rmSync(gate, { force: true }),
     hold() { engine.setRuntimeWait(id, [prerequisite], "This Builder needs the source fix", "readiness-hold"); engine["driver"].syncRuntimeWaits(); },
-    async land() { writeFileSync(join(path, "required-fix.txt"), "The required source fix\n"); await git(path, "add", "."); await git(path, "commit", "-qm", "Land the required source fix"); return git(path, "rev-parse", "HEAD"); },
+    async land() {
+      writeFileSync(join(path, "required-fix.txt"), "The required source fix\n");
+      const currentMain = readRef(join(path, ".git"), "refs/heads/main");
+      if (currentMain === base) {
+        const seed = await getLandSeed(base);
+        for (const entry of readdirSync(seed.objects)) {
+          if (entry.length !== 2) continue;
+          const srcSub = join(seed.objects, entry), dstSub = join(path, ".git", "objects", entry);
+          mkdirSync(dstSub, { recursive: true });
+          for (const file of readdirSync(srcSub)) {
+            const dstFile = join(dstSub, file);
+            if (!existsSync(dstFile)) cpSync(join(srcSub, file), dstFile);
+          }
+        }
+        cpSync(seed.index, join(path, ".git", "index"));
+        writeFileSync(join(path, ".git", "refs", "heads", "main"), `${seed.head}\n`);
+        return seed.head;
+      }
+      await gitOps.commitChanges(path, "Land the required source fix");
+      return readRef(join(path, ".git"), "refs/heads/main") ?? (await gitOps.head(path))!;
+    },
     release(how: "clear" | "landed", latest: string) {
       if (how === "clear") engine.setRuntimeWait(id, [], "The required source is available", "readiness-clear");
       else { const required = engine.task(prerequisite)!; required.repository!.delivery = "local"; required.repository!.landed = { branch: "main", sha: latest }; required.state = "done"; engine["driver"].syncRuntimeWaits(); }

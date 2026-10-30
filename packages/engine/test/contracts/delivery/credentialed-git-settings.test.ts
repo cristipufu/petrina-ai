@@ -1,8 +1,9 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { plantedGitProgram } from "@petrina/test-support/git-program";
 import { credentialedDelivery, plainGitControl } from "../../fixtures/security-delivery.js";
+import { commitLooseOnRef, readRef } from "../../fixtures/shared-preparation.js";
 import { ADDRESS, git } from "../../support.js";
 import { securityWorlds } from "../../fixtures/security.js";
 
@@ -13,19 +14,19 @@ for (const mode of ["pull-request", "release"] as const) {
     it(`publishes a ${mode} only to the saved address, with no hooks, extra tags or submodules, whatever the remote, push address and hooks now say`, async () => {
       await world(`redirect-${mode}`, async ({ world: w }) => {
       const evil = join(w.dir, "evil.git");
-      await git(w.dir, "init", "-q", "--bare", "-b", "main", evil);
+      cpSync(w.remote, evil, { recursive: true });
+      rmSync(join(evil, "refs", "heads", "main"), { force: true });
       // A submodule whose newest commit is only local; the work being pushed points at it.
       const libOrigin = join(w.dir, "lib.git");
-      await git(w.dir, "init", "-q", "--bare", "-b", "main", libOrigin);
-      const lib = join(w.dir, "lib");
-      await git(w.dir, "init", "-q", "-b", "main", lib);
-      await git(lib, "-c", "user.email=t@example.com", "-c", "user.name=T", "commit", "-q", "--allow-empty", "-m", "Library");
-      await git(lib, "push", "-q", libOrigin, "main");
+      cpSync(w.remote, libOrigin, { recursive: true });
       await git(w.clone, "-c", "protocol.file.allow=always", "submodule", "add", "-q", libOrigin, "lib");
       await git(w.clone, "commit", "-q", "-m", "Add the library");
-      await git(w.clone, "push", "-q", w.remote, "main");
-      await git(join(w.clone, "lib"), "-c", "user.email=t@example.com", "-c", "user.name=T", "commit", "-q", "--allow-empty", "-m", "Not pushed");
-      const unpushed = await git(join(w.clone, "lib"), "rev-parse", "HEAD");
+      const cloneMain = readRef(join(w.clone, ".git"), "refs/heads/main")!;
+      cpSync(join(w.clone, ".git", "objects"), join(w.remote, "objects"), { recursive: true });
+      writeFileSync(join(w.remote, "refs", "heads", "main"), `${cloneMain}\n`);
+      mkdirSync(join(w.clone, ".git", "refs", "remotes", "origin"), { recursive: true });
+      writeFileSync(join(w.clone, ".git", "refs", "remotes", "origin", "main"), `${cloneMain}\n`);
+      const unpushed = commitLooseOnRef(join(w.clone, ".git", "modules", "lib"), { ref: "refs/heads/main", message: "Not pushed" })!;
       w.setScript((script) => (script.gitlink = { path: "lib", sha: unpushed }));
       // An extra annotated tag on work that gets pushed.
       await git(w.clone, "tag", "-a", "planted", "-m", "Should never travel", "HEAD");

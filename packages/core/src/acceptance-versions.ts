@@ -1,6 +1,12 @@
 import type { DeepMutable } from "./flow.js";
 import type { Task } from "./model.js";
 
+/** Whether applying shared version observations can change saved evidence. */
+export function hasAcceptanceVersionConsumers(task: Pick<Task, "repositories" | "brief">): boolean {
+  return !!task.repositories && (task.repositories.some(work => !!work.checks)
+    || !!task.brief?.acceptance.some(item => item.verification === "passed" && !!item.versions && Object.keys(item.versions).length > 0));
+}
+
 /** Apply already observed code identities; native observation remains owned by the caller. */
 export function applyAcceptanceVersions(task: DeepMutable<Pick<Task, "repositories" | "brief" | "acceptancePassed">>, current: Readonly<Record<string, string>>): void {
   if (!task.repositories) return;

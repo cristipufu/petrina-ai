@@ -1,19 +1,26 @@
 import { newProgramsStart } from "@petrina/test-support/new-program";
-import {afterAll,afterEach,beforeAll,describe,expect,it} from "bun:test";
-import {existsSync,mkdirSync,readdirSync,readFileSync,rmSync,writeFileSync} from "node:fs";
-import {join} from "node:path";
-import {sessionState} from "../../../src/terminal.js";
-import {removeDir,waitFor} from "@petrina/test-support/fixtures";
-import {terminalLauncher,type TerminalLauncher} from "../../fixtures/terminal-launcher.js";
-import {runCommand} from "@petrina/test-support/commands";
-const roots:string[]=[];afterAll(()=>roots.forEach(removeDir));
+import { afterAll, afterEach, describe, expect, it } from "bun:test";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { sessionState } from "../../../src/terminal.js";
+import { removeDir, waitFor } from "@petrina/test-support/fixtures";
+import { terminalLauncher, type TerminalLauncher } from "../../fixtures/terminal-launcher.js";
+import { runCommand } from "@petrina/test-support/commands";
+
+const roots: string[] = [];
+afterAll(() => roots.forEach(removeDir));
 
 describe.skipIf(process.platform === "win32")("the launcher runs one copy per task", () => {
-  beforeAll(() => newProgramsStart());
-
   const owned: TerminalLauncher[] = [];
-  afterEach(async () => { await Promise.all(owned.splice(0).map(owner => owner.close())); });
-  const launcher = async () => { const owner = await terminalLauncher(roots); owned.push(owner); return owner; };
+  afterEach(async () => {
+    await Promise.all(owned.splice(0).map((owner) => owner.close()));
+  });
+  const launcher = async () => {
+    await newProgramsStart();
+    const owner = await terminalLauncher(roots);
+    owned.push(owner);
+    return owner;
+  };
 
   /** Four copies started at the same moment: every one but one stops at once, saying the tool is open already, and the tool opens once. */
   async function together(it: Awaited<ReturnType<typeof launcher>>) {

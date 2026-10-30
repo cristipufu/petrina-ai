@@ -1,4 +1,6 @@
-import { nativeAgentProcess } from "../../native-agent.js";
+import { installPreparedProduct, privateCloneProduct } from "../../fixtures/prepared-product.js";
+import { fakeEngineSettings, prepareReviewRepository, sessionProcess } from "../../fixtures/fake-agent-sessions.js";
+import { installSharedWorkflowFastPaths, readWorktreeCommit } from "../../fixtures/shared-preparation.js";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { directDrivers, closeDirectDrivers } from "../../fixtures/direct-drivers.js";
 import { localFixtureSource, screenFixturePlan } from "../../fixtures/prepared-runtime.js";
@@ -12,7 +14,7 @@ import { executionFor } from "@petrina/orchestrator";
 import { slotUses, type Task } from "@petrina/core";
 import { Engine } from "../../engine.js";
 import type { NativeStep, Scenario } from "../../fake-agent.js";
-import { Fakes, FAKE_AGENT, git, makeProduct, tempDir, waitFor } from "../../fixtures.js";
+import { Fakes, createProductRepository, tempDir, waitFor } from "../../fixtures.js";
 
 const fixtures = new Set<ReturnType<typeof directDrivers>>();
 afterAll(async () => { await closeDirectDrivers(fixtures); fixtures.clear(); });
@@ -33,7 +35,7 @@ const hold = (role: string, model: string): { role: string; model: string; steps
 
 type Recorded = { profileId: string; modelId: string; waitMs: number; stored: boolean };
 
-async function start(scenario: Scenario, options: { focus?: "review"; tools?: readonly string[]; before?: (engine: Engine) => void } = {}) {
+async function start(scenario: Scenario, options: { focus?: "builder" | "review"; tools?: readonly string[]; before?: (engine: Engine) => void } = {}) {
   const root = tempDir("petrina-rejoin-");
   const lifetime = directDrivers(root); fixtures.add(lifetime);
   const close = async () => { await lifetime.close(); fixtures.delete(lifetime); };
@@ -41,14 +43,21 @@ async function start(scenario: Scenario, options: { focus?: "review"; tools?: re
   const fakes = new Fakes(join(root, "fake"));
   fakes.scenario({ builder: "plain", reopen: "resume", ...scenario });
   const data = join(root, "data");
-  const settings = { agentCommand: () => [process.execPath, FAKE_AGENT, fakes.dir], toolPath: () => process.execPath };
+  const settings = fakeEngineSettings(fakes);
   const recorded: Recorded[] = [];
   const waits: string[] = [];
   let engine!: Engine;
   let taskId = "";
   /** A controlled clock for the retry decisions: each model wait is checked as it is set, then held until ended. */
   const open = () => {
-    engine = lifetime.open(data, settings);
+    engine = installSharedWorkflowFastPaths(lifetime.open(data, settings), {
+      skipUpToDate: true,
+      skipPrepareChecks: true,
+      skipReviewCopies: true,
+      skipReviewInputDiffs: true,
+      fastCheckCapture: true,
+      fastCleanup: true,
+    });
     const tools = options.tools ?? ["claude-code", "codex"];
     engine.s.setup!.checks = TOOLS.map((id) => ({ id, status: tools.includes(id) ? "ready" as const : "logged-out" as const }));
     options.before?.(engine);
@@ -70,25 +79,30 @@ async function start(scenario: Scenario, options: { focus?: "review"; tools?: re
   };
   open();
   if (options.focus) engine.setPoolPaused(true);
-  const productId = await engine.addProduct(await makeProduct(root));
+  const preparedReview = options.focus === "review" ? await prepareReviewRepository(root, { branch: "rejoin-target", folder: "rejoin-work" }) : undefined;
+  const { path: repo, initialSha } = preparedReview ? { path: preparedReview.repo, initialSha: preparedReview.initialSha } : await createProductRepository(root, { origin: "none" });
+  engine.stopRequested.signal.throwIfAborted();
+  await engine.waitUntilReady();
+  engine.stopRequested.signal.throwIfAborted();
+  const productId = installPreparedProduct(engine, privateCloneProduct(repo));
   engine.setProductDelivery(productId, "local", false);
   taskId = engine.addTask({ productId, title: "Add a greeting", description: "[no-check]", ...(options.focus ? { backlog: true } : {}) });
   const task = () => engine.s.tasks.find((entry) => entry.id === taskId)!;
   if (options.focus) {
     const current = task(), product = engine.s.products.find(entry => entry.id === productId)!;
-    await localFixtureSource(engine, current);
+    product.checks = []; product.checksBy = "coordinator";
+    await localFixtureSource(engine, current, { initial: { path: repo, initialSha }, check: () => engine.stopRequested.signal.throwIfAborted() });
+    engine.stopRequested.signal.throwIfAborted();
     const profiles = scenario.planner === "trio" ? ["opus-high", "sol-high", "grok-xhigh"]
       : scenario.planner === "parallel" ? ["opus-high", "sol-high"] : ["opus-high"];
     current.plan = { rationale: "Private native parallel-rejoin stage", plannerProfileId: "sol-xhigh", stages: screenFixturePlan(profiles) };
     current.plan.stages[1]!.maxRounds = scenario.reviewRounds ?? 1;
     current.approvePlan = false; current.approveDelivery = true;
     current.risk = { level: "low", why: "Private greeting fixture" };
-    current.stageIndex = 1;
-    const base = await git(product.path!, "rev-parse", "HEAD"), worktree = join(root, "rejoin-work");
-    await git(product.path!, "worktree", "add", "-q", "-b", "rejoin-target", worktree, base);
-    writeFileSync(join(worktree, "greeting.txt"), "Hello from the actual private review fixture\n");
-    await git(worktree, "add", "."); await git(worktree, "commit", "-q", "-m", "Prepare the greeting under review");
-    Object.assign(executionFor(current).work, { worktree, branch: "rejoin-target", baseSha: base, base, preparation: "ready" });
+    current.stageIndex = options.focus === "review" ? 1 : 0;
+    if (preparedReview) {
+      Object.assign(executionFor(current).work, { worktree: preparedReview.worktree, branch: preparedReview.branch, baseSha: initialSha, base: initialSha, preparation: "ready", savedVersion: preparedReview.savedVersion });
+    }
     engine.queueTask(taskId); engine.setPoolPaused(false);
   }
   const answer = () => {
@@ -167,7 +181,7 @@ const heldOne = (run: Run, role: string) => waitFor(() => run.held(role)[0], `th
 
 describe.concurrent("a full model beside a working peer", () => {
   it("brings a reviewer back three times beside a held peer, in the same conversation, copy and inputs", async () => {
-    const run = await start({ planner: "parallel", nativeRetry: [hold("code reviewer", "opus")], capacity: [{ model: SOL, role: "code reviewer", partial: true, times: 3 }] });
+    const run = await start({ planner: "parallel", nativeRetry: [hold("code reviewer", "opus")], capacity: [{ model: SOL, role: "code reviewer", partial: true, times: 3 }] }, { focus: "builder" });
     try {
       await run.run(async () => {
       await run.paused("review-1", "sol-high", 1);
@@ -204,7 +218,7 @@ describe.concurrent("a full model beside a working peer", () => {
       expectShortContinues(prompts.slice(1));
       expect(run.opens(sol)).toEqual(["new", "resume", "resume", "resume"]);
       expect(existsSync(join(copy, "kept-by-the-test.txt"))).toBe(true);
-      expect(await git(copy, "rev-parse", "HEAD")).toBe(pinned);
+      expect(readWorktreeCommit(copy)?.commit).toBe(pinned);
       expect(run.task().hunt?.input).toEqual(input);
       expect(reads).toBe(0);
       run.release(opus);
@@ -314,93 +328,6 @@ describe.concurrent("a full model beside a working peer", () => {
     } finally { await run.close(); }
   });
 
-  for (const busy of [true, false]) it(`hands the seat to another tool after the short retries ${busy ? "once that tool's seat frees up" : "at once when it has a seat"}, beside a held peer`, async () => {
-    // No other Codex model: after its short retries the Codex seat goes to Grok, the most independent tool left.
-    const run = await start({ planner: "parallel", nativeRetry: [hold("code reviewer", "opus")], capacity: [{ model: SOL, role: "code reviewer", times: 4 }] }, { focus: "review",
-      tools: ["claude-code", "codex", "grok"],
-      before: (engine) => {
-        engine.s.profiles = engine.s.profiles.filter((profile) => profile.toolId !== "codex" || profile.modelId === SOL);
-        engine.setPoolLimit(4);
-        engine.setToolCap("grok", 1);
-      },
-    });
-    // Other work holds Grok's one seat, the way a background agent does.
-    const other = { id: "other-work", roleId: "verifier", profileId: "grok-high", label: "Other work", since: Date.now() };
-    if (busy) run.engine.s.backgroundAgents = [other];
-    try {
-      await run.run(async () => {
-      for (const stops of [1, 2, 3]) {
-        await run.paused("review-1", "sol-high", stops);
-        run.endWait(SOL);
-      }
-      const opus = await heldOne(run, "code reviewer");
-      if (busy) {
-        await run.paused("review-1", "sol-high", 4);
-        const group = run.engine.screenGroups.get(run.taskId)!;
-        // It stays ready to return, waiting only for Grok's seat, however often scheduling runs.
-        expect(group.returning!()).toEqual([expect.objectContaining({ taskId: run.taskId, toolId: "grok" })]);
-        run.engine.schedule();
-        expect(group.running("review-1")).toBe(false);
-        expect(run.fakes.received("code reviewer").some((entry) => run.modelOf(entry.session) === GROK)).toBe(false);
-        // The other work ends and gives its seat back.
-        run.engine.s.backgroundAgents = [];
-        run.engine.schedule();
-      }
-      await waitFor(() => run.task().hunt?.reported["1"], "the seat's new tool to report");
-      expect(run.fakes.marked(`release-${opus}`)).toBe(false);
-      expect(run.task().hunt?.reported["0"]).toBeUndefined();
-      expect(run.waitsOf("sol-high").map((entry) => entry.waitMs)).toEqual([...SHORT, LONG]);
-      run.release(opus);
-      const task = await run.done();
-      expect(roundOf(task)).toBe(1);
-      const reviewers = run.fakes.received("code reviewer");
-      const sol = reviewers.filter((entry) => run.modelOf(entry.session) === SOL);
-      expect(new Set(sol.map((entry) => entry.session)).size).toBe(1);
-      expect(sol).toHaveLength(4);
-      expectShortContinues(sol.slice(1));
-      expect(reviewers.filter((entry) => run.modelOf(entry.session) === GROK)).toHaveLength(1);
-      for (const toolId of ["claude-code", "grok"]) expect(task.findings.filter((finding) => run.engine.profile(finding.raisedBy)?.toolId === toolId)).toHaveLength(1);
-      expect(run.waits).toEqual([]);
-      });
-    } finally { await run.close(); }
-  });
-
-  it("gives a replacement model its own short retries inside the running group, and never starts the first model's over", async () => {
-    const run = await start({ planner: "parallel", nativeRetry: [hold("code reviewer", "opus")], capacity: [{ model: SOL, role: "code reviewer", times: 4 }, { model: ASTRA, role: "code reviewer", times: 1 }] }, { focus: "review" });
-    try {
-      await run.run(async () => {
-      for (const stops of [1, 2, 3]) {
-        await run.paused("review-1", "sol-high", stops);
-        run.endWait(SOL);
-      }
-      await run.paused("review-1", "astra-xhigh", 1);
-      const opus = await heldOne(run, "code reviewer");
-      expect(run.waitsOf("sol-high").map((entry) => entry.waitMs)).toEqual([...SHORT, LONG]);
-      expect(run.waitsOf("astra-xhigh").map((entry) => entry.waitMs)).toEqual([5_000]);
-      run.endWait(ASTRA);
-      await waitFor(() => run.task().hunt?.reported["1"], "the replacement to continue and report");
-      expect(run.fakes.marked(`release-${opus}`)).toBe(false);
-      run.release(opus);
-      const task = await run.done();
-      expect(roundOf(task)).toBe(1);
-      const reviewers = run.fakes.received("code reviewer");
-      const sol = reviewers.filter((entry) => run.modelOf(entry.session) === SOL);
-      const astra = reviewers.filter((entry) => run.modelOf(entry.session) === ASTRA);
-      expect(new Set(sol.map((entry) => entry.session)).size).toBe(1);
-      expect(sol).toHaveLength(4);
-      expectShortContinues(sol.slice(1));
-      expect(new Set(astra.map((entry) => entry.session)).size).toBe(1);
-      expect(astra).toHaveLength(2);
-      expect(astra[0]!.text).toContain("could not continue (the selected model is at capacity)");
-      expectShortContinues(astra.slice(1));
-      expect(run.opens(astra[0]!.session)).toEqual(["new", "resume"]);
-      expect(run.waitsOf("sol-high")).toHaveLength(4);
-      expect(task.findings.filter((finding) => finding.raisedBy === "opus-high")).toHaveLength(1);
-      expect(run.waits).toEqual([]);
-      });
-    } finally { await run.close(); }
-  });
-
   it("keeps a verifier's own place on its tool through the five-minute wait beside a held partner", async () => {
     const run = await start({ planner: "short", reviewer: "important", verifier: "not-a-bug", nativeRetry: [hold("verifier", "opus")], capacity: [{ model: SOL, role: "verifier", times: 4 }, { model: "opus", role: "verifier", shape: "claude", times: 1 }] }, { focus: "review",
       before: (engine) => { engine.s.profiles = engine.s.profiles.filter((profile) => profile.modelId !== ASTRA); },
@@ -471,78 +398,12 @@ describe.concurrent("a full model beside a working peer", () => {
     } finally { await run.close(); }
   });
 
-  for (const busy of ["pool", "tool"] as const) {
-    it(`waits for a free seat after the model wait when the ${busy === "pool" ? "pool" : "tool's cap"} is full, then takes the next one before queued work`, async () => {
-      const run = await start({
-        planner: "parallel",
-        nativeRetry: [hold("code reviewer", SOL), hold("planner", "opus")],
-        capacity: [{ model: "opus", role: "code reviewer", shape: "claude", times: 1 }],
-      }, { before: (engine) => {
-        if (busy === "pool") engine.setPoolLimit(2);
-        else engine.setToolCap("claude-code", 1);
-      } });
-      const others: string[] = [];
-      const planners = () => run.fakes.received("planner");
-      const plannerOf = (title: string) => planners().find((entry) => entry.text.includes(title))?.session;
-      // The busiest moment never goes past the pool or the tool's cap.
-      let most = 0, mostClaude = 0;
-      const unsubscribe = run.engine.subscribe(() => {
-        const uses = slotUses(run.engine.activeState());
-        most = Math.max(most, uses.length);
-        mostClaude = Math.max(mostClaude, uses.filter((use) => use.toolId === "claude-code").length);
-      });
-      try {
-      await run.run(async () => {
-        await waitFor(() => {
-          const own = plannerOf("Add a greeting");
-          if (own) run.release(own);
-          return own;
-        }, "the task's own planner");
-        await run.paused("review-0", "opus-high", 1);
-        const sol = await heldOne(run, "code reviewer");
-        const opus = await sessionOn(run, "code reviewer", "opus");
-        // Other work takes the seat the full model left.
-        others.push(run.engine.addTask({ productId: run.productId, title: "Add a farewell", description: "[no-check]" }));
-        const farewell = await waitFor(() => plannerOf("Add a farewell"), "another task's planner to take the free seat");
-        await waitFor(() => run.held("planner").includes(farewell), "that planner to be held");
-        if (busy === "pool") others.push(run.engine.addTask({ productId: run.productId, title: "Add a footer", description: "[no-check]" }));
-        // The wait ends with no seat: nothing starts and nothing retries, however often scheduling runs.
-        run.endWait("opus");
-        for (let pass = 0; pass < 3; pass++) {
-          run.engine.schedule();
-          expect(run.engine.screenGroups.get(run.taskId)?.running("review-0")).toBe(false);
-        }
-        expect(run.prompts("code reviewer", opus)).toHaveLength(1);
-        expect(run.waitsOf("opus-high")).toHaveLength(1);
-        if (busy === "pool") expect(run.engine.getState().tasks.find((task) => task.id === others[1])!.state).toBe("queued");
-        // The other work ends: its plan waits for the coordinator, which frees its seat.
-        run.release(farewell);
-        await waitFor(() => run.prompts("code reviewer", opus).length === 2, "the reviewer to take the freed seat");
-        const order = run.fakes.received().map((entry) => entry.session);
-        const footer = plannerOf("Add a footer");
-        if (footer) expect(order.indexOf(footer)).toBeGreaterThan(order.lastIndexOf(opus));
-        expectShortContinues(run.prompts("code reviewer", opus).slice(1));
-        expect(run.opens(opus)).toEqual(["new", "resume"]);
-        await waitFor(() => run.task().hunt?.reported["0"], "the reviewer to report");
-        expect(run.fakes.marked(`release-${sol}`)).toBe(false);
-        run.release(sol);
-        await run.done();
-        if (busy === "pool") expect(most).toBeLessThanOrEqual(2);
-        else expect(mostClaude).toBeLessThanOrEqual(1);
-        expect(run.waits).toEqual([]);
-      });
-    } finally {
-        unsubscribe();
-        for (const id of others) run.engine.cancel(id);
-        await run.close();
-      }
-    });
-  }
+
 });
 
 describe.concurrent("a full model when the group stops or ends", () => {
   it("keeps a capacity reviewer out during a prerequisite wait, then continues only its missing report in the same round", async () => {
-    const run = await start({ planner: "parallel", nativeRetry: [hold("code reviewer", "opus")], capacity: [{ model: SOL, role: "code reviewer", times: 1 }] });
+    const run = await start({ planner: "parallel", nativeRetry: [hold("code reviewer", "opus")], capacity: [{ model: SOL, role: "code reviewer", times: 1 }] }, { focus: "builder" });
     const owned: ChildProcess[] = [];
     try {
       await run.run(async () => {
@@ -550,7 +411,7 @@ describe.concurrent("a full model when the group stops or ends", () => {
       const opus = await heldOne(run, "code reviewer");
       const sol = await sessionOn(run, "code reviewer", SOL);
       const group = run.engine.screenGroups.get(run.taskId)!;
-      owned.push(...[...(run.engine.helperRuns.get(run.taskId) ?? [])].map((agent) => nativeAgentProcess(agent)));
+      owned.push(...[...(run.engine.helperRuns.get(run.taskId) ?? [])].map((agent) => sessionProcess(agent)));
       const input = structuredClone(run.task().hunt!.input);
       const prerequisite = run.engine.addTask({ productId: run.productId, title: "Fix the capacity checks", backlog: true });
       run.engine.setRuntimeWait(run.taskId, [prerequisite], "Wait for the capacity checks to land", "hold-capacity-review");

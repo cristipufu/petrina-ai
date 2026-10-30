@@ -2,8 +2,7 @@ import { SourceBackground } from "@petrina/orchestrator";
 import { executionFor, resolveSource, SourceSelections, type RepositoryContext } from "@petrina/orchestrator";
 import { type TaskSource, type WorkChoice } from "@petrina/core";
 import * as git from "@petrina/repositories/git";
-import { background, sourcePr } from "@petrina/repositories/source-github";
-import type { Kernel, MTask } from "./kernel.js";
+import type { Kernel, RuntimeTask } from "./kernel.js";
 import type { Connections } from "./connection.js";
 import { sourceQueries } from "@petrina/repositories/source-queries";
 import { mkdir, readdir, realpath, rm } from "node:fs/promises";
@@ -16,11 +15,11 @@ export class Sources {
   constructor(private readonly k: Kernel, private readonly connections: Connections) {
     this.sourceBackground = new SourceBackground({
       serial: (productId, read) => connections.serial(productId, read),
-      readPullRequest: (repo, number) => sourcePr(repo, number, k.options.gh),
-      background: (repo, pr) => background(repo, pr, k.options.gh),
+      readPullRequest: (repo, number) => k.github.sourcePr(repo, number),
+      background: (repo, pr) => k.github.background(repo, pr),
       checkpoint: () => k.commitNow(), now: () => Date.now(),
     });
-    this.queries = sourceQueries(k.dataDir, k.options.gh);
+    this.queries = sourceQueries(k.dataDir, k.github);
     this.selections = new SourceSelections({
       products: () => k.s.products,
       role: (id, task) => k.role(id, task),
@@ -36,19 +35,19 @@ export class Sources {
     });
   }
 
-  resolve(task: MTask, choice: WorkChoice, candidate?: TaskSource["product"]): Promise<TaskSource> {
+  resolve(task: RuntimeTask, choice: WorkChoice, candidate?: TaskSource["product"]): Promise<TaskSource> {
     return resolveSource(executionFor(task), choice, this.k.s.products, this.queries, candidate);
   }
 
-  propose(task: MTask, proposal: readonly WorkChoice[] | undefined, coordinator = false): Promise<void> {
+  propose(task: RuntimeTask, proposal: readonly WorkChoice[] | undefined, coordinator = false): Promise<void> {
     return this.selections.propose(task, proposal, coordinator);
   }
 
-  configureAddition(task: MTask, repo: string, name: string, path: string): Promise<void> {
+  configureAddition(task: RuntimeTask, repo: string, name: string, path: string): Promise<void> {
     return this.selections.configureAddition(task, repo, name, path);
   }
 
-  async addApproved(task: MTask, productId: string, signal: AbortSignal): Promise<void> {
+  async addApproved(task: RuntimeTask, productId: string, signal: AbortSignal): Promise<void> {
     const row = task.workRows?.find((entry) => entry.source?.product.id === productId);
     const addition = row?.addition;
     if (!addition || addition.ready) return;
@@ -90,7 +89,7 @@ export class Sources {
     this.k.commitNow();
   }
 
-  confirm(task: MTask): void { this.selections.confirm(task); }
+  confirm(task: RuntimeTask): void { this.selections.confirm(task); }
 
   refresh(scope: RepositoryContext, force = false): Promise<void> { return this.sourceBackground.refresh(scope, force); }
 
@@ -107,7 +106,7 @@ export class Sources {
     const result = await this.connections.serial(product.id, () => git.fetchRef(product.path!, remote, from, ref));
     if (!result.ok) throw new Error(`Could not fetch the approved starting point (${this.connections.why(scope, result)}). Retry; no other branch or older copy was substituted.`);
     const replaced = "The starting branch's history was replaced or diverged. The task's work is preserved; it cannot be published safely without a decision.";
-    if (source.initialSha && !(await git.contains(product.path!, result.sha, source.initialSha))) throw new Error(replaced);
+    if (source.initialSha && source.initialSha !== result.sha && !(await git.contains(product.path!, result.sha, source.initialSha))) throw new Error(replaced);
     // A commit already brought in must still be in the new tip. A tip that is only behind commits on this
     // computer is not a rewrite: GitHub has not moved, and those commits were never on it. Dropping a tip
     // already fetched (a reset or a force-push) still stops, so a removed change is not put back.

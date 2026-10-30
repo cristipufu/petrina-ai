@@ -1,31 +1,69 @@
+import { engineCaseFixtures, type EngineCaseOwner } from "../../fixtures/engine-cases.js";
 import { afterAll, describe, expect, it } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Scenario } from "../../fake-agent.js";
 import { executionFor } from "@petrina/orchestrator";
-import { runtimeWaitView, slotUses, type Task } from "@petrina/core";
-import { Engine } from "../../engine.js";
-import { Fakes, FAKE_AGENT, git, makeProduct, removeDir, tempDir, waitFor } from "../../fixtures.js";
+import * as gitOps from "@petrina/repositories/git";
+import { normalizePlan, runtimeWaitView, slotUses, type DeepMutable, type Task } from "@petrina/core";
+import { runtimePrerequisiteAgents, runtimePrerequisitePlan } from "../../fixtures/runtime-prerequisite-agents.js";
+import { fakeAgentSessions } from "../../fixtures/fake-agent-sessions.js";
+import { installPreparedProduct, privateCloneProduct } from "../../fixtures/prepared-product.js";
+import { localFixtureSource } from "../../fixtures/prepared-runtime.js";
+import { installSharedWorkflowFastPaths } from "../../fixtures/shared-preparation.js";
+import { privateAgentToolProbe } from "../../scripted-probes.js";
 
-const roots: string[] = [];
-afterAll(() => roots.forEach(removeDir));
+import { Fakes, FAKE_AGENT, git, createProductRepository, waitFor } from "../../fixtures.js";
+const engineCases = engineCaseFixtures();
+afterAll(() => engineCases.close());
+
+
 
 /** Admit only the workflow under test; every fake turn has an explicit release signal. */
-async function fixture(parallel = false, scenario: Partial<Scenario> = {}) {
-  const root = tempDir("petrina-runtime-wait-"); roots.push(root);
+async function fixture(caseOwner: EngineCaseOwner, parallel = false, scenario: Partial<Scenario> = {}, boundary: "native" | "scripted" | "complete" = "native") {
+  const root = caseOwner.root;
   const fakes = new Fakes(join(root, "fake"));
   fakes.scenario({ controlled: true, planner: parallel ? "parallel" : "short", builder: "plain", reopen: "resume", ...scenario });
   // Voter selection uses installed tools, independently of the scripted agent command.
-  const options = { agentCommand: () => [process.execPath, FAKE_AGENT, fakes.dir], toolPath: () => process.execPath, remote: join(root, "origin.git") };
+  const scripted = boundary === "scripted" ? runtimePrerequisiteAgents(fakes) : undefined;
+  const options = { agentCommand: () => {
+    if (scripted) throw new Error("This runtime prerequisite case requires its scripted participants");
+    return [process.execPath, FAKE_AGENT, fakes.dir];
+  }, startAgentSession: scripted ? scripted.startAgentSession : fakeAgentSessions(fakes),
+  toolProbe: privateAgentToolProbe(),
+  toolPath: () => process.execPath, remote: join(root, "origin.git") };
   const home = join(root, "data");
-  const engine = new Engine(home, options);
-  const clone = await makeProduct(root);
-  const productId = await engine.addProduct(clone);
+  const engine = caseOwner.open(home, options);
+  installSharedWorkflowFastPaths(engine, {
+    skipUpToDate: true,
+    skipPrepareChecks: true,
+    skipReviewCopies: true,
+    skipReviewInputDiffs: true,
+    fastCheckCapture: true,
+  });
+  if (boundary !== "complete") engine.setPoolPaused(true);
+  const repository = await createProductRepository(root), clone = repository.path;
+  caseOwner.check();
+  await engine.waitUntilReady(); caseOwner.check();
+  const productId = boundary === "complete" ? await engine.addProduct(clone) : installPreparedProduct(engine, privateCloneProduct(clone));
+  caseOwner.check();
   engine.setProductDelivery(productId, "local", true);
-  engine.setProductChecks(productId, [{ name: "Version", command: "git --version" }]);
+  const product = engine.s.products.find(entry => entry.id === productId)!;
+  product.checks = [];
+  product.checksBy = "coordinator";
   const prerequisite = engine.addTask({ productId, title: "Fix capacity", backlog: true });
-  const id = engine.addTask({ productId, title: "Keep current progress", description: "[no-check]" });
-  const release = (session: string) => writeFileSync(join(fakes.dir, `release-${session}`), "go");
+  const id = engine.addTask({ productId, title: "Keep current progress", description: "[no-check]", ...(boundary !== "complete" ? { backlog: true } : {}) });
+  if (boundary !== "complete") {
+    const current = engine.task(id)!;
+    await localFixtureSource(engine, current, { initial: repository, check: () => caseOwner.check() }); caseOwner.check();
+    const plan = normalizePlan({ task: current, result: runtimePrerequisitePlan(parallel), roles: engine.s.roles, profiles: engine.s.profiles,
+      plannerProfileId: "opus-high", releaseManagerProfileId: "opus-high", onUsable: id => engine.onUsable(id) });
+    current.plan = structuredClone(plan) as DeepMutable<typeof plan>;
+    current.approvePlan = false; current.stageIndex = 0;
+    current.risk = { level: "medium", why: "Declared prerequisite workflow input" };
+    engine.queueTask(id); engine.setPoolPaused(false);
+  }
+  const release = (session: string) => scripted ? scripted.release(session) : writeFileSync(join(fakes.dir, `release-${session}`), "go");
   const task = (owner = engine): Task => owner.taskDetails(id)!;
   const answer = (owner = engine) => {
     for (const item of owner.getState().inbox) {
@@ -66,7 +104,8 @@ async function fixture(parallel = false, scenario: Partial<Scenario> = {}) {
 
 describe.concurrent("runtime prerequisites", () => {
   it("accepts the admitted Builder once, frees its slot, survives restart and keeps non-landing prerequisites held", async () => {
-    const r = await fixture(); let owner = r.engine;
+  return engineCases.use("petrina-runtime-wait-", async caseOwner => {
+    const r = await fixture(caseOwner); let owner = r.engine;
     try {
       const rounds = structuredClone(r.task().rounds);
       r.hold();
@@ -82,8 +121,8 @@ describe.concurrent("runtime prerequisites", () => {
       const opens = r.fakes.opens().length;
       owner.setPoolPaused(true); owner.setPoolPaused(false);
       expect(r.task().runtimeWait?.changes).toHaveLength(1);
-      await owner.shutdown();
-      owner = new Engine(r.home, r.options);
+      await caseOwner.stop(owner);
+      owner = caseOwner.open(r.home, r.options);
       expect(owner.taskDetails(r.id)?.runtimeWait).toMatchObject({ reason: "The Linux checks need the capacity fix", after: [r.prerequisite] });
       owner.schedule();
       expect(owner.taskDetails(r.id)?.holdsSlot).toBe(false);
@@ -94,11 +133,14 @@ describe.concurrent("runtime prerequisites", () => {
       expect(r.fakes.opens()).toHaveLength(opens);
       owner.cancel(r.id);
       expect(owner.taskDetails(r.id)?.runtimeWait?.releaseReason).toBe("The task was cancelled");
-    } finally { await owner.shutdown(); }
+    } finally { await caseOwner.stop(owner); }
+
   });
+});
 
   it("keeps an unfinished review on its saved version, then updates before the next new step", async () => {
-    const r = await fixture(true);
+  return engineCases.use("petrina-runtime-wait-", async caseOwner => {
+    const r = await fixture(caseOwner, true, {}, "scripted");
     try {
       // One pool seat admits the first reviewer; the other seat remains unstarted.
       r.engine.setPoolLimit(1);
@@ -119,9 +161,9 @@ describe.concurrent("runtime prerequisites", () => {
       const base = held.baseSha;
       r.engine.sendMessage(r.id, "Keep the final Linux validation report", "queue");
       writeFileSync(join(r.clone, "incoming.txt"), "A fix on the starting branch");
-      await git(r.clone, "add", "incoming.txt"); await git(r.clone, "commit", "-qm", "Fix capacity");
+      await gitOps.commitChanges(r.clone, "Fix capacity");
       await git(r.clone, "push", "-q", "origin", "main");
-      const latest = await git(r.clone, "rev-parse", "HEAD");
+      const latest = (await gitOps.head(r.clone))!;
       r.engine.setRuntimeWait(r.id, [], "The coordinator resolved the prerequisite", "clear"); r.engine.schedule();
       const second = await r.until(() => r.fakes.received("code reviewer")[1], "the missing reviewer to start");
       expect(r.task().baseSha).toBe(base);
@@ -140,11 +182,14 @@ describe.concurrent("runtime prerequisites", () => {
       const completed = final.journey?.findLast(step => step.roleId === "code-reviewer");
       expect(completed?.result?.findingsSettled).toBe(true);
       expect(completed?.agentResults?.[0]).toEqual(firstReport);
-    } finally { await r.engine.shutdown(); }
+    } finally { await caseOwner.stop(r.engine); }
+
   });
+});
 
   it("releases only on confirmed landing and lets another task on the same product use the free seat", async () => {
-    const r = await fixture();
+  return engineCases.use("petrina-runtime-wait-", async caseOwner => {
+    const r = await fixture(caseOwner, false, {}, "scripted");
     try {
       r.engine.setPoolLimit(1); r.hold(); r.release(r.builder.session); await r.settled();
       const other = r.engine.addTask({ productId: r.productId, title: "Unrelated work" });
@@ -155,7 +200,7 @@ describe.concurrent("runtime prerequisites", () => {
       expect(slotUses(r.engine.activeState())).toEqual([]);
       expect(runtimeWaitView(r.task(), id => r.engine.taskDetails(id))).toMatchObject({ held: true, phase: "active", decisionNeeded: false });
       expect(r.fakes.received("code reviewer")).toHaveLength(0);
-      const sha = await git(r.clone, "rev-parse", "HEAD");
+      const sha = (await gitOps.head(r.clone))!;
       // Any save, including the engine's own timed one, moves a finished task without a working copy to History. Marked done
       // before a slow read and given its landing after it, the prerequisite was archived as done without a confirmed delivery,
       // and the wait rightly held for a decision. This save makes that order fail every time; the finish and landing go together.
@@ -168,11 +213,14 @@ describe.concurrent("runtime prerequisites", () => {
       await r.until(() => r.fakes.received("code reviewer")[0], "normal admission after landing");
       expect(r.task().runtimeWait).toMatchObject({ releaseReason: "All required tasks landed" });
       expect(r.task().runtimeWait?.refreshPending).toBeUndefined();
-    } finally { await r.engine.shutdown(); }
+    } finally { await caseOwner.stop(r.engine); }
+
   });
+});
 
   it("stops rather than using an older GitHub source when release cannot fetch", async () => {
-    const r = await fixture();
+  return engineCases.use("petrina-runtime-wait-", async caseOwner => {
+    const r = await fixture(caseOwner, false, {}, "scripted");
     try {
       r.hold(); r.release(r.builder.session); await r.settled();
       const current = r.engine.task(r.id)!;
@@ -195,11 +243,14 @@ describe.concurrent("runtime prerequisites", () => {
       }, "the saved release to recover through ordinary review");
       expect(resumed.runtimeWait?.refreshPending).toBeUndefined();
       expect(r.fakes.received("code reviewer")).toHaveLength(1);
-    } finally { await r.engine.shutdown(); }
+    } finally { await caseOwner.stop(r.engine); }
+
   });
+});
 
   it("keeps an admitted vote and blocks its missing voter until release", async () => {
-    const r = await fixture();
+  return engineCases.use("petrina-runtime-wait-", async caseOwner => {
+    const r = await fixture(caseOwner, false, {}, "scripted");
     try {
       r.fakes.scenario({ controlled: true, planner: "short", builder: "plain", reviewer: "important", verifier: "not-a-bug", reopen: "resume" });
       r.engine.setPoolLimit(1);
@@ -228,11 +279,14 @@ describe.concurrent("runtime prerequisites", () => {
       expect(final.journey?.flatMap(s => s.agentResults ?? []).filter(a => a.roleId === "verifier")).toHaveLength(r.fakes.received("verifier").length);
       expect(final.journey?.filter(step => step.roleId === "verifier").some(step => step.result?.findingsSettled)).toBe(true);
       expect(final.journey?.flatMap(step => step.agentResults ?? []).filter(result => result.roleId === "verifier")[0]).toEqual(firstVote);
-    } finally { await r.engine.shutdown(); }
+    } finally { await caseOwner.stop(r.engine); }
+
   });
+});
 
   it("keeps a refused admitted agent's conversation without admitting its replacement", async () => {
-    const r = await fixture(false, { capacity: [{ model: "gpt-6.1-sol", role: "builder", times: 1, waitFor: "capacity-release" }] });
+  return engineCases.use("petrina-runtime-wait-", async caseOwner => {
+    const r = await fixture(caseOwner, false, { capacity: [{ model: "gpt-6.1-sol", role: "builder", times: 1, waitFor: "capacity-release" }] });
     try {
       r.hold(); writeFileSync(join(r.fakes.dir, "capacity-release"), "go");
       const held = await r.settled();
@@ -241,17 +295,20 @@ describe.concurrent("runtime prerequisites", () => {
       expect(held.rounds).toEqual({});
       expect(held.timeline.some(entry => entry.text.includes("Started a fresh conversation"))).toBe(false);
       expect(held.runtimeWait?.refreshAfterStep).toBeDefined();
-    } finally { await r.engine.shutdown(); }
+    } finally { await caseOwner.stop(r.engine); }
+
   });
+});
 
   it("uses the existing Builder port when incoming fixes conflict", async () => {
-    const r = await fixture();
+  return engineCases.use("petrina-runtime-wait-", async caseOwner => {
+    const r = await fixture(caseOwner);
     try {
       r.hold(); r.release(r.builder.session); await r.settled();
       writeFileSync(join(r.clone, "greeting.txt"), "A different greeting from main\n");
-      await git(r.clone, "add", "greeting.txt"); await git(r.clone, "commit", "-qm", "Update the shared greeting");
+      await gitOps.commitChanges(r.clone, "Update the shared greeting");
       await git(r.clone, "push", "-q", "origin", "main");
-      const latest = await git(r.clone, "rev-parse", "HEAD");
+      const latest = (await gitOps.head(r.clone))!;
       r.engine.setRuntimeWait(r.id, [], "Continue with the approved fixes", "clear"); r.engine.schedule();
       const final = await r.until(() => {
         for (const p of r.fakes.received()) r.release(p.session);
@@ -263,11 +320,14 @@ describe.concurrent("runtime prerequisites", () => {
       expect(final.timeline.some(entry => entry.text.includes("builder brings it up to date"))).toBe(true);
       expect(final.timeline.some(entry => /rethink|rounds used up/.test(entry.text))).toBe(false);
       expect(final.runtimeWait?.refreshPending).toBeUndefined();
-    } finally { await r.engine.shutdown(); }
+    } finally { await caseOwner.stop(r.engine); }
+
   });
+});
 
   it("keeps the normal no-wait workflow unchanged", async () => {
-    const r = await fixture();
+  return engineCases.use("petrina-runtime-wait-", async caseOwner => {
+    const r = await fixture(caseOwner, false, {}, "complete");
     try {
       const final = await r.until(() => {
         for (const p of r.fakes.received()) r.release(p.session);
@@ -276,6 +336,8 @@ describe.concurrent("runtime prerequisites", () => {
       expect(final.runtimeWait).toBeUndefined();
       expect(final.journey?.some(step => step.runtimeWait === true)).toBe(false);
       expect(r.fakes.received("builder")).toHaveLength(1);
-    } finally { await r.engine.shutdown(); }
+    } finally { await caseOwner.stop(r.engine); }
+
   });
+});
 });

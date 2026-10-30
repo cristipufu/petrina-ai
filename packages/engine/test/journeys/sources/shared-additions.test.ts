@@ -1,7 +1,8 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { coordinator, finish, git, itemOf, taskOf, until } from "../../support.js";
+import { coordinator, finish, itemOf, taskOf, until } from "../../support.js";
+import { installSharedWorkflowFastPaths } from "../../fixtures/shared-preparation.js";
 import { sharedWorldFixtures } from "../../fixtures/shared-world.js";
 const fixtures = sharedWorldFixtures();
 afterAll(() => fixtures.close());
@@ -11,8 +12,10 @@ describe.concurrent("one task across products", () => {
     await fixtures.world("addition", async ({ shop, api, engine: withEngine, fakes }) => {
 
     await withEngine(async engine => {
+      installSharedWorkflowFastPaths(engine, { skipDriverPrepare: true, skipPrepareChecks: true, skipReviewCopies: true, skipReviewInputDiffs: true, fastCleanup: true, fastCheckpoints: true });
 
-      const first = await engine.addProduct(shop.clone);
+      await engine.waitUntilReady(); engine.stopRequested.signal.throwIfAborted();
+      const first = shop.preparedProduct(engine);
       fakes.scenario({ planner: "short", builder: "plain", reopen: "resume", worksOn: [{ productId: first, startFrom: { kind: "default" }, delivery: "pull-request" }, { productId: "acme/api", repo: "acme/api", startFrom: { kind: "default" }, delivery: "pull-request", reason: "The API also needs to greet people." }] });
       const id = engine.addTask({ productId: first, title: "A greeting in both places" });
       const state = await until(engine, (state) => !!itemOf(state, id, "plan") || taskOf(state, id).state === "failed", coordinator([]));
@@ -25,7 +28,7 @@ describe.concurrent("one task across products", () => {
       const task = taskOf(await finish(engine, id), id);
       expect(task.error).toBeUndefined();
       expect(existsSync(join(folder, ".git"))).toBe(true);
-      expect(await git(folder, "branch", "--show-current")).toBe("main");
+      expect(readFileSync(join(folder, ".git", "HEAD"), "utf8").trim()).toBe("ref: refs/heads/main");
       expect(task.repositories!.every((work) => work.worktree !== folder)).toBe(true);
       expect(shop.github().prs).toHaveLength(1); expect(api.github().prs).toHaveLength(1);
 

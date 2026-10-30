@@ -5,7 +5,7 @@ import type { AgentSession, AgentSessionOptions } from "@petrina/orchestrator";
 import { executionFor } from "@petrina/orchestrator";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { Engine } from "../engine.js";
-import { git, makeProduct, tempDir } from "../fixtures.js";
+import { createProductRepository, tempDir } from "../fixtures.js";
 import { ScriptedAgents, scriptedResult } from "../scripted-agents.js";
 import { scriptedToolProbe } from "../scripted-probes.js";
 import { changesOf, versionsOf } from "../../src/repositories.js";
@@ -96,14 +96,15 @@ export function turnCleanupFixtures() {
         storeObserver.mockImplementation(() => { closeStore!(); storeClosed = true; });
         await current.waitUntilReady(); await Promise.all([...current.backgroundWork]); await current.checkTools();
         if (admissionClosed) throw new Error("Fixture closed during Engine setup");
-        const repo = input.nativeOpening ? undefined : await makeProduct(root, { origin: "none" });
+        const repository = input.nativeOpening ? undefined : await createProductRepository(root, { origin: "none" });
+        const repo = repository?.path;
         if (admissionClosed) throw new Error("Fixture closed during repository setup");
         current.s.products.push({ id: "p", name: "Product", repo: "local/product", path: repo, defaultBranch: "main", tone: "blue", checks: [], checksBy: "coordinator" });
         const task = current.task(current.addTask({ productId: "p", title: "Check the read-only product", backlog: true }))!, scope = executionFor(task);
         task.plan = { rationale: "Direct actual acceptance turn", plannerProfileId: "opus-high", stages: [{ id: "acceptance", kind: "do", title: "Acceptance", roleId: "tester", profileIds: ["opus-high"] }] };
         task.stageIndex = 0; task.state = "running"; task.retest = true;
-        if (repo) {
-          Object.assign(scope.work, { worktree: repo, branch: "main", base: "main", baseSha: await git(repo, "rev-parse", "HEAD") });
+        if (repository) {
+          Object.assign(scope.work, { worktree: repo, branch: "main", base: "main", baseSha: repository.initialSha });
           task.acceptanceRun = { versions: await versionsOf(task), changes: await changesOf(task), requestIds: [] };
         }
         current.s.pool.paused = false;

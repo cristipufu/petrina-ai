@@ -14,7 +14,8 @@ const posix = process.platform !== "win32";
 
 describe.skipIf(!posix)("when the agent's work cannot be saved", () => {
   it("lets the agent carry on instead of leaving a stopped step holding its seat", async () => {
-    const run = await start({ planner: "short", builder: "work", reopen: "resume" });
+  return fixtures.use(async caseOwner => {
+    const run = await start(caseOwner, { planner: "short", builder: "work", reopen: "resume" });
     try {
       await waitFor(() => run.fakes.marked("builder-working"), "the builder to draft");
       const worktree = (await run.working("builder")).worktree!;
@@ -36,5 +37,7 @@ describe.skipIf(!posix)("when the agent's work cannot be saved", () => {
       expect(await git(run.product, "show", "main:notes.txt")).toBe("A first draft");
 
     } finally { await run.close(); }
+
   });
+});
 });

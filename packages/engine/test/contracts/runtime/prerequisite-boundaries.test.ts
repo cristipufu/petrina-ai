@@ -1,28 +1,70 @@
+import { engineCaseFixtures, type EngineCaseOwner } from "../../fixtures/engine-cases.js";
 import type { CheckVerification } from "../../../src/product-checks.js";
 import { nonpassingChecks } from "../../fixtures/check-verification.js";
 import { afterAll, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { runtimeWaitView, type ProductCheck } from "@petrina/core";
-import { Engine } from "../../engine.js";
+import * as gitOps from "@petrina/repositories/git";
 import { executionFor } from "@petrina/orchestrator";
 import { SourceRefreshRequired } from "../../../src/kernel.js";
 import { WaitingForUsage } from "../../../src/usage.js";
-import { git, makeProduct, removeDir, tempDir, waitFor, waitForFile } from "../../fixtures.js";
+import type { EngineOptions } from "../../engine.js";
+import { makeProduct, waitFor, waitForFile } from "../../fixtures.js";
+import { privateAgentToolProbe } from "../../scripted-probes.js";
 import { rejectionOf } from "@petrina/test-support/rejections";
+const engineCases = engineCaseFixtures();
+afterAll(() => engineCases.close());
 
-const roots: string[] = [];
-afterAll(() => roots.forEach(removeDir));
+const runBoundaryCheckCommand: NonNullable<EngineOptions["runCheckCommand"]> = async (req) => {
+  if (req.argv[0] !== process.execPath) return undefined;
+  if (req.argv[1]?.endsWith("/check.ts")) {
+    const [started, release] = req.argv.slice(2);
+    writeFileSync(`${started}.tmp`, "ready");
+    renameSync(`${started}.tmp`, started!);
+    while (!existsSync(release!) && !req.signal?.aborted) await Bun.sleep(10);
+    return { code: 0 };
+  }
+  if (req.argv[1] === "-e") {
+    const code = req.argv[2]!;
+    if (code === `await Bun.write(process.argv[1], "wrong");`) {
+      writeFileSync(req.argv[3]!, "wrong");
+      return { code: 0 };
+    }
+    if (code.includes("existsSync(\"required-fix.txt\")")) {
+      appendFileSync(req.argv[3]!, `${JSON.stringify({ fix: existsSync(join(req.cwd, "required-fix.txt")) })}\n`);
+      return { code: 0 };
+    }
+    if (code.includes("process.argv[1] + \".tmp\"")) {
+      const [started, release] = req.argv.slice(3);
+      writeFileSync(`${started}.tmp`, "ready");
+      renameSync(`${started}.tmp`, started!);
+      while (!existsSync(release!) && !req.signal?.aborted) await Bun.sleep(10);
+      return { code: 0 };
+    }
+  }
+  return undefined;
+};
 
-async function fixture(withRepositories: boolean | "first" = true) {
-  const root = tempDir("petrina-wait-boundaries-"); roots.push(root);
-  const engine = new Engine(join(root, "data"), { agentCommand: () => undefined, terminals: () => [] });
+async function fixture(caseOwner: EngineCaseOwner, withRepositories: boolean | "first" | "tasks" = true) {
+  const root = caseOwner.root;
+  const engine = caseOwner.open(join(root, "data"), {
+    agentCommand: () => undefined,
+    runCheckCommand: runBoundaryCheckCommand,
+    toolProbe: privateAgentToolProbe(),
+    terminals: () => [],
+  });
+  return caseOwner.run(engine, async () => {
   engine.schedule = () => {};
   const makeTask = async (name: string) => {
     const productRoot = join(root, name);
-    const nativeRepository = withRepositories === true || withRepositories === "first" && name === "first";
+    const nativeRepository = withRepositories === true
+      || (withRepositories === "first" && name === "first")
+      || (withRepositories === "tasks" && name !== "prerequisite");
     if (nativeRepository) mkdirSync(productRoot);
-    const product = nativeRepository ? await makeProduct(productRoot) : undefined;
+    caseOwner.check();
+    const product = nativeRepository ? await makeProduct(productRoot, { origin: "none" }) : undefined;
+    caseOwner.check();
     const productId = `product-${name}`;
     engine.s.products.push({ id: productId, name, repo: `local/${name}`, path: product, tone: "blue", delivery: "local" });
     const task = engine.task(engine.addTask({ productId, title: name }))!;
@@ -34,24 +76,31 @@ async function fixture(withRepositories: boolean | "first" = true) {
   const hold = (task = first) => engine.setRuntimeWait(task.id, [prerequisite.id], "The required fix must land", `wait-${task.id}`);
   const checks = engine["checks"];
   return { root, engine, first, second, prerequisite, hold, checks };
-}
 
+  });
+}
 describe.concurrent("runtime waits at check boundaries", () => {
   it("refuses new check preparation only for the held task", async () => {
-    const { engine, first, second, hold, checks } = await fixture(false);
+  return engineCases.use("petrina-wait-boundaries-", async caseOwner => {
+    const { engine, first, second, hold, checks } = await fixture(caseOwner, false);
     try {
+    await caseOwner.run(engine, async () => {
       hold();
       expect(checks.claimPreparation(first.id)).toBe(false);
       expect(checks.claimPreparation(second.id)).toBe(true);
       expect(checks.preparingCount).toBe(1);
       checks.releasePreparation(second.id);
       expect(checks.preparingCount).toBe(0);
-    } finally { await engine.shutdown(); }
-  });
 
+    });
+} finally { await caseOwner.stop(engine); }
+  });
+});
   for (const refusal of ["prerequisite", "pool", "capacity"] as const) it(`names the actual check-preparation wait (${refusal})`, async () => {
-    const { engine, first, second, hold, checks } = await fixture("first");
+  return engineCases.use("petrina-wait-boundaries-", async caseOwner => {
+    const { engine, first, second, hold, checks } = await fixture(caseOwner, "first");
     try {
+    await caseOwner.run(engine, async () => {
       engine.s.pool.limit = 1;
       if (refusal === "prerequisite") hold();
       else if (refusal === "pool") engine.setPoolPaused(true);
@@ -63,11 +112,14 @@ describe.concurrent("runtime waits at check boundaries", () => {
       expect(checks.preparingCount).toBe(refusal === "capacity" ? 1 : 0);
       expect(first.journey?.flatMap(step => step.checkAttempts ?? []) ?? []).toHaveLength(0);
       expect(executionFor(first).work.checks).toBeUndefined();
-    } finally { checks.releasePreparation(second.id); await engine.shutdown(); }
-  });
 
+    });
+} finally { checks.releasePreparation(second.id); await caseOwner.stop(engine); }
+  });
+});
   it("removes held checks from the line while an admitted batch finishes and records its result", async () => {
-    const { root, engine, first, second, hold, checks } = await fixture();
+  return engineCases.use("petrina-wait-boundaries-", async caseOwner => {
+    const { root, engine, first, second, hold, checks } = await fixture(caseOwner, "tasks");
     const release = join(root, "release"), started = join(root, "started"), unwanted = join(root, "unwanted");
     const script = join(root, "check.ts");
     writeFileSync(script, `import { existsSync, writeFileSync, renameSync } from "node:fs";
@@ -76,7 +128,9 @@ while (!existsSync(release)) await Bun.sleep(10);`);
     const firstCheck: ProductCheck = { name: "Admitted", argv: [process.execPath, script, started, release] };
     let active: Promise<CheckVerification> | undefined, queued: Promise<unknown> | undefined;
     const controller = new AbortController();
+    caseOwner.onStop(() => { writeFileSync(release, "go"); controller.abort(); });
     try {
+    await caseOwner.run(engine, async () => {
       active = checks.runProductChecks(executionFor(first), [firstCheck], controller.signal);
       await waitForFile(started);
       const queuedWork = checks.runProductChecks(executionFor(second), [{ name: "Queued", argv: [process.execPath, "-e", `await Bun.write(process.argv[1], "wrong");`, unwanted] }], controller.signal);
@@ -95,22 +149,27 @@ while (!existsSync(release)) await Bun.sleep(10);`);
       expect(second.journey?.at(-1)?.productChecks?.[0]?.result).toBe("stopped");
       expect(executionFor(second).work.checks).toBeUndefined();
       expect(await rejectionOf(checks.runProductChecks(executionFor(first), [firstCheck], controller.signal))).toBeInstanceOf(WaitingForUsage);
-    } finally {
+
+    });
+} finally {
       writeFileSync(release, "go"); controller.abort();
       await Promise.allSettled([active, queued]);
-      await engine.shutdown();
+      await caseOwner.stop(engine);
     }
   });
-
+});
   for (const action of ["prerequisite", "pool pause", "drain"] as const) it(`does not begin an empty batch if ${action} arrives during check preparation`, async () => {
-    const { engine, first, hold, checks } = await fixture();
+  return engineCases.use("petrina-wait-boundaries-", async caseOwner => {
+    const { engine, first, hold, checks } = await fixture(caseOwner, "first");
     const capture = checks["captureState"].bind(checks);
     let captured!: () => void, proceed!: () => void;
     const ready = new Promise<void>(resolve => { captured = resolve; });
     const released = new Promise<void>(resolve => { proceed = resolve; });
+    caseOwner.onStop(() => proceed());
     checks["captureState"] = async (...args) => { const result = await capture(...args); captured(); await released; return result; };
     let work: Promise<unknown> | undefined;
     try {
+    await caseOwner.run(engine, async () => {
       work = rejectionOf(checks.runProductChecks(executionFor(first), [], new AbortController().signal));
       await ready;
       if (action === "prerequisite") hold();
@@ -120,16 +179,21 @@ while (!existsSync(release)) await Bun.sleep(10);`);
       expect(await work).toBeInstanceOf(WaitingForUsage);
       expect(first.journey?.flatMap(step => step.checkAttempts ?? []) ?? []).toHaveLength(0);
       expect(executionFor(first).work.checks).toBeUndefined();
-    } finally { proceed(); await work; await engine.shutdown(); }
-  });
 
+    });
+} finally { proceed(); await work; await caseOwner.stop(engine); }
+  });
+});
   for (const boundary of ["queued", "pool paused", "handoff"] as const) it(`removes only the prerequisite-held task from the shared check queue during ${boundary}`, async () => {
-    const { engine, first, second, hold, checks } = await fixture(false);
+  return engineCases.use("petrina-wait-boundaries-", async caseOwner => {
+    const { engine, first, second, hold, checks } = await fixture(caseOwner, false);
     engine.schedule = () => engine.checkQueue.pump(); // Keep queue wakeups while excluding agent admission.
     // An occupied shared place can belong to either an ordinary batch or an extra validation.
     const occupied = engine.checkQueue.hold(), controller = new AbortController();
     let waiting: Promise<unknown> | undefined, following: Promise<() => void> | undefined, releaseFollowing: (() => void) | undefined;
+    caseOwner.onStop(() => { controller.abort(); occupied(); releaseFollowing?.(); });
     try {
+    await caseOwner.run(engine, async () => {
       waiting = rejectionOf(checks["turnToRun"](executionFor(first), controller.signal));
       following = checks["turnToRun"](executionFor(second), controller.signal).then(place => { releaseFollowing = place; return place; });
       expect(engine.checkQueue.waiting).toBe(2);
@@ -152,28 +216,33 @@ while (!existsSync(release)) await Bun.sleep(10);`);
       expect(engine.waitingChecks.size).toBe(0);
       release();
       expect(engine.checkQueue.running).toBe(0);
-    } finally {
+
+    });
+} finally {
       controller.abort(); occupied(); releaseFollowing?.();
-      await Promise.allSettled([waiting, following]); await engine.shutdown();
+      await Promise.allSettled([waiting, following]); await caseOwner.stop(engine);
     }
   });
-
+});
   for (const boundary of ["preparation", "queue handoff"] as const) it(`refreshes the required source before admitting checks after asynchronous ${boundary}`, async () => {
-    const { root, engine, first, second, hold, checks } = await fixture();
+  return engineCases.use("petrina-wait-boundaries-", async caseOwner => {
+    const { root, engine, first, second, hold, checks } = await fixture(caseOwner, "tasks");
     const scope = executionFor(first), source = scope.work.worktree!;
     const product = engine.s.products.find(product => product.id === scope.work.productId)!;
-    const worktree = join(root, "first-checks-work"), branch = "task-checks", baseSha = await git(source, "rev-parse", "HEAD");
-    await git(source, "worktree", "add", "-qb", branch, worktree, "main");
+    const worktree = join(root, "first-checks-work"), branch = "task-checks", baseSha = (await gitOps.head(source))!;
+    await gitOps.ensureWorktree(source, worktree, branch, baseSha);
     Object.assign(scope.work, { worktree, branch, base: "main", baseSha, delivery: "local",
       source: { product: { ...product, defaultBranch: "main" }, start: { kind: "default", branch: "main" }, destination: { mode: "local", kind: "branch", repo: product.repo, branch: "main" }, confirmed: true, initialSha: baseSha } });
     const observed = join(root, "checked-source.jsonl"), blockerStarted = join(root, "blocker-started"), blockerRelease = join(root, "blocker-release");
     const sourceCheck: ProductCheck = { name: "Verify the required source", argv: [process.execPath, "-e", `import { appendFileSync, existsSync } from "node:fs"; appendFileSync(process.argv[1], JSON.stringify({ fix: existsSync("required-fix.txt") }) + "\\n");`, observed] };
     const blockerCheck: ProductCheck = { name: "Already admitted", argv: [process.execPath, "-e", `import { existsSync, renameSync, writeFileSync } from "node:fs"; writeFileSync(process.argv[1] + ".tmp", "ready"); renameSync(process.argv[1] + ".tmp", process.argv[1]); while (!existsSync(process.argv[2])) await Bun.sleep(10);`, blockerStarted, blockerRelease] };
     const controller = new AbortController();
+    caseOwner.onStop(() => { writeFileSync(blockerRelease, "go"); controller.abort(); });
     const capture = checks["captureState"].bind(checks);
     let captured!: () => void, proceed!: () => void;
     const ready = new Promise<void>(resolve => { captured = resolve; });
     const released = new Promise<void>(resolve => { proceed = resolve; });
+    caseOwner.onStop(() => proceed());
     let captures = 0;
     checks["captureState"] = async (...args) => {
       const result = await capture(...args);
@@ -182,6 +251,7 @@ while (!existsSync(release)) await Bun.sleep(10);`);
     };
     let blocker: Promise<CheckVerification> | undefined, work: Promise<unknown> | undefined;
     try {
+    await caseOwner.run(engine, async () => {
       if (boundary === "queue handoff") {
         blocker = checks.runProductChecks(executionFor(second), [blockerCheck], controller.signal);
         await waitForFile(blockerStarted);
@@ -195,8 +265,8 @@ while (!existsSync(release)) await Bun.sleep(10);`);
       await ready;
       hold();
       writeFileSync(join(source, "required-fix.txt"), "The required prerequisite fix\n");
-      await git(source, "add", "."); await git(source, "commit", "-qm", "Land the required prerequisite");
-      const latest = await git(source, "rev-parse", "HEAD");
+      await gitOps.commitChanges(source, "Land the required prerequisite");
+      const latest = (await gitOps.head(source))!;
       engine.setRuntimeWait(first.id, [], "The required prerequisite is available", `clear-${boundary}`);
       expect(first.runtimeWait?.refreshPending).toBe(true);
       proceed();
@@ -213,15 +283,19 @@ while (!existsSync(release)) await Bun.sleep(10);`);
       expect(readFileSync(observed, "utf8").trim().split("\n").map(line => JSON.parse(line))).toEqual([{ fix: true }]);
       expect(first.journey?.flatMap(step => step.checkAttempts ?? [])).toHaveLength(1);
       expect(scope.work.checks?.results[0]?.ok).toBe(true);
-    } finally {
+
+    });
+} finally {
       proceed(); writeFileSync(blockerRelease, "go"); controller.abort();
-      await Promise.allSettled([blocker, work]); await engine.shutdown();
+      await Promise.allSettled([blocker, work]); await caseOwner.stop(engine);
     }
   });
-
+});
   it("leaves an open plan checkpoint answerable with the same identity", async () => {
-    const { engine, first, hold } = await fixture();
+  return engineCases.use("petrina-wait-boundaries-", async caseOwner => {
+    const { engine, first, hold } = await fixture(caseOwner, "first");
     try {
+    await caseOwner.run(engine, async () => {
       first.stageIndex = -1;
       first.plan = { rationale: "A small change", plannerProfileId: "sol-high", stages: [{ id: "build", kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-high"] }] };
       engine.gate(first, "plan");
@@ -234,16 +308,20 @@ while (!existsSync(release)) await Bun.sleep(10);`);
       expect(first.runtimeWait?.after).toHaveLength(1);
       expect(first.state).toBe("waiting");
       expect(first.stageIndex).toBe(0);
-    } finally { await engine.shutdown(); }
-  });
 
+    });
+} finally { await caseOwner.stop(engine); }
+  });
+});
   for (const historical of [false, true]) it(`saves a terminal hand-back while admission is held (historical released wait: ${historical})`, async () => {
-    const { root, engine, first, hold } = await fixture();
+  return engineCases.use("petrina-wait-boundaries-", async caseOwner => {
+    const { root, engine, first, hold } = await fixture(caseOwner, "first");
     const work = executionFor(first).work;
-    const head = await git(work.worktree!, "rev-parse", "HEAD");
+    const head = (await gitOps.head(work.worktree!))!;
     let starts = 0;
     engine.startDriver = () => { starts += 1; };
     try {
+    await caseOwner.run(engine, async () => {
       first.stageIndex = 0;
       first.plan = { rationale: "A small change", plannerProfileId: "sol-high", stages: [{ id: "build", kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-high"] }] };
       work.branch = "main"; work.base = "main"; work.baseSha = head;
@@ -267,41 +345,53 @@ while (!existsSync(release)) await Bun.sleep(10);`);
       expect(work.conversation?.sessionId).toBe("saved-session");
       expect(work.conversation?.handback).toContain("Keep this change when the fix arrives");
       expect(first.handChanges).toBe(true);
-      expect(await git(work.worktree!, "status", "--porcelain")).toBe("");
-      expect(await git(work.worktree!, "log", "-1", "--format=%s")).toContain("changes made by hand");
+      expect(await gitOps.isClean(work.worktree!)).toBe(true);
+      expect((await gitOps.message(work.worktree!)).split("\n")[0]).toContain("changes made by hand");
       expect(first.runtimeWait?.changes).toHaveLength(historical ? 2 : 1);
-    } finally { await engine.shutdown(); }
-  });
 
+    });
+} finally { await caseOwner.stop(engine); }
+  });
+});
   it("checks the task hold again when queued publication reaches the product's turn", async () => {
-    const { engine, first, hold } = await fixture();
+  return engineCases.use("petrina-wait-boundaries-", async caseOwner => {
+    const { engine, first, hold } = await fixture(caseOwner, false);
     const scope = executionFor(first);
     scope.work.shipping = { moves: 0, failures: 0, prepared: { tested: "checked", summary: "Ready" } };
     let admitted!: () => void, release!: () => void;
     const ready = new Promise<void>(resolve => { admitted = resolve; });
     const gate = new Promise<void>(resolve => { release = resolve; });
+    caseOwner.onStop(() => release());
     const previous = engine["connections"].serial(scope.work.productId, async () => { admitted(); await gate; });
     let result: Promise<unknown> | undefined;
     let published = 0;
     try {
+    await caseOwner.run(engine, async () => {
+      if (!scope.work.shipping) throw new Error("The declared publication input is missing");
       await ready;
       result = rejectionOf(engine["shipping"]["publishStep"](scope, new AbortController().signal, "push", "Publishing", async () => { published += 1; }));
       hold(); release(); await previous;
       expect(await result).toBeInstanceOf(WaitingForUsage);
       expect(published).toBe(0); expect(scope.work.shipping.step).toBeUndefined();
-    } finally { release(); await Promise.allSettled([previous, result]); await engine.shutdown(); }
-  });
 
+    });
+} finally { release(); await Promise.allSettled([previous, result]); await caseOwner.stop(engine); }
+  });
+});
   it("lets an admitted delivery finish its saved publication sequence after a wait applies", async () => {
-    const { engine, first, hold } = await fixture();
+  return engineCases.use("petrina-wait-boundaries-", async caseOwner => {
+    const { engine, first, hold } = await fixture(caseOwner, false);
     const scope = executionFor(first);
     scope.work.shipping = { moves: 0, failures: 0, prepared: { tested: "checked", summary: "Ready" } };
     let admitted!: () => void, release!: () => void;
     const ready = new Promise<void>(resolve => { admitted = resolve; });
     const gate = new Promise<void>(resolve => { release = resolve; });
+    caseOwner.onStop(() => release());
     let publication: Promise<string> | undefined;
     const finished: string[] = [];
     try {
+    await caseOwner.run(engine, async () => {
+      if (!scope.work.shipping) throw new Error("The declared publication input is missing");
       publication = engine["shipping"]["publishStep"](scope, new AbortController().signal, "push", "Publishing", async () => { admitted(); await gate; finished.push("push"); return "pushed"; });
       await ready;
       expect(scope.work.shipping.step).toBe("push"); hold(); release();
@@ -310,15 +400,19 @@ while (!existsSync(release)) await Bun.sleep(10);`);
       expect(finished).toEqual(["push", "record"]);
       expect(scope.work.shipping.step).toBe("open");
       expect(first.runtimeWait?.changes).toHaveLength(1);
-    } finally { release(); await publication; await engine.shutdown(); }
-  });
 
+    });
+} finally { release(); await publication; await caseOwner.stop(engine); }
+  });
+});
   it("returns queued publication to the driver if the wait was released before its turn", async () => {
-    const { engine, first, hold } = await fixture();
+  return engineCases.use("petrina-wait-boundaries-", async caseOwner => {
+    const { engine, first, hold } = await fixture(caseOwner, false);
     const scope = executionFor(first), shipping = engine["shipping"];
     scope.work.shipping = { moves: 1, failures: 1, prepared: { tested: "checked", summary: "Ready" } };
     let release!: () => void, queued!: () => void;
     const gate = new Promise<void>(resolve => { release = resolve; });
+    caseOwner.onStop(() => release());
     const entered = new Promise<void>(resolve => { queued = resolve; });
     let writes = 0;
     shipping["checkDelivery"] = async () => "continue";
@@ -333,6 +427,7 @@ while (!existsSync(release)) await Bun.sleep(10);`);
     const stage = { id: "publish", kind: "do" as const, title: "Publish", roleId: "release-manager", profileIds: [] };
     const result = shipping.deliver(first, stage, new AbortController().signal).catch(error => error);
     try {
+    await caseOwner.run(engine, async () => {
       await entered; hold();
       engine.setRuntimeWait(first.id, [], "The prerequisite is resolved", "clear-queued-publication");
       release();
@@ -340,6 +435,9 @@ while (!existsSync(release)) await Bun.sleep(10);`);
       expect(writes).toBe(0);
       expect(scope.work.shipping).toEqual({ moves: 1, failures: 1, prepared: { tested: "checked", summary: "Ready" } });
       expect(first.runtimeWait?.refreshPending).toBe(true);
-    } finally { release(); await result; await engine.shutdown(); }
+
+    });
+} finally { release(); await result; await caseOwner.stop(engine); }
   });
+});
 });

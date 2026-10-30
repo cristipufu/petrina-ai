@@ -3,8 +3,8 @@ import { afterAll, expect, it } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { executionFor } from "@petrina/orchestrator";
+import * as gitOps from "@petrina/repositories/git";
 import { checkContext } from "../../fixtures/check-context.js";
-import { git } from "../../fixtures.js";
 const cases = engineCaseFixtures();
 afterAll(() => cases.close());
 
@@ -22,10 +22,9 @@ it("tells acceptance testing whether saved checks really cover the code and requ
     expect((await evidence())?.body).toContain("this read did not revalidate the local environment");
     writeFileSync(join(executionFor(task).work.worktree!, "greeting.txt"), "Uncommitted change\n");
     expect((await evidence())?.title).toBe("Historical product checks, run by Petrina itself");
-    await git(executionFor(task).work.worktree!, "add", "greeting.txt");
-    await git(executionFor(task).work.worktree!, "commit", "-q", "-m", "A real change");
+    await gitOps.commitChanges(executionFor(task).work.worktree!, "A real change");
     expect((await evidence())?.title).toBe("Historical product checks, run by Petrina itself");
-    await git(executionFor(task).work.worktree!, "reset", "--hard", saved.sha!);
+    await gitOps.resetTo(executionFor(task).work.worktree!, saved.sha!);
     expect((await evidence())?.title).toBe("Recorded product checks, run by Petrina itself");
 
     f.setCheck("--pass", "--changed");
@@ -49,5 +48,5 @@ it("tells acceptance testing whether saved checks really cover the code and requ
     expect(f.runs()).toEqual(["passed"]);
   } finally { await owner.stop(f.engine); }
 
-  }));
+  }, { nativeGitCapture: true }));
 });

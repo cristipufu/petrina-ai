@@ -2,19 +2,18 @@ import { afterAll, expect, it } from "bun:test";
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { createFollowUpFixtures, older, taskOf, finish, cardFor, plant } from "../../fixtures/follow-up-native.js";
-
-const { open, reopen, close, shutdown } = createFollowUpFixtures();
+const { open, reopen, close, use } = createFollowUpFixtures();
 afterAll(close);
-
 it("keeps a refused picture on the original task until a later pass copies it", async () => {
-  const world = await open();
+  return use(async caseOwner => {
+  const world = await open(caseOwner);
   const { engine } = world;
   try {
     const text = "bug-copy: The footer opens a retired page.";
     const source = taskOf(engine, world.shop, "Copied later", [older("copy", text)]);
     plant(engine, source.id, text);
     const allowCopy = world.faults.blockCopy(join(engine.dataDir, "captures", source.id, "pic.png"));
-    await finish(engine, source);
+    await finish(caseOwner, engine, source);
     const card = cardFor(engine, "copy")[0]!;
     expect(source.findings[0]!.tracking).toEqual({ reason: "pictures", retry: true });
     expect(card.session.some((line) => line.images?.length)).toBe(false);
@@ -36,11 +35,12 @@ it("keeps a refused picture on the original task until a later pass copies it", 
     expect(existsSync(join(world.engine.dataDir, "captures", card.id, `${kept.id}.png`))).toBe(true);
     expect(existsSync(join(world.engine.dataDir, "captures", source.id))).toBe(false);
     expect(world.engine.task(source.id)!.findings[0]!.tracking).toEqual({ taskId: card.id });
-  } finally { await shutdown(world.engine); }
+  } finally { await caseOwner.stop(world.engine); }
+  });
 });
-
 it("keeps a picture that could not be copied until a later try, including after a restart", async () => {
-  const world = await open();
+  return use(async caseOwner => {
+  const world = await open(caseOwner);
   const { engine } = world;
   try {
     const blockedText = "bug-held: The footer opens a retired page.";
@@ -50,8 +50,8 @@ it("keeps a picture that could not be copied until a later try, including after 
     plant(engine, blocked.id, blockedText);
     plant(engine, clear.id, clearText);
     const allowCopy = world.faults.blockCopy(join(engine.dataDir, "captures", blocked.id, "pic.png"));
-    await finish(engine, blocked);
-    await finish(engine, clear);
+    await finish(caseOwner, engine, blocked);
+    await finish(caseOwner, engine, clear);
     expect(blocked.findings[0]!.tracking).toEqual({ reason: "pictures", retry: true });
     expect(clear.findings[0]!.tracking && "taskId" in clear.findings[0]!.tracking).toBe(true);
     await reopen(world);
@@ -73,5 +73,6 @@ it("keeps a picture that could not be copied until a later try, including after 
     await world.engine["cleanup"].removeCaptures(blocked.id);
     expect(existsSync(join(world.engine.dataDir, "captures", blocked.id))).toBe(false);
     expect(existsSync(join(world.engine.dataDir, "captures", heldCard.id, `${image.id}.png`))).toBe(true);
-  } finally { await shutdown(world.engine); }
+  } finally { await caseOwner.stop(world.engine); }
+  });
 });

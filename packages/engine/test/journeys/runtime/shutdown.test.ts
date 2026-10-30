@@ -1,3 +1,4 @@
+import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
 import { afterAll } from "bun:test";
 import { engineProcessCases } from "../../support.js";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
@@ -7,11 +8,12 @@ import { slowStopFixture } from "../../fixtures/slow-stop.js";
 import { describe, expect, it } from "bun:test";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { Engine } from "../../engine.js";
 import { ADAPTERS } from "@petrina/agent-runtime/tools";
 import { parseChildState, readProcessList } from "@petrina/platform/process-tree";
 import { EngineProcess, Fakes, makeProduct, tempDir, waitFor, waitForFile } from "../../support.js";
 
+const seedCases = engineCaseFixtures();
+afterAll(() => seedCases.close());
 const cases = engineProcessCases();
 afterAll(() => cases.close());
 
@@ -22,15 +24,18 @@ describe("Stopping during startup", () => {
     let stopPeers = async (): Promise<void> => {};
     return cases.use(dir, async owners => {
     const actors = await shutdownActors(dir);
+    if (owners.signal.aborted) { await actors.close(); throw new Error("Startup probe fixture closed while acquiring its actor lease"); }
     stopPeers = () => actors.close();
     const fakes = new Fakes(join(dir, "fake"));
-    const engine = new Engine(join(dir, "data"), {
+    return seedCases.use("petrina-startup-probe-seed-", async caseOwner => {
+    if (owners.signal.aborted) throw new Error("Startup probe fixture closed before its Engine started");
+    const engine = caseOwner.open(join(dir, "data"), {
       agentCommand: () => [process.execPath, actors.actor, fakes.dir, "--hang", "--stubborn"],
       which: (name) => name === "gh" ? null : Bun.which(name),
     });
-    stopPeers = async () => { const settled = await Promise.allSettled([engine.shutdown(), actors.close()]); const errors = settled.flatMap(result => result.status === "rejected" ? [result.reason] : []); if (errors.length) throw new AggregateError(errors, "Startup fixture peers did not all stop"); };
+    stopPeers = async () => { const settled = await Promise.allSettled([seedCases.close(), actors.close()]); const errors = settled.flatMap(result => result.status === "rejected" ? [result.reason] : []); if (errors.length) throw new AggregateError(errors, "Startup fixture peers did not all stop"); };
     const pids = () => pidsIn(join(fakes.dir, "pids"));
-    const checking = owners.prepare(() => engine.checkTools());
+    const checking = caseOwner.run(engine, () => engine.checkTools());
     const probeCount = Object.keys(ADAPTERS).length;
 
     const cleanup = async () => {
@@ -51,6 +56,7 @@ describe("Stopping during startup", () => {
     }, cleanup);
     await cleanup();
     return result;
+    });
     }, { stopPeers: () => stopPeers() });
   });
 
@@ -64,6 +70,7 @@ describe.concurrent("Quitting stops agents before the engine exits", () => {
     return cases.use(dir, async owners => {
     const home = join(dir, "data");
     const actors = await shutdownActors(dir);
+    if (owners.signal.aborted) { await actors.close(); throw new Error("Shutdown fixture closed while acquiring its actor lease"); }
     stopPeers = () => actors.close();
     const fakes = new Fakes(join(dir, "fake"));
     const pids = () => pidsIn(join(fakes.dir, "processes"));
@@ -124,6 +131,7 @@ describe.concurrent("Quitting stops agents before the engine exits", () => {
     return cases.use(dir, async owners => {
     const { actors, home, fakes, hold, slow, scanned, recover, killed, buildPids, finalLists, stops, launcher } = await slowStopFixture(dir, owners, stubborn, killFirst, native);
     stopPeers = () => actors.close();
+    if (owners.signal.aborted) { await actors.close(); throw new Error("Shutdown fixture closed while preparing its native stop controls"); }
     let engine: EngineProcess | undefined;
 
     const cleanup = async () => {

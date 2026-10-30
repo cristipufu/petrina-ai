@@ -25,7 +25,7 @@ import {
   endAgentStep,
   endPetrinaStep,
   endYouStep,
-  JOURNEY_WORDS as W,
+  JOURNEY_WORDS,
   recordStepResult,
   openStep,
   settleAsk,
@@ -46,7 +46,6 @@ import type {
   InboxItem,
   InboxKind,
   Product,
-  Role,
   RoleChanges,
   ScreenMode,
   Stage,
@@ -227,17 +226,17 @@ export class Simulator {
           task.confirmWork = false;
           if (task.source) task.source.confirmed = true;
           this.log(d, task, "you", "You approved the plan");
-          endYouStep(task, { outcome: W.approved, reason: W.youApproved }, d.now);
+          endYouStep(task, { outcome: JOURNEY_WORDS.approved, reason: JOURNEY_WORDS.youApproved }, d.now);
           this.continueAfterGate(d, task);
           break;
         case "design":
           this.log(d, task, "you", "You approved the design");
-          endYouStep(task, { outcome: W.approved, reason: W.youApproved }, d.now);
+          endYouStep(task, { outcome: JOURNEY_WORDS.approved, reason: JOURNEY_WORDS.youApproved }, d.now);
           this.continueAfterGate(d, task);
           break;
         case "disagreement":
           this.log(d, task, "you", "You sided with the architect");
-          endYouStep(task, { outcome: W.sided, reason: W.youSided }, d.now);
+          endYouStep(task, { outcome: JOURNEY_WORDS.sided, reason: JOURNEY_WORDS.youSided }, d.now);
           for (const objection of task.objections) {
             if (objection.status !== "open") continue;
             objection.status = "rejected";
@@ -255,7 +254,7 @@ export class Simulator {
             break;
           }
           this.log(d, task, "you", "You approved the delivery");
-          endYouStep(task, { outcome: W.approved, reason: W.youApproved }, d.now);
+          endYouStep(task, { outcome: JOURNEY_WORDS.approved, reason: JOURNEY_WORDS.youApproved }, d.now);
           // After review rounds ran out, the check was raised on the delivery stage itself.
           this.continueAfterGate(d, task, this.stage(task)?.kind === "gate");
           break;
@@ -287,7 +286,7 @@ export class Simulator {
   rerunChecks(itemId: Id): void {
     this.resolve(itemId, (d, task, item) => {
       if (item.kind !== "delivery") return;
-      endYouStep(task, { outcome: "Run checks again", reason: W.checkAgain }, d.now);
+      endYouStep(task, { outcome: "Run checks again", reason: JOURNEY_WORDS.checkAgain }, d.now);
       this.log(d, task, "you", "You asked to run checks again; delivery is not approved");
       this.runChecks(d, task);
       for (const finding of task.findings) if (finding.raisedBy === "petrina" && finding.text.startsWith("Check failed")) finding.status = "fixed";
@@ -324,7 +323,7 @@ export class Simulator {
       const call = item.kind === "disagreement";
       this.log(d, task, "you", call ? CALL_WORDS.made(note) : `You asked for changes: ${note}`);
       this.say(d, task, "you", note);
-      endYouStep(task, call ? { outcome: W.madeCall, reason: W.yourCall, tone: "back" } : { outcome: W.changes, reason: W.changesAsked, tone: "back" }, d.now);
+      endYouStep(task, call ? { outcome: JOURNEY_WORDS.madeCall, reason: JOURNEY_WORDS.yourCall, tone: "back" } : { outcome: JOURNEY_WORDS.changes, reason: JOURNEY_WORDS.changesAsked, tone: "back" }, d.now);
       task.notes = [...(task.notes ?? []), { at: d.now, text: note }];
       afterChangesAsked(task, item.kind, note, d.now, d.roles);
       task.state = "waiting";
@@ -817,7 +816,7 @@ export class Simulator {
     // State is plain JSON, so a JSON round trip is a full, environment-neutral copy.
     const draft = JSON.parse(JSON.stringify(this.state)) as Draft;
     change(draft);
-    this.state = draft as unknown as State;
+    this.state = draft;
     for (const listener of this.listeners) listener();
   }
 
@@ -867,11 +866,11 @@ export class Simulator {
 
   /** The call the architect is following, while it works on the design stage the call settled. */
   private following(task: DraftTask): DesignCall | undefined {
-    return task.sub === 0 ? followingCall(task as unknown as Task) : undefined;
+    return task.sub === 0 ? followingCall(task) : undefined;
   }
 
   private columnFor(d: Draft, task: DraftTask): Column {
-    return columnOf(task as unknown as Task, d.roles as Role[]);
+    return columnOf(task, d.roles);
   }
 
   /** The profile the planner runs on, kept in the state so a queued task's journey can name it. */
@@ -945,7 +944,7 @@ export class Simulator {
     // Each start is a fresh one: a step started again after a pause leaves no record.
     delete task.todo;
     task.stepAttempts = (task.stepAttempts ?? 0) + 1;
-    task.stepClock = startClock(task as unknown as Task, next.roleId, d.now);
+    task.stepClock = startClock(task, next.roleId, d.now);
     task.state = "running";
     task.holdsSlot = true;
     task.column = this.columnFor(d, task);
@@ -1075,7 +1074,7 @@ export class Simulator {
       work.checks = { at: d.now, tree, definition: modeled.input.definition, environment: modeled.environment, current: true, results };
     }
     this.log(d, task, "done", `Checks passed: ${DEMO_CHECKS.map((run) => run.name).join(", ")}`);
-    endPetrinaStep(task, { outcome: W.checks(0, DEMO_CHECKS.length), reason: W.checksPassed }, d.now);
+    endPetrinaStep(task, { outcome: JOURNEY_WORDS.checks(0, DEMO_CHECKS.length), reason: JOURNEY_WORDS.checksPassed }, d.now);
   }
 
   private ask(d: Draft, task: DraftTask, trigger: Trigger): void {
@@ -1146,7 +1145,7 @@ export class Simulator {
       this.log(d, task, "milestone", `Plan ready: ${count} stages. ${task.plan.rationale}`, agent.roleId, agent.profileId);
       this.say(d, task, "agent", task.plan.rationale, agent.roleId, agent.profileId);
       this.endStage(d, task, "done");
-      endAgentStep(task, { outcome: W.planned(count), reason: W.planReady }, d.now);
+      endAgentStep(task, { outcome: JOURNEY_WORDS.planned(count), reason: JOURNEY_WORDS.planReady }, d.now);
       if (task.approvePlan || task.confirmWork) this.gate(d, task, "plan");
       else this.advance(d, task);
       return;
@@ -1168,7 +1167,7 @@ export class Simulator {
       task.handedBack = [...(task.handedBack ?? []), { at: d.now, roleId: agent.roleId, profileId: agent.profileId, stageId: stage.id, roleName: task.maintenance.role.name, title: stage.title, summary, notes: ["Completed without product changes."] }];
       task.maintenance.noProductChanges = true;
       this.log(d, task, "done", summary, agent.roleId, agent.profileId);
-      endAgentStep(task, { outcome: W.wroteNotes, reason: W.notesReady }, d.now);
+      endAgentStep(task, { outcome: JOURNEY_WORDS.wroteNotes, reason: JOURNEY_WORDS.notesReady }, d.now);
       this.endStage(d, task, "done");
       task.state = "done"; task.column = "done"; task.finishedAt = d.now;
       task.statusLine = "Completed · No product changes"; task.holdsSlot = false;
@@ -1213,7 +1212,7 @@ export class Simulator {
         this.log(d, task, "done", `${stage.title} done`, agent.roleId, agent.profileId);
         endAgentStep(
           task,
-          result === "build" ? { outcome: W.built, reason: W.readyForReview } : result === "checks" ? { outcome: W.checks(0, task.brief?.acceptance.length ?? 0), reason: W.checksPassed } : { outcome: W.wroteNotes, reason: W.notesReady },
+          result === "build" ? { outcome: JOURNEY_WORDS.built, reason: JOURNEY_WORDS.readyForReview } : result === "checks" ? { outcome: JOURNEY_WORDS.checks(0, task.brief?.acceptance.length ?? 0), reason: JOURNEY_WORDS.checksPassed } : { outcome: JOURNEY_WORDS.wroteNotes, reason: JOURNEY_WORDS.notesReady },
           d.now,
         );
       }
@@ -1240,7 +1239,7 @@ export class Simulator {
         this.log(d, task, "done", revising ? CALL_WORDS.revised : CALL_WORDS.updated, agent.roleId, agent.profileId);
         this.log(d, task, "done", CALL_WORDS.settled);
         this.endStage(d, task, "settled");
-        endAgentStep(task, { outcome: W.followed, reason: W.followsCall }, d.now);
+        endAgentStep(task, { outcome: JOURNEY_WORDS.followed, reason: JOURNEY_WORDS.followsCall }, d.now);
         this.advance(d, task);
         return;
       }
@@ -1253,7 +1252,7 @@ export class Simulator {
         }
         this.log(d, task, "done", round === 1 ? "Design brief ready" : "Answered every objection", agent.roleId, agent.profileId);
         recordStepResult(task, { objections: task.objections.filter((objection) => due.includes(objection.id)) });
-        endAgentStep(task, round === 1 ? { outcome: W.wroteBrief, reason: W.briefReady } : { outcome: W.answeredAll, reason: W.objectionsAnswered }, d.now);
+        endAgentStep(task, round === 1 ? { outcome: JOURNEY_WORDS.wroteBrief, reason: JOURNEY_WORDS.briefReady } : { outcome: JOURNEY_WORDS.answeredAll, reason: JOURNEY_WORDS.objectionsAnswered }, d.now);
         task.sub = 1;
         this.startAgent(d, task);
         return;
@@ -1275,7 +1274,7 @@ export class Simulator {
         this.log(d, task, "warn", `Raised ${raised.length} objections, ${blocking} blocking`, agent.roleId, agent.profileId);
         this.designRound(d, task, stage, round, raised.length, blocking);
         logged = true;
-        endAgentStep(task, blocking ? { outcome: W.objections(raised.length, blocking), reason: W.blocking(blocking), tone: "back" } : { outcome: W.objections(raised.length, 0), reason: W.noBlocking }, d.now);
+        endAgentStep(task, blocking ? { outcome: JOURNEY_WORDS.objections(raised.length, blocking), reason: JOURNEY_WORDS.blocking(blocking), tone: "back" } : { outcome: JOURNEY_WORDS.objections(raised.length, 0), reason: JOURNEY_WORDS.noBlocking }, d.now);
         const end = designRoundEnd(blocking, round, stage as Stage);
         if (end === "disagreement") {
           this.moment(d, task, { kind: "design-end", outcome: "to-you", rounds: round, roleId: stage.roleId, ...(stage.profileIds[0] ? { profileId: stage.profileIds[0] } : {}) });
@@ -1293,7 +1292,7 @@ export class Simulator {
       task.brief = briefFor(task);
       this.log(d, task, "done", "Design settled: no blocking objections", agent.roleId, agent.profileId);
       if (!logged) recordStepResult(task, { objections: [] });
-      endAgentStep(task, { outcome: W.objections(0, 0), reason: W.noBlocking }, d.now);
+      endAgentStep(task, { outcome: JOURNEY_WORDS.objections(0, 0), reason: JOURNEY_WORDS.noBlocking }, d.now);
       if (!logged) this.designRound(d, task, stage, round, 0, 0);
       this.moment(d, task, { kind: "design-end", outcome: "settled", rounds: round, roleId: stage.roleId, ...(stage.profileIds[0] ? { profileId: stage.profileIds[0] } : {}) });
       this.endStage(d, task, "settled");
@@ -1352,8 +1351,8 @@ export class Simulator {
 
       const open = task.findings.filter((finding) => finding.status === "open" && finding.severity === "blocking");
       // As in the engine: the coordinator's decision to continue covers its findings only on the version it was made on.
-      const covered = coveredByDecision(task as unknown as Task, simVersions(task));
-      const end = reviewRoundEnd(task as unknown as Task, stage as Stage, round, d.roles, covered);
+      const covered = coveredByDecision(task, simVersions(task));
+      const end = reviewRoundEnd(task, stage, round, d.roles, covered);
       noteRoundEnd(task, stage.id, open.length);
       // The round's step says what its reviewers raised, and where the work goes.
       const raised = task.findings.slice(task.hunt?.findings ?? 0);
@@ -1367,7 +1366,7 @@ export class Simulator {
       delete task.hunt;
       endAgentStep(
         task,
-        { outcome: findingCount(raised), ...(end.kind === "send back" ? { reason: W.sentBack(end.open), tone: "back" } : end.kind === "used up" ? { reason: W.stillOpen(end.open), tone: "back" } : { reason: end.covered ? `${W.reviewPassed}; ${W.coveredOpen(end.covered)}` : W.reviewPassed }) },
+        { outcome: findingCount(raised), ...(end.kind === "send back" ? { reason: JOURNEY_WORDS.sentBack(end.open), tone: "back" } : end.kind === "used up" ? { reason: JOURNEY_WORDS.stillOpen(end.open), tone: "back" } : { reason: end.covered ? `${JOURNEY_WORDS.reviewPassed}; ${JOURNEY_WORDS.coveredOpen(end.covered)}` : JOURNEY_WORDS.reviewPassed }) },
         d.now,
       );
       if (end.kind === "send back") {
@@ -1436,10 +1435,10 @@ export class Simulator {
     if (gate === "delivery" && task.reviewDecision?.accepted === false) decision.work = "review-decision";
     if (gate === "delivery") decision.productChecks = decisionEvidence(task);
     task.holdsSlot = false;
-    task.statusLine = gateStatus(task as unknown as Task, gate);
-    let body = gate === "design" ? callCheckBody(task as unknown as Task) : task.source && (gate === "plan" || gate === "delivery") ? workSummary(task.source) : undefined;
+    task.statusLine = gateStatus(task, gate);
+    let body = gate === "design" ? callCheckBody(task) : task.source && (gate === "plan" || gate === "delivery") ? workSummary(task.source) : undefined;
     if (gate === "delivery" && task.repositories) body = [...task.repositories.map((work) => work.source ? workSummary(work.source) : work.productId), companionPreview(task.repositories)].filter(Boolean).join("\n\n");
-    this.raise(d, task, gate, gateTitle(task as unknown as Task, gate), false, body ? { body } : {});
+    this.raise(d, task, gate, gateTitle(task, gate), false, body ? { body } : {});
     task.column = this.columnFor(d, task);
   }
 
@@ -1486,7 +1485,7 @@ export class Simulator {
     this.log(d, task, "status", "Petrina pushed the branch");
     this.log(d, task, "done", `Petrina opened pull request #${number}, and checked it on GitHub`);
     this.moment(d, task, { kind: "task-end", outcome: "delivered" });
-    endPetrinaStep(task, { outcome: W.openedPr(number) }, d.now);
+    endPetrinaStep(task, { outcome: JOURNEY_WORDS.openedPr(number) }, d.now);
   }
 
   /** Petrina publishes it, the way the task asks: with the builder's text, or the Release Manager's notes. */
@@ -1514,7 +1513,7 @@ export class Simulator {
     }
     if (task.agent) {
       this.log(d, task, "done", "Ready to publish", "release-manager", task.agent.profileId);
-      endAgentStep(task, { outcome: W.notes, reason: W.releaseNotesReady }, d.now);
+      endAgentStep(task, { outcome: JOURNEY_WORDS.notes, reason: JOURNEY_WORDS.releaseNotesReady }, d.now);
     }
     if (task.source?.start.kind === "pull-request") {
       const start = task.source.start;
@@ -1549,13 +1548,13 @@ export class Simulator {
       task.statusLine = `Released ${tag}`;
       this.log(d, task, "status", `Petrina pushed main and the tag ${tag}`);
       this.log(d, task, "done", `Petrina published release ${tag}, and checked it on GitHub`);
-      endPetrinaStep(task, { outcome: W.released(tag) }, d.now);
+      endPetrinaStep(task, { outcome: JOURNEY_WORDS.released(tag) }, d.now);
     } else {
       const sha = (d.seq * 2654435761).toString(16).slice(0, 7);
       task.landed = { branch: task.source?.destination.branch ?? product?.defaultBranch ?? "main", sha };
       task.statusLine = `Committed to ${task.landed.branch} (${sha})`;
       this.log(d, task, "done", `Petrina moved ${task.landed.branch} forward to it (${sha}), and checked the main copy`);
-      endPetrinaStep(task, { outcome: W.movedMain(task.landed.branch) }, d.now);
+      endPetrinaStep(task, { outcome: JOURNEY_WORDS.movedMain(task.landed.branch) }, d.now);
     }
     this.removeCopy(d, task);
   }
@@ -1580,7 +1579,7 @@ export class Simulator {
 
   /** A finished task's working copy goes, to free disk space. One with an open pull request stays. */
   private removeCopy(d: Draft, task: DraftTask): void {
-    if (!copyNoLongerNeeded(task as unknown as Task) || task.cleanup?.removedAt !== undefined) return;
+    if (!copyNoLongerNeeded(task) || task.cleanup?.removedAt !== undefined) return;
     if (this.lockedCopies.has(task.id) && !task.cleanup?.error) {
       task.cleanup = { error: CLEANUP_WORDS.locked };
       this.log(d, task, "warn", CLEANUP_WORDS.failed(CLEANUP_WORDS.locked));
@@ -1812,7 +1811,7 @@ export class Simulator {
       candidates.push({ ...profile, taskId: task.id, toolId: profile?.toolId ?? "unknown" });
     }
 
-    const starts = pickStarts({ candidates, inUse: slotUses(d as unknown as State), pool: d.pool, now: d.now });
+    const starts = pickStarts({ candidates, inUse: slotUses(d), pool: d.pool, now: d.now });
     for (const taskId of starts) {
       const task = d.tasks.find((entry) => entry.id === taskId);
       if (!task) continue;

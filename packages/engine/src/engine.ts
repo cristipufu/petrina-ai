@@ -1,8 +1,3 @@
-import { ExtraValidations } from "./extra-validations.js";
-import { ProfileChoiceReader } from "./profile-choices.js";
-import { completeAll } from "@petrina/core";
-import { createTaskState, queueBacklogTask, returnQueuedTaskToBacklog, editBacklogRequest, combineBacklogTasks, assertTaskDependenciesEditable, validateTaskDependencies, validateRuntimeWait, changeRuntimeWait, assignFutureProfile, appendFutureReviewer, pauseTaskState, resumeTaskState, cancelTaskState } from "@petrina/core";
-import { executionFor, scopesFor } from "@petrina/orchestrator";
 // The real engine: the same state the UI renders, driven by real agents over ACP.
 // Each task runs as one async driver while it holds a pool slot. Gates and the queue
 // live in state; questions and permissions wait on the coordinator in code.
@@ -12,34 +7,15 @@ import { executionFor, scopesFor } from "@petrina/orchestrator";
 //
 // Engine is the thin front: the coordinator's commands live here. Each part of the work lives in a
 // module of its own (driver, planning, design, work, review, shipping, take-over, product checks,
-// review guide, tools check, turns, context), and they share state and bookkeeping through the kernel.
+// review guide, tools check, turns, context, catalog/task/inbox commands), and they share state
+// and bookkeeping through the kernel.
 
-import { opendirSync, realpathSync, rmSync, renameSync } from "node:fs";
-import { join } from "node:path";
-import { stat, mkdir, rm } from "node:fs/promises";
-import { randomUUID } from "node:crypto";
-import { combinedBacklogInput } from "@petrina/core";
-import { recoverMessages, routeMessages } from "@petrina/core";
-import { messageRemovable } from "@petrina/core";
+import * as library from "@petrina/core";
 import {
-  AFTER_WORDS,
-  endYouStep,
-  fixFor,
-  isGuide,
-  JOURNEY_WORDS as W,
   legacyJourney,
-  productHistory,
-  productName,
-  queueNeighbour,
-  queueOf,
-  queuePlacement,
+  recoverMessages,
   SCREEN_HOUR_MS,
-  settleAsk,
-  SETUP_STEPS,
-  suggestProductName,
-  syncWait,
   stopCheckProgress,
-  validateProductSettings,
   type AskAnswer,
   type CheckId,
   type Clone,
@@ -47,48 +23,45 @@ import {
   type DeliveryMode,
   type HandBackPreview,
   type Id,
-  type InboxItem,
   type Launched,
   type NewTaskInput,
   type ProductSettings,
+  type RoleDraft,
   type SaidContext,
   type ScreenMode,
   type SetupStep,
-  type Task,
   type UsageRequest,
   type UsageViewFor,
-  type RoleChanges,
-  type RoleDraft,
   type WorkChoice,
 } from "@petrina/core";
-import * as library from "@petrina/core";
-import * as git from "@petrina/repositories/git";
 import { CODEX_USAGE_EVERY_MS } from "@petrina/agent-runtime/codex-usage";
-import { Kernel, TONES, stepKey, type EngineOptions, type MTask } from "./kernel.js";
-import { browserCommand } from "./setup.js";
-import { expandPath, findClones } from "@petrina/repositories/discovery";
-import { ToolChecks } from "./tool-checks.js";
-import { Readiness } from "./readiness.js";
-import { Turns } from "./turn.js";
-import { GuideKeeper } from "./guide-keeper.js";
-import { Context } from "./context.js";
-import { ProductChecks } from "./product-checks.js";
-import { CARRIED_OVER, Shipping } from "./shipping.js";
-import { Connections } from "./connection.js";
-import { Updates } from "./update.js";
-import { Learnings } from "./learnings.js";
-import { Reviews } from "./review.js";
-import { Design } from "./design.js";
-import { Planning } from "./planning.js";
-import { Work } from "./work.js";
-import { TakeOver } from "./take-over.js";
-import { Sources } from "./sources.js";
-import { Driver } from "./driver.js";
+import { AcceptedPoints } from "./accepted-points.js";
+import { CatalogCommands } from "./catalog-commands.js";
 import { Checkpoints } from "./checkpoints.js";
 import { Cleanup } from "./cleanup.js";
+import { Connections } from "./connection.js";
+import { Context } from "./context.js";
+import { Design } from "./design.js";
+import { Driver } from "./driver.js";
+import { ExtraValidations } from "./extra-validations.js";
 import { FollowUps } from "./follow-ups.js";
-import { AcceptedPoints } from "./accepted-points.js";
-import { readTaskImage } from "./image-preview.js";
+import { GuideKeeper } from "./guide-keeper.js";
+import { InboxCommands } from "./inbox-commands.js";
+import { Kernel, type EngineOptions, type RuntimeTask } from "./kernel.js";
+import { Learnings } from "./learnings.js";
+import { Planning } from "./planning.js";
+import { ProductChecks } from "./product-checks.js";
+import { ProfileChoiceReader } from "./profile-choices.js";
+import { Readiness } from "./readiness.js";
+import { Reviews } from "./review.js";
+import { Shipping } from "./shipping.js";
+import { Sources } from "./sources.js";
+import { TakeOver } from "./take-over.js";
+import { TaskCommands } from "./task-commands.js";
+import { ToolChecks } from "./tool-checks.js";
+import { Turns } from "./turn.js";
+import { Updates } from "./update.js";
+import { Work } from "./work.js";
 
 export type { EngineOptions } from "./kernel.js";
 export type { NewTaskInput, SaidContext } from "@petrina/core";
@@ -117,8 +90,18 @@ export class Engine extends Kernel implements Commands {
   private readonly cleanup: Cleanup;
   private readonly followUps: FollowUps;
   private readonly acceptedPoints: AcceptedPoints;
+  private readonly catalogCommands: CatalogCommands;
+  private readonly taskCommands: TaskCommands;
+  private readonly inboxCommands: InboxCommands;
+  readonly startupSweep: Promise<void>;
+  private shutdownDone?: Promise<void>;
 
-  trackFinding<T>(taskId: Id, findingId: Id, targetTaskId: Id, record: (link: { taskId: Id; findingId: Id; targetTaskId: Id }) => T): Promise<T> {
+  trackFinding<T>(
+    taskId: Id,
+    findingId: Id,
+    targetTaskId: Id,
+    record: (link: { taskId: Id; findingId: Id; targetTaskId: Id }) => T,
+  ): Promise<T> {
     return this.followUps.trackFinding(taskId, findingId, targetTaskId, record);
   }
 
@@ -135,7 +118,7 @@ export class Engine extends Kernel implements Commands {
     this.checks = new ProductChecks(this, this.turns, this.context);
     this.updates = new Updates(this, this.connections, this.sources);
     this.shipping = new Shipping(this, this.turns, this.updates, this.checks, this.connections, this.tools);
-    this.onCoordinatorWait = task => {
+    this.onCoordinatorWait = (task) => {
       const checks = this.checks.releaseForDecision(task.id);
       const delivery = this.shipping.yieldForDecision(task);
       // Only a resource handoff needs a wake. The asking caller records its question first.
@@ -148,14 +131,47 @@ export class Engine extends Kernel implements Commands {
     this.work = new Work(this, this.turns, this.context, this.guide, this.updates, this.learnings, this.checks);
     this.takeover = new TakeOver(this);
     this.checkpoints = new Checkpoints(this, this.sources);
-    this.driver = new Driver(this, this.planning, this.work, this.design, this.reviews, this.checks, this.guide, this.updates, this.learnings, this.shipping, this.connections, this.sources);
+    this.driver = new Driver(
+      this,
+      this.planning,
+      this.work,
+      this.design,
+      this.reviews,
+      this.checks,
+      this.guide,
+      this.updates,
+      this.learnings,
+      this.shipping,
+      this.connections,
+      this.sources,
+    );
     this.cleanup = new Cleanup(this);
     this.followUps = new FollowUps(this);
-    this.onTaskDone = (task) => { this.extraValidations?.cancelTask(task.id); void this.followUps.noteDone(task); };
+    this.taskCommands = new TaskCommands(this, this.sources, this.cleanup);
+    this.catalogCommands = new CatalogCommands(this, this.tools, (input) => this.taskCommands.createTask(input));
+    this.inboxCommands = new InboxCommands(
+      this,
+      this.takeover,
+      this.tools,
+      this.checks,
+      this.shipping,
+      this.cleanup,
+      this.guide,
+      this.learnings,
+      this.checkpoints,
+    );
+    this.onTaskDone = (task) => {
+      this.extraValidations?.cancelTask(task.id);
+      void this.followUps.noteDone(task);
+    };
     this.beforeCaptureRemoval = (task) => this.followUps.beforeRemoval(task);
     this.acceptedPoints = new AcceptedPoints(this);
     // Tasks from before journeys were recorded: one step per finished stage, and the step under way, so new steps follow on from there.
-    for (const task of this.s.tasks) if (!task.journey && task.startedAt !== undefined) task.journey = legacyJourney(task as unknown as Task, this.s.inbox as InboxItem[], this.s.roles) as MTask["journey"];
+    for (const task of this.s.tasks) {
+      if (!task.journey && task.startedAt !== undefined) {
+        task.journey = legacyJourney(task, this.s.inbox, this.s.roles) as RuntimeTask["journey"];
+      }
+    }
     // Deliveries a Petrina from before this version left halfway: never acted on by themselves.
     this.shipping.carryOverShipping();
     for (const task of this.s.tasks) recoverMessages(task);
@@ -164,12 +180,25 @@ export class Engine extends Kernel implements Commands {
     void this.trackWork(this.checks.restoreEvidence().catch(() => undefined));
     // Recovered Builders get a short login check on their saved tool before fallback selection.
     // Other roles keep their existing recovery rules; the usual check timeout bounds this wait.
-    for (const task of this.s.tasks.filter((task) => task.state === "waiting")) {
+    for (const task of this.s.tasks.filter((entry) => entry.state === "waiting")) {
       const planned = task.plan?.stages[task.stageIndex]?.profileIds[0];
       const own = planned ? this.builderConversation(task, planned) : undefined;
-      if (own) void this.tools.check(own.toolId as CheckId).then(() => { if (!this.stopped) this.schedule(); });
+      if (own) {
+        void this.tools.check(own.toolId as CheckId).then(() => {
+          if (!this.stopped) this.schedule();
+        });
+      }
     }
-    this.timers.push(setInterval(() => { try { this.pollRoutines(); this.schedule(); } catch (error) { console.error("Could not save maintenance admission:", error); } }, 15_000));
+    this.timers.push(
+      setInterval(() => {
+        try {
+          this.pollRoutines();
+          this.schedule();
+        } catch (error) {
+          console.error("Could not save maintenance admission:", error);
+        }
+      }, 15_000),
+    );
     this.armScreenTimer();
     this.timers.push(
       setInterval(() => {
@@ -192,94 +221,31 @@ export class Engine extends Kernel implements Commands {
     this.schedule();
     this.readUsage();
     // Catch up at start: link any older bug saved only part-way, then remove finished working copies.
-    void this.trackWork(this.followUps.catchUp().catch(() => undefined).then(() => this.cleanup.sweep()));
+    this.startupSweep = this.trackWork(this.followUps.catchUp().catch(() => undefined).then(() => this.cleanup.sweep())).catch(() => undefined);
     void this.trackWork(this.acceptedPoints.sweep());
   }
 
   private checkpointStepTimes(): void {
     try {
-      if (!this.stopped && this.s.tasks.some((task) => task.stepClock?.since !== undefined || Object.values(task.hunt?.work ?? {}).some((work) => work.clock?.since !== undefined))) this.save();
+      const hasRunningClock = this.s.tasks.some(
+        (task) =>
+          task.stepClock?.since !== undefined
+          || Object.values(task.hunt?.work ?? {}).some((work) => work.clock?.since !== undefined),
+      );
+      if (!this.stopped && hasRunningClock) this.save();
     } catch (error) {
       console.error("Could not save step times:", error);
     }
   }
 
-  override async waitUntilReady(): Promise<void> { await super.waitUntilReady(); await this.extraValidations.ready; }
-
-  profileChoices({ toolId, modelId, refresh = false }: library.ProfileChoiceRequest) { return this.profileReader.read(toolId, modelId, refresh); }
-  async saveProfile(draft: library.ProfileDraft, clientId: Id, profileId?: Id): Promise<Id> {
-    const choices = await this.profileChoices({ toolId: draft.toolId, modelId: draft.modelId });
-    if (this.stopped) throw new Error("The engine is stopping.");
-    if (profileId) this.assertProfileNotRunning(profileId);
-    const id = library.saveProfile(this.s, draft, choices, clientId, profileId);
-    this.s.planner = this.onUsable(this.s.planner ?? "opus-high");
-    this.commitNow();
-    return id;
-  }
-  private assertProfileNotRunning(profileId: Id): void {
-    for (const task of this.s.tasks) if (this.drivers.has(task.id) && task.plan?.stages.some(stage => [...stage.profileIds, ...stage.reviewerProfileIds ?? []].includes(profileId))) throw new Error("Wait for this profile's task to finish stopping before changing it.");
-  }
-  removeProfile(profileId: Id): void {
-    this.assertProfileNotRunning(profileId);
-    library.removeProfile(this.s, profileId);
-    this.s.planner = this.onUsable(this.s.planner ?? "opus-high");
-    this.commitNow();
-  }
-
-  saveRoutine(draft: library.RoutineDraft, routineId?: Id): Id {
-    const previous = routineId ? this.s.routines?.find(r => r.id === routineId) : undefined;
-    if (routineId && !previous) throw new Error("That routine was removed. Close this editor and create a new routine.");
-    const id = routineId ?? `routine-${randomUUID()}`;
-    const next = library.saveRoutine(draft, this.s, id, Date.now(), previous);
-    this.s.routines = [...(this.s.routines ?? []).filter(r => r.id !== id), next] as typeof this.s.routines;
-    this.commitNow();
-    return id;
-  }
-
-  setRoutineEnabled(routineId: Id, enabled: boolean): void {
-    const routine = this.s.routines?.find(r => r.id === routineId);
-    if (!routine) throw new Error("That routine was removed.");
-    // Disable remains available even if a reference has disappeared.
-    if (!enabled) { routine.enabled = false; this.commitNow(); return; }
-    this.saveRoutine({ ...routine, enabled }, routineId);
-  }
-
-  removeRoutine(routineId: Id): void {
-    this.s.routines = (this.s.routines ?? []).filter(r => r.id !== routineId);
-    this.commitNow();
-  }
-
-  resolveMaintenanceSettings(taskId: Id, choice: "keep" | "stop"): void {
-    const task = this.task(taskId), decision = task?.maintenance?.settingsDecision;
-    if (!task || !decision || decision.choice) return;
-    decision.choice = choice;
-    this.log(task, "you", choice === "keep" ? `You kept this maintenance turn with its reported settings: ${decision.actual}. Future turns still request ${decision.requested}.` : "You stopped this maintenance run after its tool reported different settings");
-    this.s.inbox = this.s.inbox.filter(item => !(item.taskId === taskId && item.kind === "maintenance-settings"));
-    if (choice === "stop") { this.cancel(taskId); this.commitNow(task); return; }
-    task.state = "waiting";
-    task.statusLine = "Continuing with the reported settings you accepted";
-    this.commitNow(task); this.schedule();
+  override async waitUntilReady(): Promise<void> {
+    await super.waitUntilReady();
+    await this.extraValidations.ready;
   }
 
   /** A synchronous admission decision, saved before the ordinary driver sees it. */
   pollRoutines(now = Date.now()): void {
-    if (this.stopped) return;
-    const before = structuredClone(this.s.routines);
-    const ids = new Set(this.s.tasks.map(t => t.id));
-    try {
-      const changed = library.admitRoutines(this.s, now, (routine, scheduledAt) => {
-        const id = this.createTask({ productId: routine.productId, title: routine.name, kind: "chore", approvePlan: false, approveDelivery: true });
-        const task = this.task(id)!;
-        library.prepareMaintenanceTask(task, routine, this.s as library.State, scheduledAt, now);
-        this.log(task, "milestone", `Queued by routine “${routine.name}” for ${library.occurrenceText(scheduledAt, routine.zone)}`);
-        return id;
-      });
-      if (changed) this.commitNow();
-    } catch (error) {
-      this.s.routines = before;
-      this.s.tasks = this.s.tasks.filter(t => ids.has(t.id));
-      throw error;
-    }
+    this.catalogCommands.pollRoutines(now);
   }
 
   schedule(): void {
@@ -301,7 +267,9 @@ export class Engine extends Kernel implements Commands {
   }
 
   private pollPullRequests(): void {
-    void this.trackWork(this.shipping.monitor.pollPullRequests()).catch(error => console.error("Could not refresh pull requests:", error));
+    void this.trackWork(this.shipping.monitor.pollPullRequests()).catch((error) =>
+      console.error("Could not refresh pull requests:", error),
+    );
   }
 
   startDriver(taskId: Id, resume = false): void {
@@ -312,26 +280,25 @@ export class Engine extends Kernel implements Commands {
     void this.trackWork(this.cleanup.removeCopy(taskId));
   }
 
-  private shutdownDone?: Promise<void>;
-
-  /** Picture contents are fetched separately, through a saved report's reference. */
-  async reportImage(taskId: string, imageId: string): Promise<Blob | undefined> {
-    // Finished records retain captions and references, never accessible image bytes.
-    const task = this.s.tasks.find((task) => task.id === taskId);
-    if (!task || task.state === "done" || task.state === "cancelled") return;
-    if (!/^[a-zA-Z0-9_-]+$/.test(taskId) || !/^[a-f0-9-]{36}$/.test(imageId) || !task?.session.some((line) => line.images?.some((image) => image.id === imageId))) return;
-    const file = Bun.file(join(this.dataDir, "captures", taskId, `${imageId}.png`));
-    return await file.exists() ? file : undefined;
-  }
-
   /** Save and close immediately; resolves once agents and their remaining file handling have stopped. */
   shutdown(): Promise<void> {
     if (this.shutdownDone) return this.shutdownDone;
     if (this.stopped) return Promise.resolve();
-    let done!: () => void, failed!: (error: unknown) => void;
-    this.shutdownDone = new Promise<void>((resolve, reject) => { done = resolve; failed = reject; });
-    const synchronousFailures: unknown[] = [], stateFailures: unknown[] = [];
-    const request = (stop: () => void) => { try { stop(); } catch (error) { synchronousFailures.push(error); } };
+    let done!: () => void;
+    let failed!: (error: unknown) => void;
+    this.shutdownDone = new Promise<void>((resolve, reject) => {
+      done = resolve;
+      failed = reject;
+    });
+    const synchronousFailures: unknown[] = [];
+    const stateFailures: unknown[] = [];
+    const request = (stop: () => void) => {
+      try {
+        stop();
+      } catch (error) {
+        synchronousFailures.push(error);
+      }
+    };
     // Stopped first: stopping agents still changes state, and nothing may save after the store closes.
     this.stopped = true;
     request(() => this.stopRequested.abort());
@@ -341,20 +308,31 @@ export class Engine extends Kernel implements Commands {
     this.saveTimer = undefined;
     for (const timer of this.timers) clearInterval(timer);
     const observe = <T>(start: () => Promise<T>): Promise<T> => {
-      try { return start(); }
-      catch (error) { return Promise.reject(error); }
+      try {
+        return start();
+      } catch (error) {
+        return Promise.reject(error);
+      }
     };
     const usageStopped = observe(() => this.usageCoordinator.stop());
     request(() => this.readiness.stop());
     request(() => this.screens.stop());
-    const runs = [...this.runs.entries(), ...[...this.helperRuns.entries()].flatMap(([taskId, runs]) => [...runs].map(run => [taskId, run] as const))];
+    const runs = [
+      ...this.runs.entries(),
+      ...[...this.helperRuns.entries()].flatMap(([taskId, entries]) => [...entries].map((run) => [taskId, run] as const)),
+    ];
     for (const controller of this.drivers.values()) request(() => controller.abort());
     // Keep request order and method receivers, even when one entered stop throws synchronously.
-    const owners = [this.startupReady, usageStopped, observe(() => this.extraValidations.shutdown()),
-      observe(() => this.tools.shutdown()), observe(() => this.profileReader.stop()),
-      observe(() => this.followUps.stop())];
+    const owners = [
+      this.startupReady,
+      usageStopped,
+      observe(() => this.extraValidations.shutdown()),
+      observe(() => this.tools.shutdown()),
+      observe(() => this.profileReader.stop()),
+      observe(() => this.followUps.stop()),
+    ];
     const agentStops = runs.map(([taskId, run]) => observe(() => this.stopAgent(taskId, run)));
-    const draining = Promise.allSettled([...owners, ...agentStops, ...this.settling.values()]).then(async outcomes => {
+    const draining = Promise.allSettled([...owners, ...agentStops, ...this.settling.values()]).then(async (outcomes) => {
       // A driver can hand file handling to the background while it settles. Re-read ownership after
       // each group, including work registered by that cleanup, before callers may remove its folders.
       for (;;) {
@@ -364,13 +342,16 @@ export class Engine extends Kernel implements Commands {
       }
       // Turns can release their scheduling entries before their bounded cleanup
       // finishes. Its task-owned receipt remains authoritative after driver drain.
-      const cleanup = await this.agentCleanup.wait().then(() => undefined, error => ({ error }));
+      const cleanup = await this.agentCleanup.wait().then(() => undefined, (error) => ({ error }));
       return { owners: outcomes.slice(1, owners.length), cleanup };
     });
     const saveAndCloseLog = () => {
       // An ordinary quit keeps each step's working time up to now, and not the time Petrina is closed.
       this.s.now = Date.now();
-      for (const task of this.s.tasks) { this.pauseStep(task, this.s.now); stopCheckProgress(task, this.s.now); }
+      for (const task of this.s.tasks) {
+        this.pauseStep(task, this.s.now);
+        stopCheckProgress(task, this.s.now);
+      }
       try {
         this.save();
       } catch (error) {
@@ -381,844 +362,272 @@ export class Engine extends Kernel implements Commands {
       }
     };
     // Ordinary state and interrupted-turn semantics never wait behind container cleanup.
-    try { saveAndCloseLog(); } catch (error) { stateFailures.push(error); }
+    try {
+      saveAndCloseLog();
+    } catch (error) {
+      stateFailures.push(error);
+    }
     // Startup recovery and outstanding extra work may still own private resources. State is
     // already saved above; keep the database available until those operations settle.
     const closeAfterDrain = !this.startupComplete || this.s.extraValidations?.length;
-    const closeStore = () => { try { this.store.close(); } catch (error) { stateFailures.push(error); } };
+    const closeStore = () => {
+      try {
+        this.store.close();
+      } catch (error) {
+        stateFailures.push(error);
+      }
+    };
     if (!closeAfterDrain) closeStore();
-    void draining.then(outcomes => {
-      if (closeAfterDrain) closeStore();
-      const errors = [...synchronousFailures];
-      for (const outcome of outcomes.owners) if (outcome.status === "rejected") errors.push(outcome.reason);
-      if (outcomes.cleanup) errors.push(outcomes.cleanup.error);
-      errors.push(...stateFailures);
-      if (errors.length === 1) throw errors[0];
-      if (errors.length) throw new AggregateError(errors, "Engine shutdown could not confirm all cleanup");
-    }).then(done, failed);
+    void draining
+      .then((outcomes) => {
+        if (closeAfterDrain) closeStore();
+        const errors = [...synchronousFailures];
+        for (const outcome of outcomes.owners) if (outcome.status === "rejected") errors.push(outcome.reason);
+        if (outcomes.cleanup) errors.push(outcomes.cleanup.error);
+        errors.push(...stateFailures);
+        if (errors.length === 1) throw errors[0];
+        if (errors.length) throw new AggregateError(errors, "Engine shutdown could not confirm all cleanup");
+      })
+      .then(done, failed);
     return this.shutdownDone;
   }
 
-  /** The numbers one view needs, worked out from the work log. The log itself never leaves the engine. */
+  // ── Profiles, routines, roles, products and first-run setup ────────────
+
+  profileChoices({ toolId, modelId, refresh = false }: library.ProfileChoiceRequest) {
+    return this.profileReader.read(toolId, modelId, refresh);
+  }
+  saveProfile(draft: library.ProfileDraft, clientId: Id, profileId?: Id): Promise<Id> {
+    return this.catalogCommands.saveProfile(draft, clientId, profileId);
+  }
+  removeProfile(profileId: Id): void {
+    this.catalogCommands.removeProfile(profileId);
+  }
+  saveRoutine(draft: library.RoutineDraft, routineId?: Id): Id {
+    return this.catalogCommands.saveRoutine(draft, routineId);
+  }
+  setRoutineEnabled(routineId: Id, enabled: boolean): void {
+    this.catalogCommands.setRoutineEnabled(routineId, enabled);
+  }
+  removeRoutine(routineId: Id): void {
+    this.catalogCommands.removeRoutine(routineId);
+  }
+  resolveMaintenanceSettings(taskId: Id, choice: "keep" | "stop"): void {
+    this.catalogCommands.resolveMaintenanceSettings(taskId, choice);
+  }
+  saveRole(roleId: Id, draft: RoleDraft): void {
+    this.catalogCommands.saveRole(roleId, draft);
+  }
+  addRole(draft: RoleDraft): Id {
+    return this.catalogCommands.addRole(draft);
+  }
+  resetRole(roleId: Id): void {
+    this.catalogCommands.resetRole(roleId);
+  }
+  removeRole(roleId: Id): void {
+    this.catalogCommands.removeRole(roleId);
+  }
+  addProduct(input: string, name?: string): Promise<Id> {
+    return this.catalogCommands.addProduct(input, name);
+  }
+  setProductDelivery(productId: Id, delivery: DeliveryMode, approveDelivery: boolean): void {
+    this.catalogCommands.setProductDelivery(productId, delivery, approveDelivery);
+  }
+  setProductChecks(productId: Id, checks: readonly { name: string; command: string }[] | null): void {
+    this.catalogCommands.setProductChecks(productId, checks);
+  }
+  setProductCheckSetup(productId: Id, requirements: readonly library.CheckPrerequisite[]): void {
+    this.catalogCommands.setProductCheckSetup(productId, requirements);
+  }
+  updateProduct(productId: Id, settings: ProductSettings): void {
+    this.catalogCommands.updateProduct(productId, settings);
+  }
+  removeProduct(productId: Id): void {
+    this.catalogCommands.removeProduct(productId);
+  }
+  checkTools(): Promise<void> {
+    return this.tools.checkAll().then(() => {
+      if (!this.stopped) this.schedule();
+    });
+  }
+  findClones(): Promise<Clone[]> {
+    return this.catalogCommands.findClones();
+  }
+  setSetupStep(step: SetupStep): void {
+    this.catalogCommands.setSetupStep(step);
+  }
+  skipSetup(): void {
+    this.catalogCommands.skipSetup();
+  }
+  dismissTip(): void {
+    this.catalogCommands.dismissTip();
+  }
+  openGuide(url: string): void {
+    this.catalogCommands.openGuide(url);
+  }
+  setTerminal(terminalId: Id): void {
+    this.catalogCommands.setTerminal(terminalId);
+  }
+
+  // ── Tasks, backlog, queue, prerequisites, pool and screen ──────────────
+
   usage<R extends UsageRequest>(request: R): UsageViewFor<R> {
     return this.tracking.usage(request);
   }
-
-  async previewImage(taskId: Id, path: string, productId?: Id): Promise<{ mime: string; data: string }> {
-    const task = this.task(taskId);
-    const scope = task ? executionFor(task) : undefined;
-    if (!task || task.state === "done" || task.state === "cancelled") throw new Error("Images are available while the task's working copy exists.");
-    const works = task.repositories?.filter((entry) => !entry.removed) ?? [];
-    const work = works.find((entry) => entry.productId === productId);
-    if (productId && !work && (task.repositories || scope!.work.productId !== productId)) throw new Error("This product is outside the task.");
-    const root = work ? work.worktree : scope!.work.worktree;
-    const products = new Set([scope!.work.productId, ...works.map((entry) => entry.productId)]);
-    const absoluteRoots = [scope!.work.worktree, ...works.map((entry) => entry.worktree), ...[...products].map((id) => join(this.dataDir, "worktrees", id, `${task.id}.copies`))].filter((folder): folder is string => !!folder);
-    return readTaskImage(root, path, absoluteRoots);
+  reportImage(taskId: string, imageId: string): Promise<Blob | undefined> {
+    return this.taskCommands.reportImage(taskId, imageId);
   }
-
-  saveRole(roleId: Id, draft: RoleDraft): void {
-    this.changeRoles((changes) => library.editRole(changes, roleId, draft));
+  previewImage(taskId: Id, path: string, productId?: Id): Promise<{ mime: string; data: string }> {
+    return this.taskCommands.previewImage(taskId, path, productId);
   }
-
-  addRole(draft: RoleDraft): Id {
-    let created = "";
-    this.changeRoles((changes) => {
-      const added = library.addRole(changes, draft);
-      created = added.roleId;
-      return added.changes;
-    });
-    return created;
-  }
-
-  resetRole(roleId: Id): void {
-    this.changeRoles((changes) => library.resetRole(changes, roleId));
-  }
-
-  /** Planned tasks still run a removed role, and past ones still show its name and icon. */
-  removeRole(roleId: Id): void {
-    this.changeRoles((changes) => library.removeRole(changes, roleId, this.s.tasks.some((task) => library.planUses(task as unknown as Task, roleId)) || this.store.history.usesRole(roleId)));
-  }
-
-  private changeRoles(change: (changes: RoleChanges) => RoleChanges): void {
-    const next = change((this.s.roleChanges ?? library.NO_ROLE_CHANGES) as RoleChanges);
-    // New role objects every time: agents already working keep the ones they started with.
-    this.s.roleChanges = next as typeof this.s["roleChanges"];
-    this.s.roles = library.libraryRoles(next) as typeof this.s["roles"];
-    this.commitNow();
-  }
-
-  /**
-   * Add a product from its local clone: the clone's folder or any folder inside it, ~ for the home
-   * folder. Every refusal is one plain sentence. Adding a clone that is already there opens it. A
-   * clone not linked to GitHub keeps its finished work on this machine instead of opening pull requests.
-   */
-  async addProduct(input: string, name?: string): Promise<Id> {
-    const shown = input.trim();
-    const path = expandPath(shown, this.options.home);
-    const found = await stat(path).catch(() => undefined);
-    if (!found) throw new Error(`There is no folder at ${shown}.`);
-    if (!found.isDirectory()) throw new Error(`${shown} is a file, so pick the folder you cloned the product into.`);
-    // Checked without running Git, so a Mac without Apple's developer tools never opens their installer.
-    if (this.tools.status("git") !== "ready") await this.tools.check("git");
-    if (this.tools.status("git") === "not-installed") {
-      const platform = this.s.setup?.platform ?? "linux";
-      throw new Error(`Petrina needs Git to add a product, and Git isn't installed: run ${fixFor("git", "not-installed", platform)!.command} in ${platform === "win32" ? "a terminal" : "Terminal"}, then try again.`);
-    }
-    let info: git.RepoInfo;
-    try {
-      info = await git.repoInfo(path);
-    } catch {
-      throw new Error("That folder isn't a copy of a repository, so pick the folder you cloned the product into.");
-    }
-    const existing = this.s.products.find((product) => product.path === info.root);
-    if (existing) return existing.id;
-    const displayName = productName(name ?? suggestProductName(info.root), this.s.products);
-    const base = info.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "product";
-    // An id is never handed out again: not one in use, not a removed product's, not one in the work log.
-    let id = base;
-    for (let n = 2; this.tracking.productIdTaken(id); n += 1) id = `${base}-${n}`;
-    this.tracking.product({ id, name: displayName, repo: `${info.owner}/${info.name}` }, { addedAt: Date.now() });
-    this.s.products.push({
-      id,
-      name: displayName,
-      repo: `${info.owner}/${info.name}`,
-      // Exactly as configured now: every fetch and push with the coordinator's login goes to this address.
-      ...(info.remote ? { remote: info.remote } : {}),
-      tone: TONES[this.s.products.length % TONES.length]!,
-      path: info.root,
-      defaultBranch: info.defaultBranch,
-      delivery: info.github ? "pull-request" : "local",
-      approveDelivery: true,
-    });
-    this.commitNow();
-    return id;
-  }
-
-  setProductDelivery(productId: Id, delivery: DeliveryMode, approveDelivery: boolean): void {
-    const product = this.s.products.find((entry) => entry.id === productId);
-    if (!product) return;
-    this.updateProduct(productId, { name: product.name, delivery, approveDelivery });
-  }
-
-  /**
-   * The coordinator sets a product's checks by hand (never replaced on its own), or clears them so
-   * the Check finder looks again at the next review.
-   */
-  setProductChecks(productId: Id, checks: readonly { name: string; command: string }[] | null): void {
-    const engine = this;
-    const executions = function* () {
-      for (const task of engine.s.tasks) for (const { work } of scopesFor(task)) yield work;
-    };
-    library.configureProductChecks(this.s.products.find(product => product.id === productId), checks, executions());
-    this.commit();
-  }
-
-  /** Coordinator-owned declarations are validated in full before any state changes. */
-  setProductCheckSetup(productId: Id, requirements: readonly library.CheckPrerequisite[]): void {
-    const engine = this;
-    const executions = function* () {
-      for (const task of engine.s.tasks) for (const { work } of scopesFor(task)) yield { taskId: task.id, work };
-    };
-    if (library.configureProductCheckSetup(this.s.products.find(product => product.id === productId), requirements, executions(), {
-      id: prefix => this.id(prefix), now: () => Date.now(),
-    })) this.commitNow();
-  }
-
-  updateProduct(productId: Id, settings: ProductSettings): void {
-    const product = this.s.products.find((entry) => entry.id === productId);
-    if (!product) throw new Error("This product is no longer in Petrina.");
-    const validated = validateProductSettings(settings, this.s.products, productId);
-    Object.assign(product, validated);
-    // The permanent list keeps the latest name, so a removed product shows under the name it last had.
-    this.tracking.product(product);
-    this.commit();
-  }
-
-  removeProduct(productId: Id): void {
-    const outstanding = this.extraValidations.outstanding(productId);
-    if (outstanding) throw new Error(`Extra validation “${outstanding.name}” still needs this product for cleanup. Wait for it to finish and cleanup to be confirmed before removing the product.`);
-    const { unfinished } = productHistory(this.s.tasks, productId);
-    if (unfinished) throw new Error(`${unfinished} task${unfinished === 1 ? " must" : "s must"} finish or be cancelled before this product can be removed.`);
-    const product = this.s.products.find((entry) => entry.id === productId);
-    if (!product) return;
-    this.activeState();
-    const tasks = this.s.tasks.flatMap((task) => {
-      const retained = library.withoutProduct(task, productId);
-      return retained ? [retained as MTask] : [];
-    });
-    const ids = new Set(this.s.tasks.filter((task) => !tasks.some((kept) => kept.id === task.id)).map((task) => task.id));
-    // History may contain millions of finished tasks, while picture folders exist only where
-    // there are actual bytes to remove. Read membership for those folders, never the full archive.
-    try {
-      const captures = opendirSync(join(this.dataDir, "captures"));
-      try {
-        for (let entry = captures.readSync(); entry; entry = captures.readSync()) {
-          if (!entry.isDirectory() || ids.has(entry.name)) continue;
-          const item = this.store.history.item(entry.name);
-          const products = item?.productIds ?? (item ? [item.productId] : []);
-          if (products.length === 1 && products[0] === productId) ids.add(entry.name);
-        }
-      } finally { captures.closeSync(); }
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    }
-    const next = {
-      ...this.activeState(),
-      inbox: this.s.inbox.filter((item) => {
-        const archived = this.store.history.item(item.taskId);
-        const products = archived?.productIds ?? (archived ? [archived.productId] : []);
-        return !ids.has(item.taskId) && !(products.length === 1 && products[0] === productId);
-      }),
-      tasks,
-      products: this.s.products.filter((entry) => entry.id !== productId),
-      ...(this.s.work ? { work: { ...this.s.work, version: this.s.work.version + 1 } } : {}),
-    };
-    // Save all three changes together before showing removal. A failed disk write leaves the live
-    // product, its history, and the permanent product record exactly as they were.
-    this.store.removeProduct(productId, next, () => this.tracking.log.recordProduct({ id: product.id, name: product.name, repo: product.repo, removedAt: Date.now() }));
-    this.s.inbox = next.inbox;
-    this.s.tasks = next.tasks;
-    this.s.products = next.products;
-    this.s.work = next.work;
-    this.forgetProductHistory(productId);
-    for (const id of ids) rmSync(join(this.dataDir, "captures", id), { recursive: true, force: true });
-    this.commit();
-  }
-
-  // ── First run and the tools check ──────────────────────────────────────
-
-  /** Check every tool again, each on its own, so a slow one never holds up the others. */
-  checkTools(): Promise<void> {
-    return this.tools.checkAll().then(() => { if (!this.stopped) this.schedule(); });
-  }
-
-  /** GitHub clones in the usual code folders, most recently changed first, without the ones already added. */
-  async findClones(): Promise<Clone[]> {
-    const real = (path: string) => {
-      try {
-        // Native resolution also expands Windows short names, which Git reports in their full form.
-        return realpathSync.native(path);
-      } catch {
-        return path;
-      }
-    };
-    const added = new Set(this.s.products.map((product) => product.path).filter((path): path is string => !!path).map(real));
-    return findClones({ ...(this.options.home ? { home: this.options.home } : {}), skip: (path) => added.has(real(path)) });
-  }
-
-  /** The furthest first-run screen reached, so closing Petrina partway reopens there. */
-  setSetupStep(step: SetupStep): void {
-    const setup = this.s.setup;
-    const order = (value: SetupStep | undefined) => SETUP_STEPS.findIndex((entry) => entry.id === (value ?? "welcome"));
-    if (!setup || setup.done || order(step) <= order(setup.step)) return;
-    setup.step = step;
-    this.commitNow();
-  }
-
-  /** "Skip setup": first run never comes back. */
-  skipSetup(): void {
-    if (!this.s.setup || this.s.setup.done) return;
-    this.s.setup.done = true;
-    this.commitNow();
-  }
-
-  /**
-   * First run's Start: add the task and finish setup together, saved before the window hears back.
-   * Sent again after a lost reply, it finds the same task.
-   */
   startFirstTask(input: NewTaskInput & { clientId: Id }): Id {
-    const id = this.addTask(input);
-    const setup = this.s.setup;
-    if (setup) {
-      setup.done = true;
-      setup.firstTaskId ??= id;
-    }
-    this.commitNow();
-    return id;
+    return this.taskCommands.startFirstTask(input);
   }
-
-  /** The board's one-time tip about the first task. */
-  dismissTip(): void {
-    if (!this.s.setup || this.s.setup.tipDismissed) return;
-    this.s.setup.tipDismissed = true;
-    this.commit();
-  }
-
-  /** Open one of the official guides a fix links to, in the default browser. No other page. */
-  openGuide(url: string): void {
-    if (!isGuide(url)) throw new Error("Petrina only opens the guides it links to.");
-    Bun.spawn(browserCommand(url), { stdin: "ignore", stdout: "ignore", stderr: "ignore", windowsHide: true });
-  }
-
-  // ── The queue and the pool ─────────────────────────────────────────────
-
   addTask(input: NewTaskInput, schedule = true): Id {
-    const id = this.createTask(input);
-    this.commitNow();
-    // The outside operation schedules after its enclosing request-receipt transaction commits.
-    if (schedule) this.schedule();
-    return id;
+    return this.taskCommands.addTask(input, schedule);
   }
-
-  private createTask(input: NewTaskInput): Id {
-    const known = input.clientId ? this.s.tasks.find((task) => task.clientId === input.clientId)?.id ?? this.store.history.byClient(input.clientId) : undefined;
-    if (known) return known;
-    // Validate before reserving ids, so a refused request changes no state.
-    const task = createTaskState(input, this.s.products, { id: "", timelineId: "", now: Date.now(), priority: queueOf(this.s.tasks).length }, (id) => this.task(id));
-    let id = this.id("task");
-    while (this.tracking.taskIdTaken(id)) id = this.id("task");
-    task.id = id; task.timeline[0]!.id = this.id(id);
-    const product = this.s.products.find((entry) => entry.id === task.productId);
-    task.repository = {
-      productId: task.productId, delivery: task.delivery, workChoice: structuredClone(task.workChoice),
-      ...(product ? { workProduct: { id: product.id, name: product.name, repo: product.repo, path: product.path, remote: product.remote, defaultBranch: product.defaultBranch ?? "main" } } : {}),
-    };
-    this.s.tasks.push(task);
-    if (task.after?.length) {
-      if (task.state === "queued") syncWait(task, this.blockers(task), (id) => this.task(id), Date.now());
-      this.log(task, "you", AFTER_WORDS.starts(task.after.map((id) => this.task(id)!.title)));
-    }
-    this.renumberQueue();
-    return id;
-  }
-
   queueTask(taskId: Id): void {
-    const task = this.task(taskId);
-    if (!task || !queueBacklogTask(task, queueOf(this.s.tasks).length)) return;
-    this.log(task, "you", "You reviewed the request and queued it for work");
-    this.commitNow(); this.schedule();
+    this.taskCommands.queueTask(taskId);
   }
-
   combineBacklog(taskIds: Id[], title: string, clientId: Id): Promise<Id> {
-    return this.trackWork(this.combineBacklogRequests(taskIds, title, clientId));
+    return this.taskCommands.combineBacklog(taskIds, title, clientId);
   }
-
-  private async combineBacklogRequests(taskIds: Id[], title: string, clientId: Id): Promise<Id> {
-    const known = this.s.tasks.find((task) => task.clientId === clientId) ?? (() => { const id = this.store.history.byClient(clientId); return id ? this.task(id) : undefined; })();
-    if (known) {
-      if (JSON.stringify(known.combinedFrom?.map((entry) => entry.id)) !== JSON.stringify(taskIds)) throw new Error("This request reference was already used for a different selection.");
-      return known.id;
-    }
-    const input = combinedBacklogInput(this.s.tasks as Task[], taskIds, title);
-    const sources = taskIds.map((id) => this.task(id)!);
-    const before = JSON.stringify(sources);
-    const captures = join(this.dataDir, "captures");
-    await mkdir(captures, { recursive: true });
-    const tempName = `combine-${randomUUID()}`;
-    const release = this.holdFollowUp(tempName);
-    const temp = join(captures, tempName);
-    try {
-      await mkdir(temp);
-      const images = await completeAll(sources.flatMap(source => source.session.flatMap(line => (line.images ?? []).filter(image => /^[a-f0-9-]{36}$/.test(image.id)).map(async image => {
-        const id = randomUUID();
-        await this.files.copyFile(join(captures, source.id, `${image.id}.png`), join(temp, `${id}.png`));
-        return { id, caption: `${source.title}: ${image.caption}`, ...(image.from ? { from: { ...image.from } } : {}) };
-      }))));
-      // Other commands may have edited or queued a request while the pictures were copied.
-      if (this.stopped || JSON.stringify(taskIds.map((id) => this.task(id))) !== before) throw new Error("A selected task changed. Review the selection and try again.");
-      combinedBacklogInput(this.s.tasks as Task[], taskIds, title);
-      const id = this.createTask({ ...input, clientId });
-      const combined = this.task(id)!;
-      try { renameSync(temp, join(captures, id)); }
-      catch (error) { this.s.tasks = this.s.tasks.filter((task) => task.id !== id); throw error; }
-      if (images.length) combined.session.push({ id: this.id(id), from: "system", at: Date.now(), text: "Pictures from the original requests", images });
-      combineBacklogTasks(combined, sources, Date.now(), queueOf(this.s.tasks).length);
-      for (const source of sources) this.log(source, "you", source.statusLine);
-      this.log(combined, "you", `You combined ${sources.length} backlog requests and queued them as one task`);
-      this.renumberQueue();
-      this.commitNow();
-      for (const source of sources) void this.trackWork(this.cleanup.removeCaptures(source.id));
-      this.schedule();
-      return id;
-    } finally { release(); await rm(temp, { recursive: true, force: true }).catch(() => undefined); }
-  }
-
   moveToBacklog(taskId: Id): void {
-    const task = this.task(taskId);
-    if (!task || !returnQueuedTaskToBacklog(task)) return;
-    syncWait(task, [], () => undefined, Date.now());
-    this.renumberQueue();
-    this.log(task, "you", "You moved it to the backlog for review");
-    this.commitNow();
+    this.taskCommands.moveToBacklog(taskId);
   }
-
   updateBacklog(taskId: Id, changes: { title: string; description: string }): void {
-    const task = this.task(taskId);
-    if (!task) throw new Error("Only backlog requests can be edited before work starts.");
-    editBacklogRequest(task, changes);
-    this.log(task, "you", "You updated the backlog request");
-    this.commitNow();
+    this.taskCommands.updateBacklog(taskId, changes);
   }
-
-  async setTaskStart(taskId: Id, choice: WorkChoice): Promise<void> {
-    const task = this.task(taskId);
-    const scope = task ? executionFor(task) : undefined;
-    if (task?.workValidating) throw new Error("Wait for validation to finish, then edit the choices.");
-    if (task?.workRows) {
-      if (!task.workRows.some(row => row.choice.productId === choice.productId)) throw new Error("That product is not in this task's product choices. Add it to the task before changing its starting point.");
-      return this.setTaskProducts(taskId, task.workRows.map((row) => row.choice.productId === choice.productId ? choice : choice.lead ? { ...row.choice, lead: false } : row.choice));
-    }
-    if (!task || scope!.work.worktree || !this.s.inbox.some((item) => item.taskId === taskId && item.kind === "plan")) throw new Error("The starting point can be edited at the plan check before work starts.");
-    await this.sources.propose(task, [choice]);
-    this.commitNow();
+  setTaskStart(taskId: Id, choice: WorkChoice): Promise<void> {
+    return this.taskCommands.setTaskStart(taskId, choice);
   }
-
-  async setTaskProducts(taskId: Id, choices: readonly WorkChoice[]): Promise<void> {
-    const task = this.task(taskId);
-    const scope = task ? executionFor(task) : undefined;
-    if (!task || task.repositories?.some((entry) => entry.completedStages.length) || (!task.repositories && scope!.work.worktree) || !this.s.inbox.some((item) => item.taskId === taskId && ["plan", "stuck"].includes(item.kind))) throw new Error("Change products at the plan check before work starts.");
-    if (task.workValidating) throw new Error("Wait for validation to finish, then edit the choices.");
-    if (!task.approveDelivery) {
-      const added = choices.find((choice) => !task.workRows?.some((row) => row.choice.productId === choice.productId) && this.s.products.find((product) => product.id === choice.productId)?.approveDelivery !== false);
-      if (added) { task.approveDelivery = true; task.approvalExplanation = "The added product asks before shipping, so shared delivery approval is on. You can change it here."; }
-    }
-    for (const choice of choices) {
-      const prepared = task.repositories?.find((work) => work.productId === choice.productId && (work.worktree || work.preparingCopy));
-      if (prepared?.workChoice && (JSON.stringify(prepared.workChoice.startFrom) !== JSON.stringify(choice.startFrom) || prepared.delivery !== choice.delivery)) throw new Error("Keep the approved source and delivery for a prepared product. You can leave it out while revising this saved plan.");
-    }
-    task.selectedProducts = [...choices];
-    await this.sources.propose(task, choices, true);
-    if (!this.s.inbox.some((item) => item.taskId === taskId && item.kind === "plan")) {
-      this.s.inbox = this.s.inbox.filter((item) => !(item.taskId === taskId && item.kind === "stuck"));
-      task.stageIndex = -1;
-      this.gate(task, "plan");
-    }
-    this.commitNow();
+  setTaskProducts(taskId: Id, choices: readonly WorkChoice[]): Promise<void> {
+    return this.taskCommands.setTaskProducts(taskId, choices);
   }
-
-  async setTaskAddition(taskId: Id, repository: string, name: string, path: string): Promise<void> {
-    const task = this.task(taskId);
-    if (!task) throw new Error("Unknown task.");
-    await this.sources.configureAddition(task, repository, name, path);
+  setTaskAddition(taskId: Id, repository: string, name: string, path: string): Promise<void> {
+    return this.taskCommands.setTaskAddition(taskId, repository, name, path);
   }
-
   setTaskApproval(taskId: Id, ask: boolean): void {
-    const task = this.task(taskId);
-    if (!task || !this.s.inbox.some((item) => item.taskId === taskId && item.kind === "plan")) throw new Error("Change this choice at the plan check.");
-    task.approveDelivery = ask;
-    delete task.approvalExplanation;
-    this.commitNow();
+    this.taskCommands.setTaskApproval(taskId, ask);
   }
-
   moveInQueue(taskId: Id, index: number): void {
-    const queue = queueOf(this.s.tasks as Task[]).map((task) => task.id);
-    const from = queue.indexOf(taskId);
-    if (from < 0) return;
-    queue.splice(from, 1);
-    queue.splice(Math.max(0, Math.min(queue.length, index)), 0, taskId);
-    queue.forEach((id, position) => {
-      const task = this.task(id);
-      if (task) task.priority = position;
-    });
-    this.commit();
-    this.schedule();
+    this.taskCommands.moveInQueue(taskId, index);
   }
-
   moveToTop(taskId: Id): void {
     this.moveInQueue(taskId, 0);
   }
-
   placeInQueue(taskId: Id, anchorId: Id, side: "before" | "after"): number {
-    const queue = queueOf(this.s.tasks).map((task) => task.id);
-    const index = queuePlacement(queue, taskId, anchorId, side);
-    if (index === undefined) return -1;
-    const hidden = Math.max(0, Math.abs(queue.indexOf(taskId) - queue.indexOf(anchorId)) - 1);
-    this.moveInQueue(taskId, index);
-    return hidden;
+    return this.taskCommands.placeInQueue(taskId, anchorId, side);
   }
-
   moveVisibleInQueue(taskId: Id, visibleIds: Id[], direction: -1 | 1): number {
-    const queue = queueOf(this.s.tasks).map((task) => task.id);
-    const anchor = queueNeighbour(queue, visibleIds, taskId, direction);
-    return anchor ? this.placeInQueue(taskId, anchor, direction < 0 ? "before" : "after") : -1;
+    return this.taskCommands.moveVisibleInQueue(taskId, visibleIds, direction);
   }
-
   setHeld(taskId: Id, held: boolean): void {
-    const task = this.task(taskId);
-    if (!task) return;
-    task.held = held;
-    this.log(task, "you", held ? "You put it on hold" : "You released the hold");
-    this.commit();
-    this.schedule();
+    this.taskCommands.setHeld(taskId, held);
   }
-
-  /** Start this task only after the given tasks have landed. An empty list removes the wait. */
   setAfter(taskId: Id, after: readonly Id[]): void {
-    const task = this.task(taskId);
-    assertTaskDependenciesEditable(task);
-    const ids = validateTaskDependencies(taskId, after, (id) => this.task(id));
-    task.after = ids;
-    if (task.state === "queued") syncWait(task, this.blockers(task), (id) => this.task(id), Date.now());
-    this.log(task, "you", ids.length ? AFTER_WORDS.starts(ids.map((id) => this.task(id)!.title)) : AFTER_WORDS.none);
-    this.commitNow(); this.schedule();
+    this.taskCommands.setAfter(taskId, after);
   }
-
-  /** Save a coordinator's runtime prerequisite decision without interrupting admitted work. */
   setRuntimeWait(taskId: Id, after: readonly Id[], reason: string, requestId: string): boolean {
-    const task = this.task(taskId);
-    if (!task) throw new Error("That task does not exist.");
-    const input = validateRuntimeWait(task, after, reason, (id) => this.task(id) ?? this.taskDetails(id));
-    if (!changeRuntimeWait(task, { ...input, requestId }, Date.now())) return false;
-    // Save the admitted step with the decision, even if the coordinator clears the wait
-    // before scheduling runs again or that step fails before the next scheduler pass.
-    if (input.after.length && !task.runtimeWait!.refreshAfterStep && this.taskStepStarted(task)) task.runtimeWait!.refreshAfterStep = stepKey(task);
-    task.runtimeWait!.titles = { ...task.runtimeWait!.titles, ...Object.fromEntries(input.after.map(id => [id, this.taskDetails(id)!.title])) };
-    this.log(task, "you", input.after.length
-      ? `You asked this task to wait for ${input.after.map((id) => `“${this.task(id)?.title ?? this.taskDetails(id)?.title ?? id}”`).join(", ")} to land. ${input.reason}`
-      : `You cleared the prerequisite wait. ${input.reason}`);
-    task.runtimeWait!.changes.at(-1)!.timelineId = task.timeline.at(-1)!.id;
-    this.commitNow(task);
-    // The named operation schedules only after its wait and retry receipt commit together.
-    return true;
+    return this.taskCommands.setRuntimeWait(taskId, after, reason, requestId);
   }
-
+  setStageProfile(
+    taskId: Id,
+    stageId: Id,
+    list: "profileIds" | "reviewerProfileIds",
+    index: number,
+    profileId: Id,
+  ): void {
+    this.taskCommands.setStageProfile(taskId, stageId, list, index, profileId);
+  }
+  addReviewer(taskId: Id, stageId: Id, profileId: Id): void {
+    this.taskCommands.addReviewer(taskId, stageId, profileId);
+  }
   setPoolLimit(limit: number): void {
     this.driver.workflow.setPoolLimit(limit);
   }
-
-  /** How many agents of one tool may run at once (keeps one subscription from being exhausted). */
   setToolCap(toolId: Id, cap: number): void {
     this.driver.workflow.setToolCap(toolId, cap);
   }
-
   setPoolPaused(paused: boolean): void {
     this.driver.workflow.setPoolPaused(paused);
   }
-
-  /** The terminal take-overs open in. Empty: the usual one on this machine. */
-  setTerminal(terminalId: Id): void {
-    if (!terminalId) delete this.s.terminal;
-    else if (this.found.some((terminal) => terminal.id === terminalId)) this.s.terminal = terminalId;
-    else throw new Error("That terminal is not on this machine");
-    this.commit();
-  }
-
-  /**
-   * "Agents may use the screen": Off, For an hour, or On. Turning it off never stops the agent on the
-   * screen; it keeps it until its step ends, and nobody new gets it.
-   */
   setScreenUse(mode: ScreenMode): void {
     this.screens.setScreenUse(mode, this.options.screenHourMs ?? SCREEN_HOUR_MS);
   }
+  allowScreen(taskId: Id): void {
+    this.screens.allowScreen(taskId);
+  }
+  setTaskScreen(taskId: Id, allowed: boolean): void {
+    this.screens.setTaskScreen(taskId, allowed);
+  }
 
-  /** Allow now: this request may use the screen, still one agent at a time. */
-  allowScreen(taskId: Id): void { this.screens.allowScreen(taskId); }
-
-  /** "Allow the screen for this task": its requests go ahead even while the switch is off. */
-  setTaskScreen(taskId: Id, allowed: boolean): void { this.screens.setTaskScreen(taskId, allowed); }
+  // ── Interventions, messages, inbox decisions and take-over ─────────────
 
   pause(taskId: Id): void {
-    const task = this.task(taskId);
-    const scope = task ? executionFor(task) : undefined;
-    this.takeover.notDriving(task);
-    if (!task || !["running", "needs-you", "waiting"].includes(task.state)) return;
-    this.extraValidations.cancelTask(taskId);
-    this.stopDriver(taskId);
-    pauseTaskState(task, scope!.work, Date.now());
-    this.discardScreenTurns(task);
-    this.releaseScreen(task);
-    this.stopStep(task);
-    this.dropBlockingItems(taskId);
-    this.log(task, "you", "You paused it");
-    this.commit(task);
-    this.schedule();
+    this.inboxCommands.pause(taskId);
   }
-
   resume(taskId: Id): void {
-    const task = this.task(taskId);
-    if (!task || !resumeTaskState(task, this.s.inbox.some((item) => item.taskId === taskId && !item.blocking))) return;
-    this.log(task, "you", "You resumed it");
-    this.commit(task); this.schedule();
+    this.inboxCommands.resume(taskId);
   }
-
   cancel(taskId: Id): void {
-    const task = this.task(taskId);
-    const scope = task ? executionFor(task) : undefined;
-    if (!task) return;
-    this.takeover.notDriving(task);
-    this.extraValidations.cancelTask(taskId);
-    this.stopDriver(taskId);
-    this.tracking.cancelled(task);
-    cancelTaskState(task, scope!.work, Date.now());
-    this.discardScreenTurns(task);
-    this.releaseScreen(task);
-    this.stopStep(task);
-    // A delivery from before the update keeps its note: what went out is for the coordinator to check.
-    task.statusLine = scope!.work.shipping?.carriedOver ? `Cancelled. ${CARRIED_OVER}: check GitHub for what went out` : "Cancelled";
-    this.dropBlockingItems(taskId);
-    this.s.inbox = this.s.inbox.filter((item) => item.taskId !== taskId);
-    this.log(task, "you", "You cancelled it");
-    this.commit(task);
-    // Pictures need no delivery lookup or agent shutdown before they can be discarded.
-    void this.trackWork(this.cleanup.removeCaptures(taskId));
-    // Stopped mid-delivery with no step running (it failed, say): what went out is looked up now, then the copy goes.
-    // With an agent still stopping, its driver removes the copy once it has let go of it.
-    void this.trackWork(this.shipping.monitor.settleCancelled(taskId).then(() => this.tidy(taskId)));
-    this.schedule();
+    this.inboxCommands.cancel(taskId);
   }
-
-  /**
-   * Start a failed task again from the stage it failed in. Stuck on a tool: check the tool again
-   * first, and while it is still not installed or not logged in, the item stays with its fix.
-   */
-  async retry(itemId: Id): Promise<void> {
-    const stuck = this.s.inbox.find((entry) => entry.id === itemId);
-    if (stuck?.kind !== "stuck") return;
-    this.takeover.notDrivingItem(itemId);
-    if (stuck?.toolId && (await this.tools.stillNotReady(stuck.toolId, this.task(stuck.taskId)))) return;
-    const item = this.s.inbox.find((entry) => entry.id === itemId);
-    const task = item && this.task(item.taskId);
-    const scope = task ? executionFor(task) : undefined;
-    if (item !== stuck || item.kind !== "stuck" || !task) return;
-    this.takeover.notDrivingItem(itemId);
-    this.s.inbox = this.s.inbox.filter((entry) => entry.id !== itemId);
-    if (task.state === "failed" && task.maintenance) delete task.maintenance.readOnlyWrites;
-    delete task.error;
-    // An explicit Retry refreshes checks, pass or fail, even on unchanged work. Keep the output visible
-    // until that run finishes; ordinary stage changes and restarts keep its identity and reuse it.
-    scope!.work.checkSetupInvalidated = { id: this.id(task.id), kind: "explicit-rerun", at: Date.now() };
-    if (scope!.work.checks) {
-      scope!.work.checks.current = false;
-      delete scope!.work.checks.sha;
-      delete scope!.work.checks.tree;
-    }
-    this.tracking.retried(task);
-    task.state = "waiting";
-    task.statusLine = "Waiting for a free slot";
-    this.log(task, "you", "You asked to try again");
-    endYouStep(task, { outcome: W.triedAgain, reason: W.tryAgain }, Date.now());
-    this.commit();
-    this.schedule();
+  retry(itemId: Id): Promise<void> {
+    return this.inboxCommands.retry(itemId);
   }
-
-  /** Explicit fresh verification, with no delivery approval and no new automatic repair allowance. */
   rerunChecks(itemId: Id): void {
-    const item = this.s.inbox.find((entry) => entry.id === itemId);
-    const task = item && this.task(item.taskId);
-    if (!item || !task) return;
-    if (item.kind !== "delivery") throw new Error("Run checks again is only available for a delivery check problem.");
-    if (!library.deliveryDecisionProblem({ repositories: task.repositories, journey: task.journey, ...executionFor(task).work })) throw new Error("This delivery has no failed or unverified product checks to rerun.");
-    this.takeover.notDrivingItem(itemId);
-    this.takeItem(itemId);
-    for (const { work } of scopesFor(task)) {
-      if (library.repositoryPublished(work)) continue;
-      work.checkSetupInvalidated = { id: this.id(task.id), kind: "explicit-rerun", at: Date.now() };
-      if (work.checks) { delete work.checks.sha; delete work.checks.tree; work.checks.current = false; }
-      delete work.approvedSha; delete work.approvedPatch; delete work.approvedFor;
-    }
-    this.log(task, "you", "You asked to run checks again on unchanged work; delivery is not approved");
-    endYouStep(task, { outcome: "Run checks again", reason: W.checkAgain }, Date.now());
-    this.toWaiting(task);
-    this.commitNow();
-    this.schedule();
+    this.inboxCommands.rerunChecks(itemId);
   }
-
   sendMessage(taskId: Id, text: string, mode: "now" | "queue" | "interrupt" = "now", clientId?: Id): Id | undefined {
-    const task = this.task(taskId);
-    const trimmed = text.trim();
-    if (!task || !trimmed || !this.firstTime(task, clientId)) return;
-    const message = { id: this.id(taskId), text: trimmed, at: Date.now(), mode };
-    this.remember(task, trimmed, message.id);
-    const run = this.runs.get(taskId);
-    const runs = new Set(this.helperRuns.get(taskId) ?? []);
-    if (run) runs.add(run);
-    const interrupt = mode === "interrupt" && runs.size > 0;
-    this.stepNote(task, interrupt ? "interrupt" : "message", trimmed, { id: message.id });
-    if (interrupt) {
-      // Heard next, ahead of notes that were already waiting.
-      task.queued.unshift(message);
-      this.say(task, "system", "You interrupted the current step");
-    } else {
-      task.queued.push(message);
-    }
-    routeMessages(task, this.screenGroups.get(taskId)?.recipients() ?? Object.keys(task.hunt?.screenTurns ?? {}));
-    this.commitNow(task);
-    if (mode === "now") for (const lane of this.messageTurns.get(taskId)?.values() ?? []) void lane.deliver();
-    if (interrupt) for (const active of runs) void active.cancel();
-    return message.id;
+    return this.inboxCommands.sendMessage(taskId, text, mode, clientId);
   }
-
-  /** Take back a message before any agent got it. */
   removeQueued(taskId: Id, messageId: Id): void {
-    const task = this.task(taskId);
-    if (!task || !task.queued.some((message) => message.id === messageId && messageRemovable(message))) return;
-    task.queued = task.queued.filter((message) => message.id !== messageId);
-    task.stepNotes = task.stepNotes?.filter((note) => note.id !== messageId);
-    task.notes = task.notes?.filter((note) => note.id !== messageId);
-    task.session = task.session.filter(line => line.coordinatorMessageId !== messageId);
-    this.commitNow(task);
+    this.inboxCommands.removeQueued(taskId, messageId);
   }
-
-  setStageProfile(taskId: Id, stageId: Id, list: "profileIds" | "reviewerProfileIds", index: number, profileId: Id): void {
-    const task = this.task(taskId);
-    const title = task && assignFutureProfile(task, this.s.profiles, stageId, list, index, profileId);
-    if (title === undefined) return;
-    this.log(task!, "you", `You changed who works on “${title}”`);
-    this.commit(task!);
-  }
-
-  addReviewer(taskId: Id, stageId: Id, profileId: Id): void {
-    const task = this.task(taskId);
-    const title = task && appendFutureReviewer(task, this.s.profiles, stageId, profileId);
-    if (title === undefined) return;
-    this.log(task!, "you", `You added a reviewer to “${title}”`);
-    this.commit(task!);
-  }
-
-  /**
-   * Answer an agent's question. On disk before the agent gets it. A question asked before a restart
-   * is answered the same way: its conversation hears the answer when it picks up. When the question
-   * is gone (a pause dropped it before the answer arrived, or a restart did on a step with no
-   * conversation to pick up), the answer still reaches the step.
-   */
   answer(itemId: Id, answer: string, context: SaidContext = {}, how: AskAnswer = "answered"): void {
-    this.takeover.notDrivingItem(itemId);
-    const item = this.s.inbox.find((entry) => entry.id === itemId);
-    if (item && item.kind !== "question") throw new Error("Use Answer only for a question. The request is still in your inbox.");
-    const task = this.task(item?.taskId ?? context.taskId ?? "");
-    const scope = task ? executionFor(task) : undefined;
-    const about = item?.title ?? context.about;
-    if (!task || !this.firstTime(task, context.clientId)) return;
-    if (!item && (!about || ["done", "cancelled"].includes(task.state))) return;
-    this.takeItem(itemId);
-    const answerKind = context.decided ? "decided" : how;
-    this.tracking.answered(task, item ?? itemId, answerKind);
-    settleAsk(task, itemId, answerKind === "decided" ? "decided" : "answered", Date.now(), answer);
-    // Message recovery is an engine decision, not another instruction for the model.
-    const deliveryDecision = task.queued.some(message => Object.values(message.deliveries ?? {}).some(receipt => receipt.decisionId === itemId));
-    if (!deliveryDecision) this.stepNote(task, "answer", answer, { ...(about ? { about } : {}) });
-    this.say(task, "you", answer);
-    this.log(task, "you", `You answered: ${answer}`);
-    const asked = scope!.work.conversation?.asked;
-    if (item && asked?.itemId === itemId) asked.answer = answer;
-    const waiter = this.waiting.get(itemId);
-    if (item || waiter) this.unblock(task);
-    else task.queued.push({ id: this.id(task.id), text: `About your question “${about}”: ${answer}`, at: Date.now() });
-    this.commitNow(task);
-    this.waiting.delete(itemId);
-    waiter?.resolve(answer);
-    // Asked before a restart: no agent holds a slot for it, so the step waits for one.
-    if (item && !waiter) this.schedule();
+    this.inboxCommands.answer(itemId, answer, context, how);
   }
-
   decideForMe(itemId: Id): void {
-    const item = this.s.inbox.find((entry) => entry.id === itemId);
-    if (!item) return;
-    this.answer(itemId, item.options?.[0] ?? "Use your best judgment.", {}, "decided");
+    this.inboxCommands.decideForMe(itemId);
   }
-
-  allow(itemId: Id, _scope: "once" | "always" = "once"): void {
-    this.takeover.notDrivingItem(itemId);
-    const item = this.s.inbox.find((entry) => entry.id === itemId);
-    if (!item) return;
-    if (item.kind !== "permission") throw new Error("Use Allow only for a permission request. The request is still in your inbox.");
-    this.takeItem(itemId);
-    const task = this.task(item.taskId);
-    if (task) {
-      this.tracking.answered(task, item, "allowed");
-      settleAsk(task, itemId, "allowed", Date.now());
-      this.log(task, "you", `You allowed: ${item.title}`);
-      this.unblock(task);
-    }
-    this.waiting.get(itemId)?.resolve("allow");
-    this.waiting.delete(itemId);
-    this.commit();
+  allow(itemId: Id, scope: "once" | "always" = "once"): void {
+    this.inboxCommands.allow(itemId, scope);
   }
-
-  /** Say no to a permission. The note with it is on disk before the agent hears the "No". */
   deny(itemId: Id, note?: string, context: SaidContext = {}): void {
-    this.takeover.notDrivingItem(itemId);
-    const item = this.s.inbox.find((entry) => entry.id === itemId);
-    if (item && item.kind !== "permission") throw new Error("Use Deny only for a permission request. The request is still in your inbox.");
-    const task = this.task(item?.taskId ?? context.taskId ?? "");
-    const said = note?.trim();
-    const about = item?.title ?? context.about;
-    if (!task || !this.firstTime(task, context.clientId)) return;
-    // A plain "No" to a request a restart already dropped changes nothing.
-    if (!item && (!said || ["done", "cancelled"].includes(task.state))) return;
-    this.takeItem(itemId);
-    if (item) this.tracking.answered(task, item, "denied");
-    settleAsk(task, itemId, "denied", Date.now(), said);
-    this.log(task, "you", said ? `You said no: ${said}` : `You said no to: ${about}`);
-    if (said) {
-      const id = this.id(task.id);
-      this.remember(task, said, id);
-      this.stepNote(task, "denied", said, { id, ...(about ? { about } : {}) });
-      task.queued.push({ id, text: said, at: Date.now() });
-    }
-    if (item) this.unblock(task);
-    this.commitNow(task);
-    this.waiting.get(itemId)?.resolve("deny");
-    this.waiting.delete(itemId);
+    this.inboxCommands.deny(itemId, note, context);
   }
-
   approve(itemId: Id): void | Promise<void> {
-    this.takeover.notDrivingItem(itemId);
-    const kind = this.s.inbox.find((entry) => entry.id === itemId)?.kind;
-    if (kind === "stuck") {
-      return this.retry(itemId);
-    }
-    if (kind === "shipping") {
-      this.shipping.checkShipping(itemId);
-      return;
-    }
-    if (kind === "guide") {
-      this.guide.acceptGuideLine(itemId);
-      return;
-    }
-    if (kind === "learnings") {
-      this.learnings.accept(itemId);
-      return;
-    }
-    if (kind === "screen") {
-      this.allowScreen(this.s.inbox.find((entry) => entry.id === itemId)!.taskId);
-      return;
-    }
-    this.checkpoints.approve(itemId);
+    return this.inboxCommands.approve(itemId);
   }
-
   requestChanges(itemId: Id, note: string): void {
-    this.takeover.notDrivingItem(itemId);
-    this.checkpoints.requestChanges(itemId, note);
+    this.inboxCommands.requestChanges(itemId, note);
   }
-
-  // ── Delegated to the modules that own them ─────────────────────────────
-
+  decline(itemId: Id): void {
+    this.inboxCommands.decline(itemId);
+  }
   takeOver(taskId: Id, how: "open" | "copy" = "open"): Promise<Launched> {
     return this.takeover.takeOver(taskId, how);
   }
-
   reopenTerminal(taskId: Id, how: "open" | "copy" = "open"): Promise<Launched> {
     return this.takeover.reopenTerminal(taskId, how);
   }
-
   handBackPreview(taskId: Id): Promise<HandBackPreview> {
     return this.takeover.handBackPreview(taskId);
   }
-
   handBack(taskId: Id, note = "", anyway = false): Promise<void> {
     return this.takeover.handBack(taskId, note, anyway);
   }
-
   checkShipping(itemId: Id): void {
-    return this.shipping.checkShipping(itemId);
+    this.shipping.checkShipping(itemId);
   }
-
   shipAgain(itemId: Id): void {
-    return this.shipping.shipAgain(itemId);
+    this.shipping.shipAgain(itemId);
   }
-
   markDone(itemId: Id): void {
-    return this.shipping.markDone(itemId);
+    this.shipping.markDone(itemId);
   }
-
   addLessons(itemId: Id, keep: number[]): void {
     this.learnings.accept(itemId, keep);
-  }
-
-  decline(itemId: Id): void {
-    if (this.s.inbox.find((entry) => entry.id === itemId)?.kind === "learnings") return this.learnings.decline(itemId);
-    return this.guide.declineGuide(itemId);
   }
 }

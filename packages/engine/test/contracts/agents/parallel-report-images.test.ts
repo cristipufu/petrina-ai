@@ -6,6 +6,9 @@ import sharp from "sharp";
 import { Fakes, SLOW, waitFor } from "../../support.js";
 
 import { nativeWorldFixtures } from "../../fixtures/native-worlds.js";
+import { installPreparedProduct, acmeDemoProduct } from "../../fixtures/prepared-product.js";
+import { installSharedWorkflowFastPaths } from "../../fixtures/shared-preparation.js";
+import { privateAgentToolProbe } from "../../scripted-probes.js";
 
 const worlds = nativeWorldFixtures();
 afterAll(worlds.close);
@@ -19,7 +22,9 @@ it("delivers a message arriving during picture saving to every unfinished review
   await sharp({ create: { width: 8, height: 8, channels: 3, background: "white" } }).png().toFile(join(fakes.dir, "picture.png"));
   return fixture.engine(async engine => {
   try {
-    const productId = await engine.addProduct(world.clone);
+    installSharedWorkflowFastPaths(engine);
+    await engine.waitUntilReady(); engine.stopRequested.signal.throwIfAborted();
+    const productId = installPreparedProduct(engine, acmeDemoProduct(world.clone));
     const id = engine.addTask({ productId, title: "Check the guest page" });
     const release = (session: string) => writeFileSync(join(fakes.dir, `release-${session}`), "go");
     const task = () => engine.getState().tasks.find((task) => task.id === id)!;
@@ -64,6 +69,6 @@ it("delivers a message arriving during picture saving to every unfinished review
     saving?.mockRestore();
     await engine.shutdown();
   }
-  }, { agentCommand: () => [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), fakes.dir] });
+  }, { agentCommand: () => [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), fakes.dir], toolProbe: privateAgentToolProbe() });
   }, { browser: true }, { stopPeers() { saving?.mockRestore(); } });
 }, 60_000 * SLOW);

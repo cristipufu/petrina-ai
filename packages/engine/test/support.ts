@@ -2,18 +2,25 @@ import { displayTask } from "@petrina/core";
 // Shared by the tests: engines run as separate processes, and the delivery tests' world, a product
 // with a folder standing in for GitHub, a fake gh and scripted agents. Petrina gets the
 // stand-ins only through the Engine's constructor.
-import { cpSync, readFileSync } from "node:fs";
+import { cpSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { InboxKind, State, Task } from "@petrina/core";
 import type { Engine, EngineOptions } from "./engine.js";
 import { Store } from "@petrina/storage/store";
 import type { AgentScript } from "./fake-agent.js";
 import { readGitHub, updateGitHub, writeGitHub, type FakeGitHub } from "./fake-gh.js";
+import { scriptedGitHub } from "./scripted-github.js";
 import { writeFixtureJson } from "@petrina/test-support/fixture-json";
+import { NativeToolProbe } from "../src/tool-probe.js";
+import { worldToolProbe } from "./fixtures/world-tool-probe.js";
+import { privateAgentToolProbe } from "./scripted-probes.js";
+import { fakeAgentSessions } from "./fixtures/fake-agent-sessions.js";
+import { AgentRun } from "@petrina/agent-runtime/acp-run";
+import { agentEnv } from "@petrina/platform/process-environment";
 export { testGitEnv } from "@petrina/test-support/test-git-env";
 
 export * from "./fixtures.js";
-import { ADDRESS, FAKE_AGENT, FAKE_GH, REPO, currentSlow, git, repositorySeed } from "./fixtures.js";
+import { ADDRESS, FAKE_AGENT, FAKE_GH, Fakes, REPO, currentSlow, repositorySeed } from "./fixtures.js";
 
 export { EngineProcess, engineProcesses, engineProcessCases, engineEnv } from "./fixtures/engine-processes.js";
 export type { EngineProcesses, EngineProcessCases, EngineStartupOptions } from "./fixtures/engine-processes.js";
@@ -45,7 +52,7 @@ export interface World {
  * A product whose GitHub address is acme/demo, with a folder standing in for GitHub, a fake gh and scripted agents.
  * Scripted agents get no browser; with `browser`, they get real ones in the world's own browser folder.
  */
-export async function makeWorld(name: string, options: { version?: string; address?: string; objectFormat?: "sha1" | "sha256"; browser?: boolean;
+export async function makeWorld(name: string, options: { version?: string; address?: string; objectFormat?: "sha1" | "sha256"; browser?: boolean; nativeGitHub?: boolean; nativeProbes?: boolean;
   owner: { root: string; browsers?: string; open(dataDir: string, options: EngineOptions): Engine };
 }): Promise<World> {
   if (!options?.owner) throw new Error(`Native world ${name} needs its root and Engine owner before setup`);
@@ -57,7 +64,10 @@ export async function makeWorld(name: string, options: { version?: string; addre
   cpSync(seed.origin, remote, { recursive: true });
   cpSync(seed.clone, clone, { recursive: true });
   const address = options.address ?? ADDRESS;
-  if (address !== ADDRESS) await git(clone, "remote", "set-url", "origin", address);
+  if (address !== ADDRESS) {
+    const configPath = join(clone, ".git", "config");
+    writeFileSync(configPath, readFileSync(configPath, "utf8").replaceAll(ADDRESS, address));
+  }
   const ghState = join(dir, "github.json");
   writeGitHub(ghState, { repo: REPO, prs: [], releases: [], calls: [] });
   const scriptPath = join(dir, "agents.json");
@@ -65,6 +75,42 @@ export async function makeWorld(name: string, options: { version?: string; addre
   const data = join(dir, "data");
   const browsers = options.browser ? options.owner.browsers : undefined;
   const open = (dataDir: string, merged: EngineOptions) => options.owner.open(dataDir, merged);
+  const inProcessSessions = fakeAgentSessions(new Fakes(dir), { scriptPath });
+  const readScript = () => JSON.parse(readFileSync(scriptPath, "utf8")) as AgentScript;
+  const start = (extra: EngineOptions = {}) => {
+    const ownGitHub = Object.hasOwn(extra, "gh");
+    const ownAgent = Object.hasOwn(extra, "agentCommand") || Object.hasOwn(extra, "startAgentSession");
+    const merged: EngineOptions = {
+      agentCommand: () => [process.execPath, FAKE_AGENT, `--script=${scriptPath}`],
+      ...(!browsers && !ownAgent
+        ? {
+            startAgentSession: (launch, role) => {
+              const s = readScript();
+              return (s.background && role.result === "build") || s.envOut
+                ? AgentRun.start({ ...launch, command: [process.execPath, FAKE_AGENT, `--script=${scriptPath}`], env: agentEnv(process.env) })
+                : inProcessSessions(launch, role);
+            },
+          }
+        : {}),
+      gh: [process.execPath, FAKE_GH, ghState, remote],
+      ...(!options.nativeGitHub && !ownGitHub ? { github: scriptedGitHub({ [REPO]: { state: ghState, remote } }) } : {}),
+      remote,
+      awakeObserver: () => {},
+      ...(browsers ? { browser: true, browserTempRoot: browsers } : {}),
+      ...extra,
+    };
+    if (options.nativeGitHub || options.nativeProbes || ownGitHub || Object.hasOwn(extra, "toolProbe") || Object.hasOwn(extra, "toolCheckTimeoutMs")) return open(data, merged);
+    const ownProbeInputs = Object.hasOwn(extra, "agentCommand") || Object.hasOwn(extra, "which") || Object.hasOwn(extra, "developerTools");
+    const privateAgents = ownProbeInputs ? undefined : privateAgentToolProbe();
+    let current: Engine | undefined, native: NativeToolProbe | undefined;
+    merged.toolProbe = worldToolProbe(ghState, remote, () => {
+      if (privateAgents) return privateAgents;
+      if (!current) throw new Error("The world's native tool probe needs its registered Engine");
+      return native ??= new NativeToolProbe(current);
+    });
+    current = open(data, merged);
+    return current;
+  };
   return {
     dir,
     clone,
@@ -72,7 +118,7 @@ export async function makeWorld(name: string, options: { version?: string; addre
     data,
     initial: seed.head,
     ...(browsers ? { browsers } : {}),
-    start: (extra = {}) => open(data, { agentCommand: () => [process.execPath, FAKE_AGENT, `--script=${scriptPath}`], gh: [process.execPath, FAKE_GH, ghState, remote], remote, awakeObserver: () => {}, ...(browsers ? { browser: true, browserTempRoot: browsers } : {}), ...extra }),
+    start,
     github: () => readGitHub(ghState),
     setGitHub: (change) => updateGitHub(ghState, change),
     script: () => JSON.parse(readFileSync(scriptPath, "utf8")) as AgentScript,

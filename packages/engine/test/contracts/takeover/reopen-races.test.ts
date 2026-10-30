@@ -15,9 +15,10 @@ const posix = process.platform !== "win32";
 
 describe.skipIf(!posix)("opening the terminal again", () => {
   it("never overlaps with a hand back or another reopen, and an earlier session's end never lets a hand back through", async () => {
+  return fixtures.use(async caseOwner => {
     // The stand-in terminal waits until the assertions finish, instead of racing a two-second delay.
     let opening: string | undefined;
-    const run = await start({ planner: "short", builder: "work", reopen: "resume" });
+    const run = await start(caseOwner, { planner: "short", builder: "work", reopen: "resume" });
     try {
       await waitFor(() => run.fakes.marked("builder-working"), "the builder to draft");
       await run.working("builder");
@@ -60,5 +61,7 @@ describe.skipIf(!posix)("opening the terminal again", () => {
       expect(await git(run.product, "show", "main:again.txt")).toBe("Again");
 
     } finally { await run.close(); }
-  }, 60_000);
+
+  });
+}, 60_000);
 });

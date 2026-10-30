@@ -1,4 +1,6 @@
 import { engineCaseFixtures, type EngineCaseOwner } from "../../fixtures/engine-cases.js";
+import { fakeAgentSessions } from "../../fixtures/fake-agent-sessions.js";
+import { installSharedWorkflowFastPaths, materializePreparedWorktree, readWorktreeCommit } from "../../fixtures/shared-preparation.js";
 import { mkdtempSync } from "node:fs";
 import { afterAll as closeOwnedCases } from "bun:test";
 import { describe, expect, it, spyOn } from "bun:test";
@@ -7,7 +9,7 @@ import { join } from "node:path";
 import type { CheckId } from "@petrina/core";
 import { executionFor } from "@petrina/orchestrator";
 import * as gitOps from "@petrina/repositories/git";
-import { FAKE_AGENT, Fakes, git, makeProduct, waitFor } from "../../fixtures.js";
+import { FAKE_AGENT, Fakes, git, createProductRepository, waitFor } from "../../fixtures.js";
 const cases = engineCaseFixtures();
 closeOwnedCases(() => cases.close());
 
@@ -18,23 +20,34 @@ async function fixture(owner: EngineCaseOwner, limit = 2) {
   const fakes = new Fakes(join(root, "fake"));
   fakes.scenario({ controlled: true, reopen: "resume" });
   const engine = owner.open(join(root, "data"), {
-    agentCommand: () => [process.execPath, FAKE_AGENT, fakes.dir], toolPath: () => process.execPath,
+    agentCommand: () => [process.execPath, FAKE_AGENT, fakes.dir],
+    startAgentSession: fakeAgentSessions(fakes),
+    toolPath: () => process.execPath,
+  });
+  installSharedWorkflowFastPaths(engine, {
+    skipDriverPrepare: false,
+    skipUpToDate: true,
+    skipPrepareChecks: true,
+    skipReviewInputDiffs: true,
+    fastCheckCapture: true,
+    fastCleanup: true,
+    fastCheckpoints: true,
   });
   engine.schedule = () => {};
   await engine.waitUntilReady();
   engine.s.setup!.checks = engine.s.tools.map(tool => ({ id: tool.id as CheckId, status: "ready", at: Date.now() }));
   engine.s.tools.forEach(tool => { tool.status = "ready"; });
   engine.s.pool.limit = limit;
-  const path = await makeProduct(join(root, "product"));
+  const { path, initialSha: base } = await createProductRepository(join(root, "product"));
   const product = { id: "p", name: "Product", path, repo: "local/product", tone: "blue" as const, defaultBranch: "main", remoteRefused: "Local delivery only", checks: [], checksBy: "coordinator" as const };
   engine.s.products.push(product);
   const id = engine.addTask({ productId: "p", title: "Review the current change", backlog: true });
   const prerequisite = engine.addTask({ productId: "p", title: "Land the required fix", backlog: true });
   const task = engine.task(id)!, scope = executionFor(task);
-  const base = await git(path, "rev-parse", "HEAD"), branch = "task-change", worktree = join(root, "work");
-  await git(path, "worktree", "add", "-qb", branch, worktree, "main");
-  writeFileSync(join(worktree, "feature.txt"), "Accepted task work\n");
-  await git(worktree, "add", "."); await git(worktree, "commit", "-qm", "Build the feature");
+  const branch = "task-change", worktree = join(root, "work");
+  scope.work.worktree = worktree;
+  scope.work.branch = branch;
+  await materializePreparedWorktree(engine, scope, path, "main", base, "feature.txt", "Accepted task work\n", "Build the feature");
   Object.assign(scope.work, { worktree, branch, baseSha: base, base: "main", delivery: "local", report: { summary: "The feature is built", changes: [] },
     source: { product: { ...product }, start: { kind: "default", branch: "main" }, destination: { mode: "local", kind: "branch", repo: product.repo, branch: "main" }, confirmed: true, initialSha: base } });
   task.startedAt = 1; task.state = "running"; task.stageIndex = 0;
@@ -55,7 +68,7 @@ async function fixture(owner: EngineCaseOwner, limit = 2) {
   const copies: { seat: string; path: string; head: string; fix: boolean; base?: string }[] = [];
   const turns = engine["turns"], parallel = turns.parallel.bind(turns);
   turns.parallel = async <T>(...args: Parameters<typeof turns.parallel<T>>) => {
-    copies.push({ seat: args[7]?.key ?? "", path: args[3], head: await git(args[3], "rev-parse", "HEAD"), fix: existsSync(join(args[3], "required-fix.txt")), base: scope.work.baseSha });
+    copies.push({ seat: args[7]?.key ?? "", path: args[3], head: readWorktreeCommit(args[3])?.commit ?? await git(args[3], "rev-parse", "HEAD"), fix: existsSync(join(args[3], "required-fix.txt")), base: scope.work.baseSha });
     return parallel<T>(...args);
   };
   const release = (session: string) => writeFileSync(join(fakes.dir, `release-${session}`), "go");
@@ -66,7 +79,7 @@ async function fixture(owner: EngineCaseOwner, limit = 2) {
   return { engine, task, scope, base, fakes, copies, prepared, releasePreparation, drive, release,
     preparations: () => preparationCalls,
     hold() { engine.setRuntimeWait(id, [prerequisite], "The review needs the required fix", "parallel-hold"); engine["driver"].syncRuntimeWaits(); },
-    async land() { writeFileSync(join(path, "required-fix.txt"), "The required fix\n"); await git(path, "add", "."); await git(path, "commit", "-qm", "Land the required fix"); return git(path, "rev-parse", "HEAD"); },
+    async land() { writeFileSync(join(path, "required-fix.txt"), "The required fix\n"); await gitOps.commitChanges(path, "Land the required fix"); return readWorktreeCommit(path)?.commit ?? git(path, "rev-parse", "HEAD"); },
     end(how: "clear" | "landed", latest: string) {
       if (how === "clear") engine.setRuntimeWait(id, [], "The required code is now available", "parallel-clear");
       else { const required = engine.task(prerequisite)!; required.repository!.delivery = "local"; required.repository!.landed = { branch: "main", sha: latest }; required.state = "done"; engine["driver"].syncRuntimeWaits(); }

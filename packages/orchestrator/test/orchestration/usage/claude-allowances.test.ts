@@ -52,6 +52,29 @@ function view(run: Fixture) {
   };
 }
 
+it("keeps the latest live reading per tool and kind of limit", () => {
+  const run = fixture();
+  stream(run, { status: "allowed", rateLimitType: "seven_day", utilization: 0.2 });
+  stream(run, { status: "allowed", rateLimitType: "seven_day", utilization: 0.4 });
+  const usage = run.pool.usage!;
+  expect(usage).toHaveLength(1);
+  expect(usage[0]).toMatchObject({ toolId: "claude-code", kind: "seven_day", status: "allowed", utilization: 0.4 });
+  expect(run.recorded.map(report => report.utilization)).toEqual([0.2, 0.4]);
+});
+
+it("keeps a spent window available on extra usage and restricts it until reset without extra usage", () => {
+  const resetsAt = Math.floor(NOW / 1000) + 3 * 24 * 3600;
+  const spent = fixture();
+  stream(spent, { status: "rejected", rateLimitType: "seven_day", resetsAt, isUsingOverage: true });
+  expect(spent.pool.limited ?? []).toEqual([]);
+  expect(spent.pool.usage![0]).toMatchObject({ toolId: "claude-code", kind: "seven_day", status: "rejected", overage: true, resetsAt: resetsAt * 1000 });
+  expect(usageLines({ pool: spent.pool, tools: KNOWN_TOOLS }, NOW).find(line => line.toolId === "claude-code")!.text).toContain("weekly used up, on extra usage");
+  const out = fixture();
+  stream(out, { status: "rejected", rateLimitType: "seven_day", resetsAt });
+  expect(out.pool.limited).toMatchObject([{ toolId: "claude-code", until: resetsAt * 1000 }]);
+  expect(out.pool.limited![0]!.reason).toContain("weekly");
+});
+
 it("keeps the pool and Analytics consistent for included and paid allowance combinations in either order", () => {
   const run = fixture();
 

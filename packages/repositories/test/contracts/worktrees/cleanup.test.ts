@@ -8,27 +8,23 @@ import { copyFolderName } from "../../../src/copy-name.js";
 import { fixtureFiles } from "@petrina/test-support/fixture-files";
 import { FileFaults } from "@petrina/test-support/file-faults";
 import { expectRejection } from "@petrina/test-support/rejections";
-import { removeDir } from "@petrina/test-support/fixtures";
+import { committedRepositoryFixtures } from "../../fixtures/committed-repositories.js";
 import { git } from "@petrina/test-support/commands";
 import { makeProduct } from "@petrina/test-support/repositories";
 
 const temp = mkdtempSync(join(tmpdir(), "petrina-git-"));
+const repositories = committedRepositoryFixtures(temp);
 
 /** A file as checked out, in one line-ending style: git on Windows writes CRLF. */
 const checkedOut = (path: string) => readFileSync(path, "utf8").replace(/\r\n/g, "\n");
 
 describe("Petrina's own git steps", () => {
-  afterAll(() => removeDir(temp));
+  afterAll(() => repositories.close());
 
-  it("unlinks a replaced reviewer folder without following it into an unfinished task", async () => {
+  it("unlinks a replaced reviewer folder without following it into an unfinished task", () => repositories.run(async () => {
     const repo = join(temp, "peer-link-repo");
     mkdirSync(repo);
-    await git(repo, "init", "-q", "-b", "main");
-    await git(repo, "config", "user.email", "test@example.com");
-    await git(repo, "config", "user.name", "Test");
-    writeFileSync(join(repo, "README.md"), "kept\n");
-    await git(repo, "add", ".");
-    await git(repo, "commit", "-q", "-m", "init");
+    await repositories.copy(repo, { contents: "kept\n", message: "init" });
     const activeFolder = join(temp, "active.copies");
     const active = join(activeFolder, "review-0");
     const oldFolder = join(temp, "finished.copies");
@@ -46,9 +42,9 @@ describe("Petrina's own git steps", () => {
     const registered = await git(repo, "worktree", "list", "--porcelain", "-z");
     expect(registered).toContain(realpathSync.native(active));
     expect(registered).not.toContain(old);
-  });
+  }));
 
-  it("ignores already absent copies when the product moved, but preserves existing folders for recovery", async () => {
+  it("ignores already absent copies when the product moved, but preserves existing folders for recovery", () => repositories.run(async () => {
     const missing = join(temp, "moved-product"), folder = join(temp, "moved-product.copies");
     const listed = spyOn(operations, "linkedWorktrees");
     try {
@@ -61,12 +57,11 @@ describe("Petrina's own git steps", () => {
       expect(readFileSync(join(folder, "keep.txt"), "utf8")).toBe("Recover me");
       expect(listed).not.toHaveBeenCalled();
     } finally { listed.mockRestore(); }
-  });
+  }));
 
-  it("removes finished locked and missing snapshots with one registration read and one batch verification", async () => {
+  it("removes finished locked and missing snapshots with one registration read and one batch verification", () => repositories.run(async () => {
     const repo = join(temp, "finished-batch"); mkdirSync(repo);
-    await git(repo, "init", "-q", "-b", "main"); await git(repo, "config", "user.email", "test@example.com"); await git(repo, "config", "user.name", "Test");
-    writeFileSync(join(repo, "README.md"), "Keep the product\n"); await git(repo, "add", "."); await git(repo, "commit", "-qm", "Initial");
+    await repositories.copy(repo, { contents: "Keep the product\n", message: "Initial" });
     const sha = await git(repo, "rev-parse", "HEAD"), folder = join(temp, "finished-batch.copies");
     const copies = ["one", "two", "three"].map(name => join(folder, name));
     const unrelated = join(temp, "unfinished-review");
@@ -88,9 +83,9 @@ describe("Petrina's own git steps", () => {
       expect(await removeWorktree(repo, join(temp, "already-gone"))).toBe(false);
       expect(listed).toHaveBeenCalledTimes(1);
     } finally { listed.mockRestore(); }
-  });
+  }));
 
-  it("retains a refused worktree's files and Git registration, and retries a partially removed review batch", async () => {
+  it("retains a refused worktree's files and Git registration, and retries a partially removed review batch", () => repositories.run(async () => {
     const repo = await makeProduct(join(temp, "refused-removal")), faults = new FileFaults();
     const sha = await git(repo, "rev-parse", "HEAD"), folder = join(temp, "refused-removal.copies");
     const blocked = join(folder, "blocked"), clear = join(folder, "clear");
@@ -111,12 +106,11 @@ describe("Petrina's own git steps", () => {
       expect(recorded).not.toContain(blocked); expect(recorded).not.toContain(clear);
       expect(await git(repo, "rev-parse", "HEAD")).toBe(sha);
     } finally { release(); }
-  });
+  }));
 
-  it("prunes deleted review copies in one batch, preserving saved screen copies and unrelated worktrees", async () => {
+  it("prunes deleted review copies in one batch, preserving saved screen copies and unrelated worktrees", () => repositories.run(async () => {
     const repo = join(temp, "batch-copies"); mkdirSync(repo);
-    await git(repo, "init", "-q", "-b", "main"); await git(repo, "config", "user.email", "test@example.com"); await git(repo, "config", "user.name", "Test");
-    writeFileSync(join(repo, "README.md"), "Keep the product\n"); await git(repo, "add", "."); await git(repo, "commit", "-qm", "Initial");
+    await repositories.copy(repo, { contents: "Keep the product\n", message: "Initial" });
     const sha = await git(repo, "rev-parse", "HEAD"), folder = join(temp, "batch.copies");
     const kept = join(folder, "screen"), gone = [join(folder, "review-0"), join(folder, "review-1")], unrelated = join(temp, "other-task");
     for (const copy of [kept, ...gone, unrelated]) await addCopy(repo, copy, sha);
@@ -131,12 +125,11 @@ describe("Petrina's own git steps", () => {
     expect(existsSync(folder)).toBe(false);
     expect(await git(repo, "worktree", "list", "--porcelain", "-z")).not.toContain(kept);
     expect(checkedOut(join(unrelated, "README.md"))).toBe("Keep the product\n");
-  });
+  }));
 
-  it("creates a separate real copy for each member that a naive or case-insensitive name would merge", async () => {
+  it("creates a separate real copy for each member that a naive or case-insensitive name would merge", () => repositories.run(async () => {
     const repo = join(temp, "portable-copies"); mkdirSync(repo);
-    await git(repo, "init", "-q", "-b", "main"); await git(repo, "config", "user.email", "test@example.com"); await git(repo, "config", "user.name", "Test");
-    writeFileSync(join(repo, "README.md"), "Keep the product\n"); await git(repo, "add", "."); await git(repo, "commit", "-qm", "Initial");
+    await repositories.copy(repo, { contents: "Keep the product\n", message: "Initial" });
     const sha = await git(repo, "rev-parse", "HEAD"), folder = join(temp, "portable.copies");
     const members = ["vote-third:argon-high", "vote-third-argon-high", "vote-third_argon-high", "vote-Third:argon-high", "vote-third:argon-high.", "review-0"];
     const names = members.map(copyFolderName);
@@ -149,12 +142,11 @@ describe("Petrina's own git steps", () => {
     expect((await operations.linkedWorktrees(repo)).map((path) => basename(path))).toEqual([names[0]!]);
     await removeCopies(repo, folder);
     expect(existsSync(folder)).toBe(false);
-  });
+  }));
 
-  it("does not follow a replaced review parent while preserving a screen conversation", async () => {
+  it("does not follow a replaced review parent while preserving a screen conversation", () => repositories.run(async () => {
     const repo = join(temp, "batch-link"); mkdirSync(repo);
-    await git(repo, "init", "-q", "-b", "main"); await git(repo, "config", "user.email", "test@example.com"); await git(repo, "config", "user.name", "Test");
-    writeFileSync(join(repo, "README.md"), "Keep\n"); await git(repo, "add", "."); await git(repo, "commit", "-qm", "Initial");
+    await repositories.copy(repo, { contents: "Keep\n", message: "Initial" });
     const real = join(temp, "live.copies"), alias = join(temp, "replaced.copies");
     const screen = join(real, "screen"), peer = join(real, "peer");
     for (const copy of [screen, peer]) await addCopy(repo, copy, await git(repo, "rev-parse", "HEAD"));
@@ -164,19 +156,14 @@ describe("Petrina's own git steps", () => {
     expect(existsSync(alias)).toBe(false);
     expect(readFileSync(join(peer, "unsaved.txt"), "utf8")).toBe("Unrelated work");
     expect(await git(repo, "worktree", "list", "--porcelain", "-z")).toContain(realpathSync.native(screen));
-  });
+  }));
 
-  it("unlinks a finished copy's replacement link without deleting another copy, its unsaved files, or the main clone", async () => {
+  it("unlinks a finished copy's replacement link without deleting another copy, its unsaved files, or the main clone", () => repositories.run(async () => {
     const repo = join(temp, "link-repo");
     const finished = join(temp, "link-finished");
     const active = join(temp, "link-active");
     mkdirSync(repo);
-    await git(repo, "init", "-q", "-b", "main");
-    await git(repo, "config", "user.email", "test@example.com");
-    await git(repo, "config", "user.name", "Test");
-    writeFileSync(join(repo, "README.md"), "kept\n");
-    await git(repo, "add", ".");
-    await git(repo, "commit", "-q", "-m", "init");
+    await repositories.copy(repo, { contents: "kept\n", message: "init" });
     await ensureWorktree(repo, active, "petrina/active", "main");
     writeFileSync(join(active, "unsaved.txt"), "keep my work\n");
     const refs = await git(repo, "for-each-ref", "--format=%(refname) %(objectname)");
@@ -192,9 +179,9 @@ describe("Petrina's own git steps", () => {
       expect(readFileSync(join(repo, "README.md"), "utf8")).toBe("kept\n");
       expect(await git(repo, "for-each-ref", "--format=%(refname) %(objectname)")).toBe(`${refs}\nrefs/heads/petrina/finished ${await git(repo, "rev-parse", "main")}`);
     }
-  });
+  }));
 
-  for (const missing of ["neither", "copy", "parent"] as const) it(`matches a registered copy through parent aliases with ${missing === "neither" ? "its folders present" : `its ${missing} already missing`}`, async () => {
+  for (const missing of ["neither", "copy", "parent"] as const) it(`matches a registered copy through parent aliases with ${missing === "neither" ? "its folders present" : `its ${missing} already missing`}`, () => repositories.run(async () => {
     const parent = join(temp, `native identity ${missing}`);
     const alias = join(temp, `parent-alias-${missing}`);
     const repo = join(parent, "product");
@@ -204,12 +191,7 @@ describe("Petrina's own git steps", () => {
     mkdirSync(repo, { recursive: true });
     mkdirSync(cache);
     writeFileSync(join(cache, "keep"), "shared\n");
-    await git(repo, "init", "-q", "-b", "main");
-    await git(repo, "config", "user.email", "test@example.com");
-    await git(repo, "config", "user.name", "Test");
-    writeFileSync(join(repo, "README.md"), "product\n");
-    await git(repo, "add", ".");
-    await git(repo, "commit", "-q", "-m", "init");
+    await repositories.copy(repo, { contents: "product\n", message: "init" });
     // Git records the native folder name; callers can arrive through a parent alias or a Windows
     // short temporary-folder name. Match the record even after the copy's parent is already gone.
     fixtureFiles.directoryLink(parent, alias);
@@ -230,18 +212,13 @@ describe("Petrina's own git steps", () => {
     await expectRejection(removeWorktree(rootAlias, repo), "that folder holds the product itself");
     expect(readFileSync(join(repo, "README.md"), "utf8")).toBe("product\n");
     expect(await removeWorktree(rootAlias, copyAlias)).toBe(false);
-  });
+  }));
 
-  it("removes a locked working copy's folder and git record, keeps its branch, and refuses the product's own folder", async () => {
+  it("removes a locked working copy's folder and git record, keeps its branch, and refuses the product's own folder", () => repositories.run(async () => {
     const repo = join(temp, "cleanup-repo");
     const copy = join(temp, "cleanup-copy");
     mkdirSync(repo);
-    await git(repo, "init", "-q", "-b", "main");
-    await git(repo, "config", "user.email", "test@example.com");
-    await git(repo, "config", "user.name", "Test");
-    writeFileSync(join(repo, "README.md"), "kept\n");
-    await git(repo, "add", ".");
-    await git(repo, "commit", "-q", "-m", "init");
+    await repositories.copy(repo, { contents: "kept\n", message: "init" });
     const before = await git(repo, "rev-parse", "HEAD");
     await ensureWorktree(repo, copy, "petrina/cleanup", "main");
     await git(repo, "worktree", "lock", copy);
@@ -256,9 +233,9 @@ describe("Petrina's own git steps", () => {
     await expectRejection(removeWorktree(repo, temp), "that folder holds the product itself");
     expect(readFileSync(join(repo, "README.md"), "utf8")).toBe("kept\n");
     expect(await git(repo, "rev-parse", "main")).toBe(before);
-  });
+  }));
 
-  it("fails a bounded review-copy prune and releases its repository queue for the next cleanup", async () => {
+  it("fails a bounded review-copy prune and releases its repository queue for the next cleanup", () => repositories.run(async () => {
     const calls = spyOn(operations, "run").mockResolvedValueOnce({ code: 124, stdout: "", stderr: "timed out", timedOut: true });
     const folder = join(temp, "bounded-prune.copies");
     try {
@@ -270,5 +247,5 @@ describe("Petrina's own git steps", () => {
       await removeCopies(temp, folder);
       expect(calls).toHaveBeenCalledTimes(3);
     } finally { calls.mockRestore(); }
-  });
+  }));
 });

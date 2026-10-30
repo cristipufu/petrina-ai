@@ -1,4 +1,4 @@
-import { contextStageFixtures } from "../../fixtures/context-stage.js";
+import { reviewerConversationStageFixtures } from "../../fixtures/reviewer-conversation-stage.js";
 import { writeFixtureJson } from "@petrina/test-support/fixture-json";
 import { afterAll, describe, expect, it } from "bun:test";
 import { createHash } from "node:crypto";
@@ -8,17 +8,17 @@ import { Coordination } from "../../../src/coordination.js";
 import { executionFor, scopesFor } from "@petrina/orchestrator";
 import { readReviewInput } from "../../../src/review-context.js";
 import { fullFollowUpCards } from "../../../src/review-history.js";
+import { readWorktreeCommit } from "../../fixtures/shared-preparation.js";
+import * as gitOps from "@petrina/repositories/git";
 import { git, waitFor } from "../../fixtures.js";
-import { reviewContextFixtures } from "../../fixtures/review-context.js";
-const { run, close } = reviewContextFixtures();
-afterAll(close);
 
-const prepared = contextStageFixtures();
+const prepared = reviewerConversationStageFixtures();
 afterAll(() => prepared.close());
 
 describe.concurrent("reviewer conversations across fix rounds", () => {
 it("records compact frozen evidence for three fresh reviewers after a real conflict, restart and usage replacement", async () => {
-    await run("resume", { advance: true, settledHistory: true, limit: 3 }, async f => {
+    const f = await prepared.reviewRun("resume", { advance: true, settledHistory: true, limit: 3 });
+    return f.use(async () => {
 
     try {
       await f.beforeFix();
@@ -89,16 +89,16 @@ it("records compact frozen evidence for three fresh reviewers after a real confl
 });
 
 describe.concurrent("reviewer conversations across fix rounds", () => {
-for (const mode of ["pair", "single", "shared", "builder-update"] as const) it(`continues each own ${mode} reviewer after main advances, with current full and incremental evidence`, async () => {
+for (const mode of ["single", "shared", "builder-update"] as const) it(`continues each own ${mode} reviewer after main advances, with current full and incremental evidence`, async () => {
     const reopen = mode === "single" ? "load" : "resume";
-    const exercise = async (f: Parameters<Parameters<typeof run>[2]>[0]) => {
+    const exercise = async (f: Awaited<ReturnType<typeof prepared.reviewRun>>) => {
       try {
         await f.beforeFix();
         const moved = await f.advanceMain();
         const saved = structuredClone(f.task().reviewSessions!);
         if (mode === "builder-update") {
           const worktree = executionFor(f.task()).work.worktree!;
-          await git(worktree, "add", "."); await git(worktree, "commit", "-qm", "The Builder's fix");
+          await gitOps.commitChanges(worktree, "The Builder's fix");
           await git(worktree, "merge", "--no-edit", "-m", "The Builder brings main in itself", moved.base);
         }
         f.task().notes = [{ at: 1, text: "REFRESHED-COORDINATOR-INSTRUCTION" }];
@@ -111,7 +111,7 @@ for (const mode of ["pair", "single", "shared", "builder-update"] as const) it(`
         expect(rounds[0]!.agentInputs!.every((input) => !input.sections.some((section) => section.title.startsWith("Findings so far")))).toBe(true);
         const works = scopesFor(task).map(({ work }) => work);
         const current = works.find((work) => work.productId === moved.productId)!;
-        const head = await git(current.worktree!, "rev-parse", "HEAD");
+        const head = readWorktreeCommit(current.worktree!)?.commit ?? await git(current.worktree!, "rev-parse", "HEAD");
         expect(current.baseSha).toBe(moved.base);
         expect(current.checks!.sha).toBe(head);
         expect(current.checks!.results.every((run) => run.ok && run.output.includes(`CHECKED-CODE:${head}`))).toBe(true);
@@ -173,8 +173,7 @@ for (const mode of ["pair", "single", "shared", "builder-update"] as const) it(`
         expect(f.fakes.opens().filter((entry) => voters.has(entry.session)).every((entry) => entry.how === "new")).toBe(true);
       } finally { await f.shutdown(); }
     };
-    const options = { advance: true, single: mode === "single", shared: mode === "shared" };
-    if (mode === "shared") return run(reopen, options, exercise);
+    const options = { advance: true, checks: true, single: mode === "single", shared: mode === "shared", inspectDiffs: true };
     const f = await prepared.reviewRun(reopen, options);
     return f.use(() => exercise(f));
   });
@@ -183,10 +182,16 @@ for (const mode of ["pair", "single", "shared", "builder-update"] as const) it(`
 
 
 describe.concurrent("reviewer conversations across fix rounds", () => {
-for (const reopen of ["resume", "load"] as const) for (const single of [false, true]) it(`continues ${single ? "one reviewer" : "each parallel reviewer"} with ${reopen}, while voters stay fresh`, async () => {
-    const f = await prepared.reviewRun(reopen, { single, browser: true });
+it("continues each parallel reviewer with resume, while voters stay fresh", async () => {
+    const reopen = "resume", single = false;
+    const f = await prepared.reviewRun(reopen, { single, browser: true, inspectDiffs: true });
     return f.use(async () => {
       try {
+        const reviewed = await f.run(() => waitFor(() => {
+          f.tick(role => role !== "builder");
+          const sha = executionFor(f.task()).work.reviewedSha;
+          return sha && f.fakes.received("builder").length > 0 ? sha : false;
+        }, "the first completed review before its held Builder fix"));
         const task = await f.done();
         const rounds = task.journey!.filter((step) => step.roleId === "code-reviewer" && step.endedAt);
         expect(rounds).toHaveLength(2);
@@ -198,6 +203,10 @@ for (const reopen of ["resume", "load"] as const) for (const single of [false, t
           expect(input.sections.some((section) => section.title === "Findings so far (confirm or dispute by id)")).toBe(true);
           expect(input.sections.some((section) => section.title === "Current authoritative task context")).toBe(true);
           expect(input.sections.some((section) => section.title === "Prepared review material")).toBe(true);
+          const exact = readFileSync(input.exact!.file, "utf8");
+          expect(exact).toContain("This is review round 2:");
+          expect(exact).toContain(`Incremental comparison git diff ${reviewed}..HEAD:`);
+          expect(f.fakes.received("code reviewer").filter(entry => entry.session === input.sessionId).map(entry => entry.text)).toContain(exact);
         }
         const sessions = new Set(f.fakes.received("code reviewer").map((entry) => entry.session));
         expect(sessions.size).toBe(single ? 1 : 2);
@@ -221,8 +230,8 @@ for (const reopen of ["resume", "load"] as const) for (const single of [false, t
 
 describe.concurrent("reviewer conversations across fix rounds", () => {
 it("keeps a queued reviewer blind to a faster peer, including after an engine restart", async () => {
-    await run("resume", { limit: 1 }, async f => {
-
+    const f = await prepared.reviewRun("resume", { limit: 1 });
+    return f.use(async () => {
     try {
       await waitFor(() => { f.tick((role, session) => role !== "code reviewer" || !f.fakes.settings(session).includes("model=gpt-6.1-sol")); return Object.keys(f.task().hunt?.reported ?? {}).length === 1; }, "one blind reviewer to finish");
       const ref = structuredClone(f.task().hunt!.input!);

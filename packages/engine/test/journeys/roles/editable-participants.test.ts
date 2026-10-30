@@ -1,23 +1,29 @@
+import { installPreparedProduct, privateCloneProduct } from "../../fixtures/prepared-product.js";
+import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
+import { fakeAgentSessions } from "../../fixtures/fake-agent-sessions.js";
+import { installSharedWorkflowFastPaths } from "../../fixtures/shared-preparation.js";
+import { privateAgentToolProbe } from "../../scripted-probes.js";
 import { FAKE_AGENT } from "../../fixtures.js";
+import * as gitOps from "@petrina/repositories/git";
 
 
 import { afterAll, afterEach, describe, expect, it } from "bun:test";
-import { existsSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { draftOf, FINDING_REVIEW_RULES, journeyProblems, mainLine, NOTES_HANDOFF_RULE, REPAIR_RULE, ROLE_STARTS, VERIFIER_RULES, type AnalyticsUsage, type RoleDraft, type State, type Task, type TaskUsage } from "@petrina/core";
-import { Engine } from "../../engine.js";
 import { MAY_CHANGE } from "../../../src/prompts.js";
 import { EARLIER_REPORTS_RULE } from "../../../src/context.js";
 
 
 import { findProgram } from "@petrina/agent-runtime/tools";
 import { readGitHub } from "../../fake-gh.js";
-import { engineProcessCases, type EngineProcess, type EngineProcesses, Fakes, git, makeProduct, removeDir, SLOW, tempDir, waitFor } from "../../support.js";
+import { engineProcessCases, type EngineProcess, type EngineProcesses, Fakes, makeProduct, SLOW, tempDir, waitFor } from "../../support.js";
+const engineCases = engineCaseFixtures();
+afterAll(() => engineCases.close());
 
-const roots: string[] = [];
+
 const cases = engineProcessCases();
 afterEach(() => cases.close());
-afterAll(() => roots.forEach(removeDir));
 
 const start = (id: string) => ROLE_STARTS.find((entry) => entry.id === id)!.draft;
 const COPYWRITER: RoleDraft = { ...start("copywriter"), canEdit: true };
@@ -44,24 +50,30 @@ async function coordinate(owners: EngineProcesses, engine: EngineProcess, taskId
 describe("roles the coordinator edits and adds", () => {
   for (const only of ["claude-code", "codex", "grok"] as const) {
     it(`plans added roles and high-risk reviews on ${only} when it is the only ready tool`, async () => {
-      const root = tempDir("petrina-role-tools-");
-      roots.push(root);
+  return engineCases.use("petrina-role-tools-", async caseOwner => {
+      const root = caseOwner.root;
+
       const fakes = new Fakes(join(root, "fake"));
       fakes.scenario({ planner: "roles", risk: "high" });
-      const engine = new Engine(join(root, "data"), {
+      const engine = installSharedWorkflowFastPaths(caseOwner.open(join(root, "data"), {
         agentCommand: (profile) => [process.execPath, FAKE_AGENT, fakes.dir, ...(profile.toolId === only ? [] : ["--logged-out"])],
+        startAgentSession: fakeAgentSessions(fakes, { flags: (toolId) => (toolId === only ? [] : ["--logged-out"]) }),
+        toolProbe: privateAgentToolProbe([only]),
         which: (name) => name === "gh" ? null : findProgram(name),
         toolCheckTimeoutMs: 30_000 * SLOW,
-      });
+      }));
       try {
-          await engine.checkTools();
+          await engine.waitUntilReady(); caseOwner.check();
+          await engine.checkTools(); caseOwner.check();
           expect(engine.usableTools()).toEqual([only]);
           const security = engine.addRole(start("security"));
           const copywriter = engine.addRole(COPYWRITER);
           const facts = engine.addRole(FACT_CHECKER);
           const planner = engine.getState().roles.find((role) => role.id === "planner")!;
           engine.saveRole(planner.id, { ...draftOf(planner), instructions: "Keep this plan small." });
-          const productId = await engine.addProduct(await makeProduct(root));
+          const repo = await makeProduct(root, { origin: "none" });
+          await engine.waitUntilReady(); caseOwner.check(); engine.stopRequested.signal.throwIfAborted();
+          const productId = installPreparedProduct(engine, privateCloneProduct(repo));
           const taskId = engine.addTask({ productId, title: "Plan the welcome message", approvePlan: true });
           const task = await waitFor(() => {
             const task = engine.getState().tasks.find((entry) => entry.id === taskId)!;
@@ -82,9 +94,11 @@ describe("roles the coordinator edits and adds", () => {
           expect(prompt).toContain("reviewers included, even where a rule above asks for different tools");
           expect(prompt).toContain("Security specialist");
       } finally {
-        await engine.shutdown();
+        await caseOwner.stop(engine);
       }
-    });
+
+  });
+});
   }
 
   for (const interruption of ["restart", "usage replacement"] as const) {
@@ -179,15 +193,18 @@ describe("roles the coordinator edits and adds", () => {
 
   for (const call of [false, true]) {
     it(`saves the Architect's permitted edits before read-only steps ${call ? "after the coordinator's call and later revisions" : "in normal design rounds"}`, async () => {
-      const root = tempDir("petrina-architect-edits-");
-      roots.push(root);
+  return engineCases.use("petrina-architect-edits-", async caseOwner => {
+      const root = caseOwner.root;
+
       const fakes = new Fakes(join(root, "fake"));
       fakes.scenario({ architect: "writes", builder: "plain" });
-      const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, FAKE_AGENT, fakes.dir] });
+      const engine = installSharedWorkflowFastPaths(caseOwner.open(join(root, "data"), { agentCommand: () => [process.execPath, FAKE_AGENT, fakes.dir], startAgentSession: fakeAgentSessions(fakes), toolProbe: privateAgentToolProbe() }));
       try {
           const architect = engine.getState().roles.find((role) => role.id === "architect")!;
           engine.saveRole(architect.id, { ...draftOf(architect), canEdit: true });
-          const productId = await engine.addProduct(await makeProduct(root));
+          const repo = await makeProduct(root, { origin: "none" });
+          await engine.waitUntilReady(); caseOwner.check(); engine.stopRequested.signal.throwIfAborted();
+          const productId = installPreparedProduct(engine, privateCloneProduct(repo));
           const taskId = engine.addTask({ productId, title: "Design a greeting", description: call ? "[disagree] [screens]" : "A greeting." });
           const checkpoint = (kind: "disagreement" | "design") => waitFor(() => {
             const state = engine.getState();
@@ -204,23 +221,25 @@ describe("roles the coordinator edits and adds", () => {
           }, kind);
           const first = await checkpoint(call ? "disagreement" : "design");
           // A read-only design reviewer has run after the Architect. Its clean-up must keep the Architect's work.
-          expect(await git(first.task.worktree!, "show", "HEAD:architecture.txt")).toBe("Before the design review");
-          expect(await git(first.task.worktree!, "log", "-1", "--format=%s")).toBe("Design a greeting: Architect");
+          expect((await gitOps.fileAt(first.task.worktree!, "HEAD", "architecture.txt"))?.trim()).toBe("Before the design review");
+          expect((await gitOps.message(first.task.worktree!)).split("\n")[0]).toBe("Design a greeting: Architect");
           if (call) {
             engine.requestChanges(first.item.id, "Show the greeting to everyone.");
             const followed = await checkpoint("design");
             // The read-only Screens step runs after following the call, before the check.
-            expect(await git(followed.task.worktree!, "show", "HEAD:architecture.txt")).toBe("After the coordinator's call");
+            expect((await gitOps.fileAt(followed.task.worktree!, "HEAD", "architecture.txt"))?.trim()).toBe("After the coordinator's call");
             engine.requestChanges(followed.item.id, "Make the greeting shorter.");
             const revised = await checkpoint("design");
-            expect(await git(revised.task.worktree!, "show", "HEAD:architecture.txt")).toBe("After the design check");
+            expect((await gitOps.fileAt(revised.task.worktree!, "HEAD", "architecture.txt"))?.trim()).toBe("After the design check");
           }
-          expect(await git(first.task.worktree!, "status", "--porcelain")).toBe("");
+          expect(await gitOps.isClean(first.task.worktree!)).toBe(true);
           engine.cancel(taskId);
       } finally {
-        await engine.shutdown();
+        await caseOwner.stop(engine);
       }
-    });
+
+  });
+});
   }
 
 
@@ -232,7 +251,8 @@ describe("roles the coordinator edits and adds", () => {
       const home = join(root, "home");
       const fakes = new Fakes(join(root, "fake"));
       fakes.scenario({ planner: "roles", builder: "plain" });
-      await git(product, "remote", "set-url", "origin", "https://github.com/acme/demo.git");
+      const configPath = join(product, ".git", "config");
+      writeFileSync(configPath, readFileSync(configPath, "utf8").replace(/url = .*/, "url = https://github.com/acme/demo.git"));
       let engine = await owners.harness(home, fakes.dir, join(root, "origin.git"));
       try {
 
@@ -308,7 +328,7 @@ describe("roles the coordinator edits and adds", () => {
         // Its next step used the new version: read-only, so what it committed was undone, and its saved work stayed.
         expect(copy[1]).toContain(MAY_CHANGE.readOnly);
         expect(said("Undid commits from Copywriter, which is read-only")).toBe(true);
-        expect(await git(task.worktree!, "show", "HEAD:copywriter.txt")).toBe("Written while changing the product");
+        expect((await gitOps.fileAt(task.worktree!, "HEAD", "copywriter.txt"))?.trim()).toBe("Written while changing the product");
         // Petrina later folds step commits into the task’s single delivery commit.
 
         // The Security reviewer joined the review: its blocking finding, under its name, went back to the builder.
@@ -409,7 +429,7 @@ describe("roles the coordinator edits and adds", () => {
           expect(fakes.received("wordsmith")).toEqual([]);
           expect(said("Saved the changes from the Copywriter on the task's branch")).toBe(true);
           expect(said("Undid")).toBe(false);
-          expect(await git(product, "show", "main:copywriter.txt")).toBe("A first draft");
+          expect((await gitOps.fileAt(product, "main", "copywriter.txt"))?.trim()).toBe("A first draft");
           // The next agent gets the new version.
           expect(state.roles.find((role) => role.id === copywriter)).toMatchObject({ name: "Wordsmith", instructions: edited.instructions, canEdit: false });
           await engine.quit();

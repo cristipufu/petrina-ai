@@ -4,7 +4,7 @@ import { addDeliveryCheck } from "../../../src/delivery-gate.js";
 import { requiredAcceptanceFixture, REQUIRED, SECOND, UNAVAILABLE, TRIED, blocked, passed, failing } from "../../fixtures/required-acceptance.js";
 
 for (const checklist of [true, false]) it(`keeps the saved automatic delivery when ${checklist ? "every required item passes" : "there is no checklist"} and only an extra probe could not be verified`, async () => {
-  const f = requiredAcceptanceFixture(checklist ? [REQUIRED] : []);
+  const f = await requiredAcceptanceFixture(checklist ? [REQUIRED] : []);
   try {
     const extra = blocked("The greeting also shows offline");
     f.configure({ checks: [...(checklist ? [passed()] : []), extra] });
@@ -20,7 +20,7 @@ for (const checklist of [true, false]) it(`keeps the saved automatic delivery wh
 });
 
 it("tries the final code again after you send it back from the added check, then ships on its own once every required item passes", async () => {
-  const f = requiredAcceptanceFixture();
+  const f = await requiredAcceptanceFixture();
   try {
     f.configure({ checks: [blocked()] }); await f.drive();
     expect(f.decisions()).toHaveLength(1); expect(f.delivery.published).toEqual([]);
@@ -39,7 +39,7 @@ it("tries the final code again after you send it back from the added check, then
 });
 
 for (const [repaired, planned] of [[true, false], [false, false], [true, true]] as const) it(`keeps a reproduced failure on its bounded repair route while another required item could not be verified, then asks one decision${repaired ? "" : " with both once the returns are used"}${planned ? ", at a delivery check planned from the start" : ""}`, async () => {
-  const f = requiredAcceptanceFixture([REQUIRED, SECOND]);
+  const f = await requiredAcceptanceFixture([REQUIRED, SECOND]);
   try {
     if (planned) { f.task.approveDelivery = true; f.task.plan!.stages.splice(3, 0, { id: "gate", title: "Delivery", kind: "gate", gate: "delivery", roleId: "release-manager", profileIds: [] }); }
     f.configure({ checks: [failing(), blocked(SECOND)], ...(repaired ? { fixedChecks: [passed(), blocked(SECOND)] } : {}) });
@@ -67,7 +67,7 @@ for (const [repaired, planned] of [[true, false], [false, false], [true, true]] 
 });
 
 for (const entry of ["already at delivery", "prepared with automatic approval", "decided for an earlier run", "approved by you before this update"] as const) it(`asks before publishing starts with an undecided required gap: ${entry}`, async () => {
-  const f = requiredAcceptanceFixture();
+  const f = await requiredAcceptanceFixture();
   try {
     f.configure({ checks: [blocked()] }); await f.report();
     f.task.plan!.stages = f.task.plan!.stages.filter(stage => stage.kind !== "gate"); delete f.task.proofDeliveryGate;
@@ -96,7 +96,7 @@ for (const entry of ["already at delivery", "prepared with automatic approval", 
 });
 
 it("reuses the requested-proof delivery check without adding another, and one explicit approval covers both decisions", async () => {
-  const f = requiredAcceptanceFixture();
+  const f = await requiredAcceptanceFixture();
   try {
     f.task.proofRequests = [{ id: "proof-1", text: "Run the greeting on Linux", reason: "Required on the final code", productIds: [f.task.productId], source: "review:0:0", requestedBy: { stageId: f.review.id, round: 1, seat: "0", roleId: "code-reviewer", profileId: "sol-high" }, ownerStageId: f.tester.id, reviewedVersions: f.versions(), status: "pending" }];
     expect(addDeliveryCheck(f.catalog, f.task)).toBe(true);
@@ -115,7 +115,7 @@ it("reuses the requested-proof delivery check without adding another, and one ex
 });
 
 for (const changed of [false]) it(`${changed ? "tries the final code again when it changed after" : "ships on its own straight after"} a required pass with an extra probe unverified, through an added delivery check`, async () => {
-  const f = requiredAcceptanceFixture();
+  const f = await requiredAcceptanceFixture();
   try {
     f.configure({ checks: [passed(), blocked("The greeting also shows offline")] }); await f.report();
     expect(f.task.acceptancePassed).toBe(true); expect(f.task.proofDeliveryGate).toBeUndefined();
@@ -130,7 +130,7 @@ for (const changed of [false]) it(`${changed ? "tries the final code again when 
 });
 
 for (const failure of [new Error("source observation failed"), undefined]) it(`stops the actual checkpoint at a ${failure === undefined ? "undefined" : "Error"} source rejection without starting checks or approval`, async () => {
-  const f = requiredAcceptanceFixture(), calls: string[] = [];
+  const f = await requiredAcceptanceFixture(), calls: string[] = [];
   try {
     f.checkpointEffects.writeGuide = async bound => { expect(bound.task).toBe(f.task); expect(bound.work).toBe(f.scope.work); calls.push("guide"); };
     f.checkpointEffects.writeLearnings = async () => { calls.push("learnings"); };
@@ -144,7 +144,7 @@ for (const failure of [new Error("source observation failed"), undefined]) it(`s
 });
 
 for (const failure of [new Error("restore failed"), undefined]) it(`retains bound preparation and the original ${failure === undefined ? "undefined" : "Error"} rejection when return-to-work fails`, async () => {
-  const f = requiredAcceptanceFixture();
+  const f = await requiredAcceptanceFixture();
   try {
     f.scope.work.approvedFor = { by: "coordinator", mode: "local", destination: "scripted:main" };
     f.scope.work.shipping = { moves: 1, failures: 2 };
@@ -159,7 +159,7 @@ for (const failure of [new Error("restore failed"), undefined]) it(`retains boun
 });
 
 it("keeps the actual missing-head fallback bound to its execution and clears older checked observations", async () => {
-  const f = requiredAcceptanceFixture();
+  const f = await requiredAcceptanceFixture();
   try {
     f.configure({ checks: [blocked()] }); await f.report();
     f.scope.work.checkedSha = "older-observation"; f.scope.work.checkedPatch = "older-patch";
@@ -170,5 +170,82 @@ it("keeps the actual missing-head fallback bound to its execution and clears old
     expect(seen).toEqual([f.scope.work, undefined]);
     expect(f.scope.work.checkedSha).toBeUndefined(); expect(f.scope.work.checkedPatch).toBeUndefined();
     expect(f.decisions()).toHaveLength(1); expect(f.delivery.published).toEqual([]);
+  } finally { await f.close(); }
+});
+
+for (const role of ["built-in", "custom", "task-owned"] as const) it(`publishes nothing when delivery approval is off and a required checklist item could not be verified, and asks one delivery decision (${role} acceptance role)`, async () => {
+  const f = await requiredAcceptanceFixture([REQUIRED], { role });
+  try {
+    f.configure({ checks: [blocked()] }); await f.drive();
+    expect(f.delivery.published).toEqual([]); expect(f.decisions()).toHaveLength(1);
+    expect(f.agents.received("checks")).toHaveLength(1); expect(f.runs("builder")).toHaveLength(0); expect(f.runs("code-reviewer")).toHaveLength(1);
+    expect(f.task.findings.filter(finding => finding.status === "open" && finding.severity === "blocking")).toEqual([]);
+    expect(f.scope.work.acceptanceReturns).toBeUndefined();
+    expect(f.task.plan!.stages.map(stage => stage.kind)).toEqual(["do", "do", "review-chain", "gate", "do"]);
+    expect(f.task.proofDeliveryGate).toBeDefined();
+    expect(f.task.timeline.some(entry => entry.text === "Added your delivery check: a required acceptance check could not be verified, so delivery waits for your decision")).toBe(true);
+    const [decision] = f.decisions();
+    expect(decision!.title).toBe("Your call on “Show the greeting”: 1 acceptance check could not be verified");
+    expect(decision!.body).toContain(`1 acceptance check could not be verified:\n• ${REQUIRED} — ${UNAVAILABLE}\n  Tried: ${TRIED}\nWhat would ship: the same contents as tested.`);
+    const run = f.runs().at(-1)!, tree = f.versions()[f.scope.work.productId]!;
+    const saved = f.task.journey!.findLast(step => step.kind === "you" && step.waitsFor === "delivery")!;
+    expect(saved.acceptanceGap).toEqual({ stepId: run.id, reportIndex: 0, items: [{ text: REQUIRED, reason: UNAVAILABLE, evidence: TRIED }],
+      tested: { [f.scope.work.productId]: tree }, prepared: { [f.scope.work.productId]: tree }, coverage: [{ productId: f.scope.work.productId, state: "same-contents" }] });
+    f.approve();
+    expect(f.task.approvedAcceptanceGap).toEqual({ stepId: run.id, reportIndex: 0, items: [{ text: REQUIRED, reason: UNAVAILABLE, evidence: TRIED }] });
+    await f.drive(); expect(f.delivery.published).toHaveLength(1);
+    expect(f.task.brief!.acceptance).toEqual([{ text: REQUIRED, verification: "blocked", reason: UNAVAILABLE }]);
+    expect(f.task.acceptanceUnverified).toBe(true); expect(f.task.acceptancePassed).toBe(false); expect(f.agents.received("checks")).toHaveLength(1);
+    // Both physical main observations and approved publication stay in the native stand-in/pause/push anchors.
+  } finally { await f.close(); }
+});
+
+it("still asks before a low-risk automatic delivery when only an extra probe could not be verified", async () => {
+  const f = await requiredAcceptanceFixture();
+  try {
+    f.task.approveDelivery = true; f.product.shipLowRisk = true; f.task.risk = { level: "low", why: "Only copy" };
+    f.task.plan!.stages.splice(3, 0, { id: "gate", title: "Delivery", kind: "gate", gate: "delivery", roleId: "release-manager", profileIds: [] });
+    f.configure({ checks: [passed(), blocked("The greeting also shows offline")] }); await f.drive();
+    expect(f.decisions()).toHaveLength(1); expect(f.delivery.published).toEqual([]);
+    expect(f.task.proofDeliveryGate).toBeUndefined(); expect(f.task.plan!.stages.filter(stage => stage.kind === "gate")).toHaveLength(1);
+    expect(f.task.journey!.findLast(step => step.kind === "you")!.acceptanceGap).toBeUndefined();
+  } finally { await f.close(); }
+});
+
+it("repairs a shared failure on its owner, runs the planned review, then asks one shared decision naming each unavailable item's products", async () => {
+  const THIRD = "The greeting matches the product's tone", f = await requiredAcceptanceFixture([REQUIRED, SECOND, THIRD], { shared: true });
+  try {
+    const [first, second] = f.products.map(product => product.id) as [string, string];
+    f.configure({ checks: [failing(REQUIRED, [first]), blocked(SECOND, [second]), blocked(THIRD, ["unknown"])],
+      fixedChecks: [passed(REQUIRED, [first]), blocked(SECOND, [second]), blocked(THIRD, ["unknown"])] });
+    await f.drive(); expect(f.delivery.published).toEqual([]);
+    expect(f.task.repositories!.map(work => work.acceptanceReturns)).toEqual([1, undefined]); expect(f.agents.received("checks")).toHaveLength(2);
+    const testers = f.runs(), review = f.task.journey!.findIndex(step => step.stageId === f.review.id);
+    expect(review).toBeGreaterThan(f.task.journey!.indexOf(testers.at(-1)!)); expect(f.decisions()).toHaveLength(1);
+    const [decision] = f.decisions();
+    expect(decision!.title).toBe("Your call on “Show the greeting”: 2 acceptance checks could not be verified");
+    expect(decision!.body).toContain(`2 acceptance checks could not be verified:\n• ${SECOND} (Product 2) — ${UNAVAILABLE}\n  Tried: ${TRIED}\n• ${THIRD} (no affected product was assigned) — Together: no valid affected products were assigned. The coordinator must resolve ownership.`);
+    expect(decision!.body).toMatch(/What would ship: Product 1 [a-z ,]+; Product 2 [a-z ,]+\./);
+    const saved = f.task.journey!.findLast(step => step.kind === "you" && step.waitsFor === "delivery")!.acceptanceGap!;
+    expect(saved.items.map(item => [item.text, item.productIds])).toEqual([[SECOND, [second]], [THIRD, []]]);
+    expect(Object.keys(saved.tested!).sort()).toEqual([first, second].sort()); expect(Object.keys(saved.prepared!).sort()).toEqual([first, second].sort());
+    f.approve(); await f.drive(); expect(f.delivery.published).toHaveLength(2);
+    expect(f.task.brief!.acceptance.map(item => item.verification)).toEqual(["passed", "blocked", "blocked"]);
+    // The native shared acceptance pair retains actual per-product repair and both main-ref publication facts.
+  } finally { await f.close(); }
+});
+
+it("tries the final code again when it changed after a required pass with an extra probe unverified, through an added delivery check", async () => {
+  const f = await requiredAcceptanceFixture();
+  try {
+    f.configure({ checks: [passed(), blocked("The greeting also shows offline")] }); await f.report();
+    expect(f.task.acceptancePassed).toBe(true); expect(f.task.proofDeliveryGate).toBeUndefined();
+    expect(addDeliveryCheck(f.catalog, f.task)).toBe(true);
+    // An explicit changed repository observation, consumed by the real final-verification owner.
+    f.evidence[0]!.state.tree = "b".repeat(40); f.evidence[0]!.state.sha = "c".repeat(40);
+    f.task.stageIndex = 3; await f.drive();
+    expect(f.agents.received("checks")).toHaveLength(2); expect(f.decisions()).toEqual([]); expect(f.delivery.published).toHaveLength(1);
+    expect(f.task.testedVersions![f.scope.work.productId]).toBe(f.versions()[f.scope.work.productId]);
+    // Physical commit/tree movement and real post-change Tester execution stay in native version-bound/tester anchors.
   } finally { await f.close(); }
 });

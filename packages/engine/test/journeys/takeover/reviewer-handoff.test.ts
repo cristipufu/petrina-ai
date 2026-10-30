@@ -1,7 +1,9 @@
 import { afterAll, describe, expect, it } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 import { waitFor } from "@petrina/test-support/fixtures";
-import { git } from "@petrina/test-support/commands";
+import { readLooseCommit, readRef } from "../../fixtures/shared-preparation.js";
 
 import { sessionState } from "@petrina/agent-runtime/terminal";
 import { takeoverFixtures, takeoverDir } from "../../fixtures/takeover.js";
@@ -12,7 +14,8 @@ const posix = process.platform !== "win32";
 
 describe.skipIf(!posix)("take over a reviewer, which is read-only", () => {
   it("keeps what was changed by hand, carries on in a fresh conversation when the tool cannot reopen it, and reviews again from the first reviewer without using a round", async () => {
-    const run = await start({ planner: "short", builder: "plain", reviewer: "work" });
+  return fixtures.use(async caseOwner => {
+    const run = await start(caseOwner, { planner: "short", builder: "plain", reviewer: "work" });
     try {
       await waitFor(() => run.fakes.marked("reviewer-working"), "the reviewer to start");
       const before = await run.working("code-reviewer");
@@ -46,9 +49,13 @@ describe.skipIf(!posix)("take over a reviewer, which is read-only", () => {
       const texts = done.timeline.map((entry) => entry.text);
       expect(texts.lastIndexOf("Tamper check passed: no tests removed or skipped")).toBeGreaterThan(texts.indexOf("Reviewing your changes: the review starts again from the first reviewer"));
       // What was changed by hand is kept, even though the role is read-only, and ships inside the task's one commit.
-      expect(await git(run.product, "show", "main:hand.txt")).toBe("Changed by hand");
-      expect(await git(run.product, "log", "--format=%s", "main")).toBe("Add a greeting\ninit");
+      expect(readFileSync(join(run.product, "hand.txt"), "utf8").trim()).toBe("Changed by hand");
+      const c0 = readLooseCommit(join(run.product, ".git"), readRef(join(run.product, ".git"), "refs/heads/main")!)!;
+      const c1 = readLooseCommit(join(run.product, ".git"), c0.parents[0]!)!;
+      expect([c0, c1].map((c) => c.body.trim().split("\n")[0]).join("\n")).toBe("Add a greeting\ninit");
 
     } finally { await run.close(); }
+
   });
+});
 });

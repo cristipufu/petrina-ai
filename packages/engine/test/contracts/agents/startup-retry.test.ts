@@ -1,32 +1,42 @@
+import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
+import { installPreparedProduct, privateCloneProduct } from "../../fixtures/prepared-product.js";
 import { afterAll, describe, expect, it } from "bun:test";
 import { join } from "node:path";
 import { ENGINE_TEST_ROOT } from "../../fixtures/runtime-paths.js";
 import type { Task } from "@petrina/core";
-import { Engine } from "../../engine.js";
-import { Fakes, makeProduct, removeDir, tempDir, waitFor, SLOW } from "../../fixtures.js";
+import { Fakes, makeProduct, waitFor, SLOW } from "../../fixtures.js";
+import { privateAgentToolProbe } from "../../scripted-probes.js";
+const engineCases = engineCaseFixtures();
+afterAll(() => engineCases.close());
 
-const roots: string[] = [];
-afterAll(() => roots.forEach(removeDir));
+
 
 describe("a tool that never answers when it starts", () => {
   it("fails the step after the start limit instead of hanging it, and Try again starts it afresh", async () => {
-    const root = tempDir("petrina-start-");
-    roots.push(root);
+  return engineCases.use("petrina-start-", async caseOwner => {
+    const root = caseOwner.root;
+
     const fakes = new Fakes(join(root, "fake"));
     fakes.scenario({ planner: "short" });
     // The first agent process never answers its handshake; the ones after it do.
     let silent = true;
     const options = {
       startTimeoutMs: 1000, // The first process deliberately never answers; its deadline can be short.
+      toolProbe: privateAgentToolProbe(),
       agentCommand: () => {
         const command = [process.execPath, join(ENGINE_TEST_ROOT, "fake-agent.ts"), fakes.dir, ...(silent ? ["--silent"] : [])];
         silent = false;
         return command;
       },
     };
-    const engine = new Engine(join(root, "data"), options);
+    const engine = caseOwner.open(join(root, "data"), options);
     try {
-      const productId = await engine.addProduct(await makeProduct(root));
+      const productId = await caseOwner.run(engine, async () => {
+        const repo = await makeProduct(root, { origin: "none" });
+        await engine.waitUntilReady();
+        caseOwner.check(); engine.stopRequested.signal.throwIfAborted();
+        return installPreparedProduct(engine, privateCloneProduct(repo));
+      });
       const taskId = engine.addTask({ productId, title: "Add a greeting", description: "[no-check]", approvePlan: true });
       const task = () => engine.getState().tasks.find((entry) => entry.id === taskId) as Task | undefined;
       // Generous: CI runners start a fake agent slowly, and the step fails only after the start limit.
@@ -40,10 +50,12 @@ describe("a tool that never answers when it starts", () => {
       expect(engine.options.startTimeoutMs).toBe(12_000 * SLOW);
       // The fixture copied its input; this is deliberately the actual running Engine's option.
       expect(options.startTimeoutMs).toBe(1000);
-      await engine.retry(stuck.id);
+      await caseOwner.run(engine, async () => { await engine.retry(stuck.id); });
       await waitFor(() => engine.getState().inbox.some((item) => item.taskId === taskId && item.kind === "plan") || task()?.stageIndex! >= 0, "the planner to answer after Try again", 120_000);
     } finally {
-      await engine.shutdown();
+      await caseOwner.stop(engine);
     }
+
   });
+});
 });

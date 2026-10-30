@@ -2,7 +2,8 @@ import { afterAll, expect, it } from "bun:test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ACCEPTANCE_RESTORED } from "@petrina/core";
-import { Fakes, git, tempDir, waitFor } from "../../fixtures.js";
+import * as gitOps from "@petrina/repositories/git";
+import { Fakes, tempDir, waitFor } from "../../fixtures.js";
 import { changesOf, versionsOf } from "../../../src/repositories.js";
 import { stepKey } from "../../../src/kernel.js";
 import { proofRequestFixtures } from "../../fixtures/proof-requests.js";
@@ -17,11 +18,11 @@ it("saves a take-over's undone tracked edit with the acceptance run, while new o
     f.scope.work.conversation = { step: stepKey(f.task), roleId: "tester", profileId: "opus-high", toolId: "claude-code", model: "opus", sessionId: "tester", startedAt: 1, access: { canEdit: false } };
     writeFileSync(join(worktree, "output.log"), "New output\n");
     await f.engine.undoReadOnly(f.task, "tester", worktree);
-    expect(f.task.acceptanceRun.restored).toBeUndefined(); expect(await git(worktree, "status", "--porcelain")).toBe("");
+    expect(f.task.acceptanceRun.restored).toBeUndefined(); expect(await gitOps.isClean(worktree)).toBe(true);
     writeFileSync(join(worktree, "feature.txt"), "Edited before the take-over\n"); writeFileSync(join(worktree, "output.log"), "New output\n");
     await f.engine.undoReadOnly(f.task, "tester", worktree);
     expect(f.task.acceptanceRun.restored!.products).toEqual([{ productId: f.task.productId, edits: true, files: ["feature.txt"] }]);
-    expect(await git(worktree, "status", "--porcelain")).toBe(""); expect(readFileSync(join(worktree, "feature.txt"), "utf8")).toBe("the task's change\n");
+    expect(await gitOps.isClean(worktree)).toBe(true); expect(readFileSync(join(worktree, "feature.txt"), "utf8")).toBe("the task's change\n");
     expect(f.task.timeline.some(entry => entry.text === restoredLine("changes to project files", "Product 1", "feature.txt"))).toBe(true);
   } finally { await f.close(); }
 });
@@ -34,7 +35,7 @@ it("keeps an undone change with its acceptance run through the coordinator's tak
   try {
     const request = await f.request(); const worktree = f.scope.work.worktree!;
     writeFileSync(join(worktree, "tester-edit.txt"), "Saved before acceptance\n");
-    await git(worktree, "add", "."); await git(worktree, "commit", "-q", "-m", "Save a project file");
+    await gitOps.commitChanges(worktree, "Save a project file");
     f.task.retest = true; f.task.stageIndex = 1;
     fakes.scenario({ tester: "work", testerFiles: [{ dir: worktree, file: "tester-edit.txt", text: "Edited before the take-over\n" }], testerProofAnswers: passes([request.id]) });
     const driving = f.drive();

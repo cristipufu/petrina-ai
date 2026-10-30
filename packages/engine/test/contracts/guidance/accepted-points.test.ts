@@ -1,3 +1,4 @@
+import { installPreparedProduct, privateCloneProduct } from "../../fixtures/prepared-product.js";
 import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
 import { mkdtempSync } from "node:fs";
 import { afterAll as closeOwnedCases } from "bun:test";
@@ -5,9 +6,11 @@ import { executionFor } from "@petrina/orchestrator";
 import { expect, it } from "bun:test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import * as gitOps from "@petrina/repositories/git";
 import { AcceptedPoints } from "../../../src/accepted-points.js";
 import { Learnings } from "../../../src/learnings.js";
-import { git, makeProduct, waitFor } from "../../fixtures.js";
+import { git, createProductRepository, makeProduct, waitFor } from "../../fixtures.js";
+import { privateAgentToolProbe } from "../../scripted-probes.js";
 const cases = engineCaseFixtures();
 closeOwnedCases(() => cases.close());
 
@@ -16,12 +19,12 @@ it("retires incorporated lessons and guide points after restart, preserving unpu
   return cases.use("petrina-engine-case-", async owner => {
     const root = mkdtempSync(join(owner.root, "petrina-accepted-points-"));
 
-    let engine = owner.open(join(root, "data"), { usageCommands: { codex: null } });
+    let engine = owner.open(join(root, "data"), { toolProbe: privateAgentToolProbe(), usageCommands: { codex: null } });
     try {
       engine.setPoolPaused(true);
-      const repo = await makeProduct(root);
-      const productId = await engine.addProduct(repo);
-      const beforeRule = await git(repo, "rev-parse", "HEAD");
+      const { path: repo, initialSha: beforeRule } = await createProductRepository(root, { origin: "none" });
+      await engine.waitUntilReady(); owner.check(); engine.stopRequested.signal.throwIfAborted();
+      const productId = installPreparedProduct(engine, privateCloneProduct(repo));
       const task = engine.task(engine.addTask({ productId, title: "An old accepted lesson" }))!;
       engine.cancel(task.id);
       const incorporated = "Run the package test command.";
@@ -30,20 +33,18 @@ it("retires incorporated lessons and guide points after restart, preserving unpu
       const pendingRule = "Verify each product's check evidence.";
       writeFileSync(join(repo, "AGENTS.md"), `- ${incorporated}\n`);
       writeFileSync(join(repo, "REVIEW.md"), `- ${incorporatedRule}\n`);
-      await git(repo, "add", ".");
-      await git(repo, "commit", "-q", "-m", "Incorporate approved instructions");
-      const incorporatedCommit = await git(repo, "rev-parse", "HEAD");
+      await gitOps.commitChanges(repo, "Incorporate approved instructions");
+      const incorporatedCommit = (await gitOps.head(repo))!;
       await git(repo, "switch", "-q", "-c", "unpublished");
       writeFileSync(join(repo, "AGENTS.md"), `- ${incorporated}\n- ${pending}\n`);
       writeFileSync(join(repo, "REVIEW.md"), `- ${incorporatedRule}\n- ${pendingRule}\n`);
-      await git(repo, "add", ".");
-      await git(repo, "commit", "-q", "-m", "Instructions still on another branch");
+      await gitOps.commitChanges(repo, "Instructions still on another branch");
       await git(repo, "switch", "-q", "main");
       const product = engine.productOf(task)!;
       product.learnings = [incorporated, pending].map((text) => ({ text, at: 0, fromTask: task.id, writtenOn: task.id }));
       product.reviewGuide = [incorporatedRule, pendingRule].map((text) => ({ text, at: 0, fromTask: task.id, writtenOn: task.id }));
       await owner.stop(engine);
-      engine = owner.open(join(root, "data"), { usageCommands: { codex: null } });
+      engine = owner.open(join(root, "data"), { toolProbe: privateAgentToolProbe(), usageCommands: { codex: null } });
       await waitFor(() => {
         const saved = engine.getState().products.find((entry) => entry.id === productId)!;
         return saved.learnings?.length === 1 && saved.reviewGuide?.filter((line) => !line.incorporatedOn).length === 1;
@@ -53,11 +54,10 @@ it("retires incorporated lessons and guide points after restart, preserving unpu
       expect(saved.reviewGuide?.map((line) => [line.text, line.incorporatedOn])).toEqual([[incorporatedRule, incorporatedCommit], [pendingRule, undefined]]);
       writeFileSync(join(repo, "AGENTS.md"), "# Corrected guidance\n");
       writeFileSync(join(repo, "REVIEW.md"), "# Corrected review guide\n");
-      await git(repo, "add", ".");
-      await git(repo, "commit", "-q", "-m", "Coordinator removes obsolete instructions");
+      await gitOps.commitChanges(repo, "Coordinator removes obsolete instructions");
       const next = engine.task(engine.addTask({ productId, title: "A later delivery" }))!;
       executionFor(next).work.worktree = repo;
-      executionFor(next).work.baseSha = await git(repo, "rev-parse", "HEAD");
+      executionFor(next).work.baseSha = (await gitOps.head(repo))!;
       const older = { ...next, repository: { ...next.repository!, baseSha: beforeRule } };
       const incorporatedBase = { ...next, repository: { ...next.repository!, baseSha: incorporatedCommit } };
       const keeper = engine["guide"];
@@ -73,7 +73,7 @@ it("retires incorporated lessons and guide points after restart, preserving unpu
       expect(file).toContain(pending);
       expect(file).not.toContain(incorporated);
       await owner.stop(engine);
-      engine = owner.open(join(root, "data"), { usageCommands: { codex: null } });
+      engine = owner.open(join(root, "data"), { toolProbe: privateAgentToolProbe(), usageCommands: { codex: null } });
       await new AcceptedPoints(engine).sweep();
       expect(engine.getState().products.find((entry) => entry.id === productId)!.learnings).toEqual([]);
       const guide = readFileSync(join(repo, "REVIEW.md"), "utf8");
@@ -98,11 +98,13 @@ it("keeps pending instructions when the default branch cannot be read", async ()
   return cases.use("petrina-engine-case-", async owner => {
     const root = mkdtempSync(join(owner.root, "petrina-accepted-unavailable-"));
 
-    const engine = owner.open(join(root, "data"), { usageCommands: { codex: null } });
+    const engine = owner.open(join(root, "data"), { toolProbe: privateAgentToolProbe(), usageCommands: { codex: null } });
     try {
       await owner.run(engine, async () => {
         engine.setPoolPaused(true);
-        const productId = await engine.addProduct(await makeProduct(root));
+        const repo = await makeProduct(root, { origin: "none" });
+        await engine.waitUntilReady(); owner.check(); engine.stopRequested.signal.throwIfAborted();
+        const productId = installPreparedProduct(engine, privateCloneProduct(repo));
         const task = engine.task(engine.addTask({ productId, title: "Keep unpublished guidance" }))!;
         const product = engine.productOf(task)!;
         const pending = [{ text: "Keep this accepted instruction.", at: 0, fromTask: task.id }];

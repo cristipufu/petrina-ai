@@ -3,8 +3,8 @@ import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { completeAll, takeOverBlock } from "@petrina/core";
 import { repositoryView } from "@petrina/orchestrator";
+import * as gitOps from "@petrina/repositories/git";
 import { SLOW } from "@petrina/test-support/slow";
-import { git } from "@petrina/test-support/commands";
 import type { LaunchInput } from "@petrina/agent-runtime/terminal";
 import { TestResult } from "../../../src/roles.js";
 import { turnCleanupFixtures, type Observed } from "../../fixtures/turn-cleanup.js";
@@ -20,7 +20,7 @@ for (const mode of ["false", "confirmed", "driver-error", "driver-undefined"] as
   const finalizer = driverFailure ? Promise.withResolvers<void>() : undefined;
   let observedFinalizer: Promise<Observed<void>> | undefined;
   try {
-    const file = join(f.repo!, "README.md"), original = readFileSync(file, "utf8"), head = await f.observe(() => git(f.repo!, "rev-parse", "HEAD"));
+    const file = join(f.repo!, "README.md"), original = readFileSync(file, "utf8"), head = await f.observe(async () => (await gitOps.head(f.repo!))!);
     expect(head.kind).toBe("value");
     if (head.kind !== "value") throw head.error;
     const turn = await f.observe(() => f.engine["turns"].turn(f.scope, "tester", "opus-high", () => [], TestResult, f.abort.signal));
@@ -57,7 +57,7 @@ for (const mode of ["false", "confirmed", "driver-error", "driver-undefined"] as
     expect(tool).toHaveBeenCalledTimes(1);
     expect(f.stopCalls).toBe(1); // No raw second stop bypasses the canonical receipt.
     expect(f.engine.switching.has(f.task.id)).toBe(false);
-    const after = await f.observe(() => git(f.repo!, "rev-parse", "HEAD"));
+    const after = await f.observe(async () => (await gitOps.head(f.repo!))!);
     expect(after.kind).toBe("value");
     if (after.kind !== "value") throw after.error;
     expect(after.value).toBe(head.value);

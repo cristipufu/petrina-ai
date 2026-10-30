@@ -80,6 +80,7 @@ export async function expectBrowserStops(port: number, stop: (browser: AgentBrow
   let client: Client | undefined;
   let owned: number[] = [];
   let stage = "opening";
+  let stopped = false;
   try {
     client = await connectBrowser(browser);
     const opened = await client.callTool({ name: "browser_navigate", arguments: { url: `http://127.0.0.1:${port}` } });
@@ -96,18 +97,21 @@ export async function expectBrowserStops(port: number, stop: (browser: AgentBrow
     stage = "checking";
     expect(await sessionCommands(browser.directory)).toEqual([]);
     for (const pid of [controller, ...owned]) expect(processAlive(pid)).toBe(false);
+    stopped = true;
   } catch (error) {
     // Record this test's own observations before its cleanup and retry below. The original error stays the failure.
     await observeTracked(stage, started, controller, owned, browser.directory).then((note) => console.error(note), () => undefined);
     throw error;
   } finally {
     await client?.close().catch(() => undefined);
-    // Use the current helper handle and a fresh folder-ownership observation. A saved child
-    // number alone is never authority to signal a possibly reused process or process group.
-    resumeBrowser(browser);
-    forceBrowser(browser);
-    const current = await browserProcesses.readFolder(browser.directory);
-    if (current) browserProcesses.forceKill(current.pids);
+    if (!stopped) {
+      // A failed setup, stop or assertion retains independent cleanup. Use the current helper
+      // handle and fresh folder ownership, never an earlier process number as signal authority.
+      resumeBrowser(browser);
+      forceBrowser(browser);
+      const current = await browserProcesses.readFolder(browser.directory);
+      if (current) browserProcesses.forceKill(current.pids);
+    }
 
     await browser.close().catch(() => undefined);
   }

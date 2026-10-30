@@ -1,15 +1,22 @@
+import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
+import { fakeAgentSessions, fakeEngineSettings } from "../../fixtures/fake-agent-sessions.js";
+import { installPreparedProduct, privateCloneProduct } from "../../fixtures/prepared-product.js";
+import { installSharedWorkflowFastPaths } from "../../fixtures/shared-preparation.js";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { afterAll, describe, expect, it } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { completeAll, mainLine, timeLeft, workedSoFar, type State, type Task } from "@petrina/core";
-import { Engine } from "../../engine.js";
 import { Store } from "@petrina/storage/store";
-import { engineProcesses, type EngineProcess, type EngineProcesses, Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "../../support.js";
+import * as gitOps from "@petrina/repositories/git";
+import { privateAgentToolProbe } from "../../scripted-probes.js";
+import { engineProcesses, type EngineProcess, type EngineProcesses, Fakes, makeProduct, tempDir, waitFor } from "../../support.js";
+const engineCases = engineCaseFixtures();
+afterAll(() => engineCases.close());
 
-const roots: string[] = [];
+
 const lifetimes = new Set<EngineProcesses>();
-afterAll(async () => { await completeAll([...lifetimes].map(owners => owners.close())); roots.forEach(removeDir); });
+afterAll(async () => { await completeAll([...lifetimes].map(owners => owners.close()));  });
 
 const ITEM = "Drafting the greeting file";
 
@@ -22,7 +29,7 @@ async function start(reopen?: "load", clock = false, activity?: "grok") {
     await owners.close(); lifetimes.delete(owners); return value;
   };
   return setupWithCleanup(() => owners.prepare(async () => {
-    const product = await makeProduct(root);
+    const product = await makeProduct(root, { origin: "none" });
     const home = join(root, "home");
     const fakes = new Fakes(join(root, "fake"));
     fakes.scenario({ planner: "short", builder: "todo", ...(reopen ? { reopen } : {}), ...(activity ? { activity } : {}) });
@@ -74,8 +81,8 @@ describe("the agent's to-do item", () => {
         // A forced kill in the middle of the step: the item is on disk.
         await engine.kill();
         const store = new Store(join(run.home, "petrina.db"));
-        expect(store.load()!.tasks.find((task) => task.id === run.taskId)!.todo).toBe(ITEM);
-        store.close();
+        try { expect(store.load()!.tasks.find((task) => task.id === run.taskId)!.todo).toBe(ITEM); }
+        finally { store.close(); }
 
         // A fresh conversation after the restart shows the old item until the new agent names its own.
         engine = await owners.harness(run.home, run.fakes.dir);
@@ -98,62 +105,98 @@ describe("the agent's to-do item", () => {
           ["planner", false],
           ["code-reviewer", false],
         ]);
-        expect(await git(run.product, "show", "main:greeting.txt")).toBe("Hello");
+        expect((await gitOps.fileAt(run.product, "main", "greeting.txt"))?.trim()).toBe("Hello");
         await engine.quit();
         const saved = new Store(join(run.home, "petrina.db"));
-        expect(run.find(saved.load()!).steps).toEqual(done.steps);
-        saved.close();
+        try { expect(run.find(saved.load()!).steps).toEqual(done.steps); }
+        finally { saved.close(); }
 
       });
     });
   }
 
   it("goes when the coordinator pauses, and the step that starts again leaves no record", async () => {
-    const run = await start();
-    return run.use(async () => {
-      const owners = run.owners;
-
-      await waitFor(() => run.fakes.marked("builder-todo"), "the builder to start on its to-do list");
-      await owners.run(run.engine, async () => run.engine.until((state) => run.find(state).todo === ITEM, "the builder's to-do item"));
-      await owners.run(run.engine, async () => run.engine.act("pause", run.taskId));
-      const paused = run.find(await owners.run(run.engine, async () => run.engine.state()));
-      expect(paused.todo).toBeUndefined();
-      expect(paused.statusLine).toBe("Paused by you");
-      await owners.run(run.engine, async () => run.engine.act("resume", run.taskId));
-      const done = run.find(await owners.run(run.engine, async () => run.engine.until((state) => run.find(state).state === "done", "the task to finish", 60_000)));
-      expect(done.steps?.map((record) => record.roleId)).toEqual(["planner", "code-reviewer"]);
-      await run.engine.quit();
-
+    return engineCases.use("petrina-todo-pause-", async (caseOwner) => {
+      const root = caseOwner.root;
+      const product = await makeProduct(root, { origin: "none" });
+      const fakes = new Fakes(join(root, "fake"));
+      fakes.scenario({ planner: "short", builder: "todo" });
+      const engine = installSharedWorkflowFastPaths(caseOwner.open(join(root, "home"), fakeEngineSettings(fakes)));
+      try {
+        const productId = await caseOwner.run(engine, async () => {
+          await engine.waitUntilReady();
+          caseOwner.check();
+          engine.stopRequested.signal.throwIfAborted();
+          return installPreparedProduct(engine, privateCloneProduct(product));
+        });
+        engine.setProductDelivery(productId, "local", false);
+        const taskId = engine.addTask({ productId, title: "Add a greeting" });
+        const find = (state: State) => state.tasks.find((task) => task.id === taskId)!;
+        await waitFor(() => fakes.marked("builder-todo"), "the builder to start on its to-do list");
+        await waitFor(() => find(engine.getState()).todo === ITEM, "the builder's to-do item");
+        engine.pause(taskId);
+        const paused = find(engine.getState());
+        expect(paused.todo).toBeUndefined();
+        expect(paused.statusLine).toBe("Paused by you");
+        engine.resume(taskId);
+        const done = await waitFor(() => {
+          const task = find(engine.getState());
+          return task.state === "done" ? task : undefined;
+        }, "the task to finish", 60_000);
+        expect(done.steps?.map((record) => record.roleId)).toEqual(["planner", "code-reviewer"]);
+      } finally {
+        await caseOwner.stop(engine);
+      }
     });
   });
 
   it("keeps quiet working time through an ordinary quit and clears the item on cancellation", async () => {
-    const run = await start();
-    return run.use(async () => {
-      const owners = run.owners;
+    return engineCases.use("petrina-todo-quit-", async (caseOwner) => {
+      const root = caseOwner.root;
+      const home = join(root, "home");
+      const product = await makeProduct(root, { origin: "none" });
+      const fakes = new Fakes(join(root, "fake"));
+      fakes.scenario({ planner: "short", builder: "todo" });
+      let engine = installSharedWorkflowFastPaths(caseOwner.open(home, fakeEngineSettings(fakes)));
+      const productId = await caseOwner.run(engine, async () => {
+        await engine.waitUntilReady();
+        caseOwner.check();
+        engine.stopRequested.signal.throwIfAborted();
+        return installPreparedProduct(engine, privateCloneProduct(product));
+      });
+      engine.setProductDelivery(productId, "local", false);
+      const taskId = engine.addTask({ productId, title: "Add a greeting" });
+      const find = (state: State) => state.tasks.find((task) => task.id === taskId)!;
 
-      await waitFor(() => run.fakes.marked("builder-todo"), "the builder to start on its to-do list");
-      const before = run.find(await owners.run(run.engine, async () => run.engine.until((state) => run.find(state).todo === ITEM, "the builder's to-do item")));
+      await waitFor(() => fakes.marked("builder-todo"), "the builder to start on its to-do list");
+      const before = await waitFor(() => {
+        const task = find(engine.getState());
+        return task.todo === ITEM ? task : undefined;
+      }, "the builder's to-do item");
       // No new activity is saved during this stretch of work.
       await Bun.sleep(150);
-      await run.engine.quit();
-      const store = new Store(join(run.home, "petrina.db"));
-      const saved = run.find(store.load()!);
-      store.close();
+      await caseOwner.stop(engine);
+      const store = new Store(join(home, "petrina.db"));
+      const saved = (() => {
+        try { return find(store.load()!); }
+        finally { store.close(); }
+      })();
       expect(saved.todo).toBe(ITEM);
       expect(saved.stepClock?.since).toBeUndefined();
       expect(saved.stepClock!.worked).toBeGreaterThanOrEqual(before.stepClock!.worked + 150);
 
-      const engine = await owners.harness(run.home, run.fakes.dir);
-      await waitFor(() => run.fakes.marked("builder-back"), "the builder to get back to work");
-      await owners.run(engine, async () => engine.act("cancel", run.taskId));
-      const cancelled = run.find(await owners.run(engine, async () => engine.state()));
-      expect(cancelled.todo).toBeUndefined();
-      expect(cancelled.stepClock).toBeUndefined();
-      expect(mainLine(cancelled)).toBe("Cancelled");
-      expect(cancelled.steps?.some((record) => record.roleId === "builder")).toBe(false);
-      await engine.quit();
-
+      engine = installSharedWorkflowFastPaths(caseOwner.open(home, fakeEngineSettings(fakes)));
+      try {
+        await waitFor(() => fakes.marked("builder-back"), "the builder to get back to work");
+        engine.cancel(taskId);
+        const cancelled = find(engine.getState());
+        expect(cancelled.todo).toBeUndefined();
+        expect(cancelled.stepClock).toBeUndefined();
+        expect(mainLine(cancelled)).toBe("Cancelled");
+        expect(cancelled.steps?.some((record) => record.roleId === "builder")).toBe(false);
+      } finally {
+        await caseOwner.stop(engine);
+      }
     });
   });
 });
@@ -216,12 +259,17 @@ describe("the record each finished step leaves", () => {
   });
 
   it("names the role and the pass, and leaves out the time spent waiting for the coordinator", async () => {
-    const root = tempDir("petrina-steps-");
-    roots.push(root);
-    const repo = await makeProduct(root);
-    const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, join(import.meta.dir, "../../fake-agent.ts")] });
+  return engineCases.use("petrina-steps-", async caseOwner => {
+    const root = caseOwner.root;
+
+    const repo = await makeProduct(root, { origin: "none" });
+    const engine = installSharedWorkflowFastPaths(caseOwner.open(join(root, "data"), { agentCommand: () => [process.execPath, join(import.meta.dir, "../../fake-agent.ts")], startAgentSession: fakeAgentSessions(new Fakes(join(root, "fake"))), toolProbe: privateAgentToolProbe() }));
     try {
-      const productId = await engine.addProduct(repo);
+      const productId = await caseOwner.run(engine, async () => {
+        await engine.waitUntilReady();
+        caseOwner.check(); engine.stopRequested.signal.throwIfAborted();
+        return installPreparedProduct(engine, privateCloneProduct(repo));
+      });
       engine.setProductDelivery(productId, "local", false);
       const taskId = engine.addTask({ productId, title: "Add a greeting", description: "A greeting file. [no-check]" });
       const task = () => engine.getState().tasks.find((entry) => entry.id === taskId)! as Task;
@@ -259,7 +307,9 @@ describe("the record each finished step leaves", () => {
         expect(record.worked).toBeGreaterThanOrEqual(0);
       }
     } finally {
-      await engine.shutdown();
+      await caseOwner.stop(engine);
     }
+
   });
+});
 });

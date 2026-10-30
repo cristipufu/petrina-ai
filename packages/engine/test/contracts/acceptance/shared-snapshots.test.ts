@@ -8,6 +8,28 @@ import { executionFor } from "@petrina/orchestrator";
 import { withRepositoryRecords } from "../../fixtures/shared-records.js";
 
 describe("explicit repository execution contexts", () => {
+  it("skips unused completion observations while preserving explicitly requested native versions", async () => {
+    await withRepositoryRecords("completion-without-evidence", { git: ["first", "second"] }, async ({ engine, task, run: ownRun }) => {
+      const scope = executionFor(task), before = await versionsOf(task);
+      task.plan = { rationale: "Build both products", plannerProfileId: "sol-high", stages: [
+        { id: "build", title: "Build", kind: "do", roleId: "builder", profileIds: ["sol-high"] },
+      ] };
+      task.stageIndex = 0;
+      expect(task.repositories!.every(work => work.checks === undefined)).toBe(true);
+      expect(task.brief).toBeUndefined();
+      const tree = spyOn(gitOps, "treeOf");
+      try {
+        expect(await ownRun(() => engine["work"]["completion"].complete(scope, { stageId: "build", canEdit: true }))).toBe("continue");
+        expect(tree).not.toHaveBeenCalled();
+        expect(scope.work.completedStages).toEqual(["build"]);
+        expect(task.activeProductId).toBe("second"); expect(task.stageIndex).toBe(0);
+        // Returning a requested version map remains an observation even without saved evidence.
+        expect(await ownRun(() => invalidateAcceptance(task))).toEqual(before);
+        expect(tree.mock.calls.map(([path]) => path)).toEqual(task.repositories!.map(work => work.worktree!));
+      } finally { tree.mockRestore(); }
+    });
+  });
+
   for (const proof of [false, true]) for (const canEdit of [false, true]) it(`uses one acceptance snapshot per product${canEdit ? " after saving tester edits once" : " for a read-only tester"}${proof ? " with required proof" : ""}`, async () => {
     await withRepositoryRecords(`tester-versions-${canEdit}-${proof}`, { git: ["first","second"] }, async ({ engine, task, run: ownRun }) => {
       const role = { ...engine.role("tester")!, id: "acceptance-specialist", name: "Acceptance specialist", canEdit };

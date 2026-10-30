@@ -1,5 +1,5 @@
 import { CheckQueue as PortableCheckQueue } from "@petrina/orchestrator";
-import { Aborted } from "./kernel.js";
+import { Aborted } from "./engine-options.js";
 import { WaitingForUsage } from "./usage.js";
 export type { CheckPlace } from "@petrina/orchestrator";
 

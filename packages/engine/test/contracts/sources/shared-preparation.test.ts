@@ -12,7 +12,8 @@ describe.concurrent("one task across products", () => {
     await fixtures.world("omitted", async ({ shop, api, engine: withEngine, fakes }) => {
     await withEngine(async engine => {
 
-      const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
+      await engine.waitUntilReady(); engine.stopRequested.signal.throwIfAborted();
+      const first = shop.preparedProduct(engine), second = api.preparedProduct(engine);
       const worksOn = [first, second].map((productId) => ({ productId, startFrom: { kind: "default" as const }, delivery: "pull-request" as const }));
       fakes.scenario({ planner: "short", builder: "plain", worksOn: [worksOn[0]!] });
       const id = engine.addTask({ productId: first, worksOn, title: "Keep my choices", approveDelivery: false });

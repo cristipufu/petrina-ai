@@ -1,28 +1,35 @@
+import { afterAll } from "bun:test";
+import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
 import { describe, expect, it } from "bun:test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { type State } from "@petrina/core";
-import { Engine } from "../../engine.js";
 import { Store } from "@petrina/storage/store";
 import { setupFixtures } from "../../fixtures/setup.js";
+import { privateAgentToolProbe } from "../../scripted-probes.js";
+const engineCases = engineCaseFixtures();
+afterAll(() => engineCases.close());
+
 
 const { fresh, agents, makeGitHubClone } = setupFixtures();
+const probe = { toolProbe: privateAgentToolProbe() };
 
 describe("Setup and the first task", () => {
 it("starts a fresh install on first run, keeps where it got to, and finishes it once the first task is saved", async () => {
-    const data = fresh("data");
-    const repo = await makeGitHubClone(fresh("shop"));
-    let engine = new Engine(data, { agentCommand: agents({}) });
+  return engineCases.use("petrina-setup-case-", async caseOwner => {
+    const data = fresh("data", caseOwner.root);
+    const repo = await makeGitHubClone(fresh("shop", caseOwner.root));
+    let engine = caseOwner.open(data, { agentCommand: agents({}), ...probe });
     try {
       expect(engine.getState().setup).toMatchObject({ done: false });
       engine.setSetupStep("tools");
       engine.setSetupStep("product");
       engine.setSetupStep("welcome");
       expect(engine.getState().setup?.step).toBe("product");
-      const productId = await engine.addProduct(repo);
-      await engine.shutdown();
+      const productId = await caseOwner.run(engine, async () => engine.addProduct(repo));
+      await caseOwner.stop(engine);
       // Closed partway: it reopens where it got to.
-      engine = new Engine(data, { agentCommand: agents({}) });
+      engine = caseOwner.open(data, { agentCommand: agents({}), ...probe });
       expect(engine.getState().setup).toMatchObject({ done: false, step: "product" });
 
       engine.setPoolPaused(true);
@@ -36,42 +43,51 @@ it("starts a fresh install on first run, keeps where it got to, and finishes it 
       engine.addTask({ productId, title: "Another", clientId: "other-1" });
       expect(engine.getState().tasks).toHaveLength(2);
       engine.dismissTip();
-      await engine.shutdown();
-      engine = new Engine(data, { agentCommand: agents({}) });
+      await caseOwner.stop(engine);
+      engine = caseOwner.open(data, { agentCommand: agents({}), ...probe });
       expect(engine.getState().setup).toMatchObject({ done: true, firstTaskId: id, tipDismissed: true });
       expect(engine.getState().tasks).toHaveLength(2);
     } finally {
-      await engine.shutdown();
+      await caseOwner.stop(engine);
     }
+
   });
+});
 it("never shows first run to an install that already has products or tasks, and Skip setup is for good", async () => {
-    const existing = fresh("data");
+  return engineCases.use("petrina-setup-case-", async caseOwner => {
+    const existing = fresh("data", caseOwner.root);
     mkdirSync(existing, { recursive: true });
     const store = new Store(join(existing, "petrina.db"));
-    const blank = new Engine(fresh("data"));
+    const closeStore = caseOwner.afterBody(() => store.close());
+    const blank = caseOwner.open(fresh("data", caseOwner.root), probe);
     const before = structuredClone(blank.getState());
-    await blank.shutdown();
+    await caseOwner.stop(blank);
     store.save({ ...before, setup: undefined, products: [{ id: "shop", name: "Shop", repo: "acme/shop", tone: "blue" }] } as unknown as State);
-    store.close();
-    const updated = new Engine(existing);
+    await closeStore();
+    const updated = caseOwner.open(existing, probe);
     expect(updated.getState().setup?.done).toBe(true);
-    await updated.shutdown();
+    await caseOwner.stop(updated);
 
-    const data = fresh("data");
-    let engine = new Engine(data);
+    const data = fresh("data", caseOwner.root);
+    let engine = caseOwner.open(data, probe);
     expect(engine.getState().setup?.done).toBe(false);
     engine.skipSetup();
-    await engine.shutdown();
-    engine = new Engine(data);
+    await caseOwner.stop(engine);
+    engine = caseOwner.open(data, probe);
     expect(engine.getState().setup?.done).toBe(true);
-    await engine.shutdown();
+    await caseOwner.stop(engine);
+
   });
+});
 it("opens only its own guides", async () => {
-    const engine = new Engine(fresh("data"));
+  return engineCases.use("petrina-setup-case-", async caseOwner => {
+    const engine = caseOwner.open(fresh("data", caseOwner.root), probe);
     try {
       expect(() => engine.openGuide("https://example.com/")).toThrow("only opens the guides");
     } finally {
-      await engine.shutdown();
+      await caseOwner.stop(engine);
     }
+
   });
+});
 });

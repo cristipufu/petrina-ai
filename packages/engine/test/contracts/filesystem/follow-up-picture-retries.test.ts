@@ -2,12 +2,11 @@ import { afterAll, expect, it, spyOn } from "bun:test";
 import { readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createFollowUpFixtures, older, taskOf, finish, cardFor, plant } from "../../fixtures/follow-up-native.js";
-
-const { open, close, shutdown } = createFollowUpFixtures();
+const { open, close, use } = createFollowUpFixtures();
 afterAll(close);
-
 it("retries a partial picture copy without attaching successful images again", async () => {
-  const world = await open();
+  return use(async caseOwner => {
+  const world = await open(caseOwner);
   const { engine } = world;
   try {
   const source = taskOf(engine, world.shop, "Two pictures", [older("partial", "bug-partial: The footer opens a retired page.")]);
@@ -16,12 +15,14 @@ it("retries a partial picture copy without attaching successful images again", a
   writeFileSync(join(engine.dataDir, "captures", source.id, "second.png"), "png");
   const original = world.files.copyFile;
   let fail = true;
-  const copy = spyOn(world.files, "copyFile").mockImplementation(async (from, to) => {
+  const copy = spyOn(world.files, "copyFile");
+    caseOwner.onStop(() => copy.mockRestore());
+    copy.mockImplementation(async (from, to) => {
     if (String(from).endsWith("second.png") && fail) throw new Error("Copy unavailable");
     return original(from, to);
   });
   try {
-    await finish(engine, source);
+    await finish(caseOwner, engine, source);
     const card = cardFor(engine, "partial")[0]!;
     expect(card.session.flatMap(line => line.images ?? [])).toHaveLength(1);
     expect(source.findings[0]!.tracking).toEqual({ reason: "pictures", retry: true });
@@ -35,5 +36,6 @@ it("retries a partial picture copy without attaching successful images again", a
     await engine["followUps"].catchUp();
     expect(card.session.flatMap(line => line.images ?? [])).toHaveLength(2);
   } finally { copy.mockRestore(); }
-  } finally { await shutdown(engine); }
+  } finally { await caseOwner.stop(engine); }
+  });
 });

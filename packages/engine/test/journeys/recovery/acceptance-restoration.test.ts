@@ -1,10 +1,13 @@
 import { afterAll, expect, it, spyOn } from "bun:test";
+import { createHash } from "node:crypto";
 import * as fs from "node:fs";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ACCEPTANCE_RESTORED, ACCEPTANCE_UNACCOUNTED } from "@petrina/core";
 import type { EngineOptions } from "../../engine.js";
-import { Fakes, git, tempDir, waitFor } from "../../fixtures.js";
+import { Fakes, tempDir, waitFor } from "../../fixtures.js";
+import { scriptedContainerControl, scriptedContainerInspection } from "../../fixtures/container-inspection.js";
+import { readLooseCommit } from "../../fixtures/shared-preparation.js";
 import { executionFor } from "@petrina/orchestrator";
 import { Store } from "@petrina/storage/store";
 import * as gitSteps from "@petrina/repositories/git";
@@ -19,15 +22,39 @@ for (const extra of [false, true]) it(`recovers Tester restoration once after sh
   const fakeRoot = tempDir("petrina-acceptance-extra-close-"); roots.push(fakeRoot);
   const service = join(fakeRoot, "container-service"); mkdirSync(service);
   const fakes = new Fakes(fakeRoot);
-  const settings: EngineOptions = { agentCommand: () => [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), fakes.dir], terminals: () => [],
-    containerTool: [process.execPath, join(import.meta.dir, "../../fake-extra-container.ts"), service], extraCleanupEveryMs: 60_000 };
+  let activeDataDir = "";
+  const settings: EngineOptions = {
+    containerTool: [process.execPath, join(import.meta.dir, "../../fake-extra-container.ts"), service],
+    containerInspection: scriptedContainerInspection(service),
+    containerControl: scriptedContainerControl(service, () => createHash("sha256").update(realpathSync(activeDataDir)).digest("hex")),
+    extraCleanupEveryMs: 60_000,
+    validationSnapshots: {
+      async snapshot(record) {
+        const commit = readLooseCommit(join(record.source, ".git"), record.commit);
+        if (!commit || commit.tree !== record.tree) throw new Error("The validation copy does not match the saved commit");
+        mkdirSync(join(record.snapshot, ".git"), { recursive: true, mode: 0o755 });
+      },
+    },
+  };
   const f = await fixture(false, false, fakes, settings);
+  activeDataDir = f.engine.dataDir;
+  const patchExtraContainer = (eng: typeof f.engine) => {
+    const container = eng.extraValidations["container"];
+    container["stopClient"] = async (record: ExtraValidation) => {
+      if (record.clientPid) {
+        try { process.kill(-record.clientPid, "SIGKILL"); } catch {}
+        try { process.kill(record.clientPid, "SIGKILL"); } catch {}
+      }
+      return true;
+    };
+  };
+  patchExtraContainer(f.engine);
   const released = Promise.withResolvers<void>(), entered = Promise.withResolvers<void>();
   let stopping: Promise<void> | undefined, driving: Promise<void> | undefined;
   try {
     const request = await f.request(), worktree = f.scope.work.worktree!;
     writeFileSync(join(worktree, "tester-edit.txt"), "Saved before acceptance\n");
-    await git(worktree, "add", "."); await git(worktree, "commit", "-q", "-m", "Save a project file");
+    await gitSteps.commitChanges(worktree, "Save a project file");
     await f.engine.rememberVersion(f.scope);
     f.products[0]!.shipLowRisk = true; f.task.retest = true; f.task.stageIndex = 1;
     fakes.scenario({ reopen: "resume", tester: "work", testerFiles: [{ dir: worktree, file: "tester-edit.txt", text: "Edited before Petrina closes\n" }], testerProofAnswers: passes([request.id]) });
@@ -64,7 +91,7 @@ for (const extra of [false, true]) it(`recovers Tester restoration once after sh
         expect(task.timeline.filter(line => line.text.includes("Extra validation") && line.text.includes("seconds"))).toHaveLength(1);
       }
     } finally { saved.close(); }
-    f.engine = f.open(f.engine.dataDir, settings); f.engine.schedule = () => {};
+    f.engine = f.open(f.engine.dataDir, settings); patchExtraContainer(f.engine); f.engine.schedule = () => {};
     await f.engine.waitUntilReady(); f.engine.setPoolPaused(false); f.task = f.engine.task(f.task.id)!; f.scope = executionFor(f.task);
     expect(f.task.timeline.filter(line => line.text === warning)).toHaveLength(1);
     expect(f.task.acceptanceCleanupPending).toBeUndefined(); expect(existsSync(marker)).toBe(false);
@@ -90,7 +117,7 @@ for (const outcome of ["kept", "clean", "unwritable", "unreadable"] as const) it
   const fakes = new Fakes(fakeRoot);
   const f = await fixture(false, false, fakes);
   const reopen = async () => {
-    f.engine = f.open(f.engine.dataDir, { agentCommand: () => [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), fakes.dir], terminals: () => [] }); f.engine.schedule = () => {};
+    f.engine = f.open(f.engine.dataDir); f.engine.schedule = () => {};
     await f.engine.waitUntilReady(); f.engine.setPoolPaused(false); f.task = f.engine.task(f.task.id)!; f.scope = executionFor(f.task);
   };
   const saved = () => { const store = new Store(join(f.engine.dataDir, "petrina.db")); try { return store.load()!.tasks.find(task => task.id === f.task.id)!; } finally { store.close(); } };
@@ -98,7 +125,7 @@ for (const outcome of ["kept", "clean", "unwritable", "unreadable"] as const) it
     const request = await f.request(); const worktree = f.scope.work.worktree!;
     const folder = join(f.engine.dataDir, "acceptance-restorations");
     writeFileSync(join(worktree, "tester-edit.txt"), "Saved before acceptance\n");
-    await git(worktree, "add", "."); await git(worktree, "commit", "-q", "-m", "Save a project file");
+    await gitSteps.commitChanges(worktree, "Save a project file");
     f.products[0]!.shipLowRisk = true; f.task.retest = true; f.task.stageIndex = 1;
     fakes.scenario({ reopen: "resume", tester: "work", ...(outcome === "clean" ? {} : { testerFiles: [{ dir: worktree, file: "tester-edit.txt", text: "Edited before Petrina closes\n" }] }), testerProofAnswers: passes([request.id]) });
     const driving = f.drive();
@@ -156,7 +183,7 @@ for (const folderState of ["locked", "writable"] as const) it(`keeps a run unver
   const fakes = new Fakes(fakeRoot);
   const f = await fixture(false, false, fakes);
   const reopen = async () => {
-    f.engine = f.open(f.engine.dataDir, { agentCommand: () => [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), fakes.dir], terminals: () => [] }); f.engine.schedule = () => {};
+    f.engine = f.open(f.engine.dataDir); f.engine.schedule = () => {};
     await f.engine.waitUntilReady(); f.engine.setPoolPaused(false); f.task = f.engine.task(f.task.id)!; f.scope = executionFor(f.task);
   };
   const saved = () => { const store = new Store(join(f.engine.dataDir, "petrina.db")); try { return store.load()!.tasks.find(task => task.id === f.task.id)!; } finally { store.close(); } };
@@ -165,7 +192,7 @@ for (const folderState of ["locked", "writable"] as const) it(`keeps a run unver
   try {
     const request = await f.request(); const worktree = f.scope.work.worktree!, edited = join(worktree, "tester-edit.txt");
     writeFileSync(edited, "Saved before acceptance\n");
-    await git(worktree, "add", "."); await git(worktree, "commit", "-q", "-m", "Save a project file");
+    await gitSteps.commitChanges(worktree, "Save a project file");
     f.products[0]!.shipLowRisk = true; f.task.retest = true; f.task.stageIndex = 1;
     fakes.scenario({ reopen: "resume", tester: "work", testerProofAnswers: passes([request.id]) });
     const driving = f.drive();
@@ -213,7 +240,7 @@ for (const phase of Object.keys(cleanupHolds) as (keyof typeof cleanupHolds)[]) 
   const shared = phase === "companion", gated = phase !== "approval-off", committed = phase === "commit" || phase === "companion";
   const f = await fixture(shared, false, fakes);
   const reopen = async () => {
-    f.engine = f.open(f.engine.dataDir, { agentCommand: () => [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), fakes.dir], terminals: () => [] }); f.engine.schedule = () => {};
+    f.engine = f.open(f.engine.dataDir); f.engine.schedule = () => {};
     await f.engine.waitUntilReady(); f.engine.setPoolPaused(false); f.task = f.engine.task(f.task.id)!; f.scope = executionFor(f.task);
   };
   const saved = () => { const store = new Store(join(f.engine.dataDir, "petrina.db")); try { return store.load()!.tasks.find(task => task.id === f.task.id)!; } finally { store.close(); } };
@@ -223,7 +250,7 @@ for (const phase of Object.keys(cleanupHolds) as (keyof typeof cleanupHolds)[]) 
     const request = gated ? await f.request() : undefined;
     const touched = f.owners[shared ? 1 : 0]!;
     writeFileSync(join(touched.worktree, "tester-edit.txt"), "Saved before acceptance\n");
-    await git(touched.worktree, "add", "."); await git(touched.worktree, "commit", "-q", "-m", "Save a project file");
+    await gitSteps.commitChanges(touched.worktree, "Save a project file");
     if (gated) { f.products[0]!.shipLowRisk = true; f.task.retest = true; }
     else { f.task.approveDelivery = false; f.products[0]!.approveDelivery = false; f.task.plan!.stages = f.task.plan!.stages.filter(stage => stage.gate !== "delivery"); }
     f.task.stageIndex = 1;
@@ -238,7 +265,7 @@ for (const phase of Object.keys(cleanupHolds) as (keyof typeof cleanupHolds)[]) 
     const stopping = f.stop(f.engine); release.resolve(); await stopping; await running;
     spy.mockRestore(); spy = undefined;
     expect(readFileSync(join(touched.worktree, "tester-edit.txt"), "utf8")).toBe("Saved before acceptance\n");
-    expect(await git(touched.worktree, "status", "--porcelain")).toBe("");
+    expect(await gitSteps.isClean(touched.worktree)).toBe(true);
     // The last save kept the run marked; a fact noted before the close was saved with it.
     expect(saved().acceptanceCleanupPending).toMatch(/^[0-9a-f]{24}$/);
     expect(saved().acceptanceRun!.restored !== undefined).toBe(["restoring", "commit", "companion"].includes(phase));
@@ -266,7 +293,7 @@ it("keeps an undone change with its acceptance run through a stand-in and a rest
   try {
     const request = await f.request(); const worktree = f.scope.work.worktree!;
     writeFileSync(join(worktree, "tester-edit.txt"), "Saved before acceptance\n");
-    await git(worktree, "add", "."); await git(worktree, "commit", "-q", "-m", "Save a project file");
+    await gitSteps.commitChanges(worktree, "Save a project file");
     f.task.retest = true; f.task.stageIndex = 1;
     // The first Tester edits and runs out of usage; its stand-in edits nothing and works until Petrina restarts.
     fakes.scenario({ tester: "work", limited: [{ model: "opus", role: "tester" }], testerFiles: [{ dir: worktree, file: "tester-edit.txt", text: "Edited before running out\n", model: "opus" }], testerProofAnswers: passes([request.id]) });
@@ -279,7 +306,7 @@ it("keeps an undone change with its acceptance run through a stand-in and a rest
     expect(readFileSync(join(worktree, "tester-edit.txt"), "utf8")).toBe("Saved before acceptance\n");
     const run = structuredClone(f.task.acceptanceRun);
     f.engine.setPoolPaused(true); await f.stop(f.engine); await first;
-    f.engine = f.open(f.engine.dataDir, { agentCommand: () => [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), fakes.dir], terminals: () => [] }); f.engine.schedule = () => {};
+    f.engine = f.open(f.engine.dataDir); f.engine.schedule = () => {};
     await f.engine.waitUntilReady(); f.engine.setPoolPaused(false); f.task = f.engine.task(f.task.id)!; f.scope = executionFor(f.task);
     expect(f.task.acceptanceRun).toEqual(run);
     await f.engine["work"].runDo(f.scope, f.tester, signal());

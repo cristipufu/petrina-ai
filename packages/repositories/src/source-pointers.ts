@@ -3,6 +3,7 @@ import * as git from "./git.js";
 
 /** Optional navigation must never describe an old checkout as current research. */
 export async function currentSourcePointers(task: Task, pointers: readonly SourcePointer[]): Promise<SourcePointer[]> {
+  if (!pointers.length) return [];
   const copies = task.repositories?.filter((work) => !work.removed) ?? [{ productId: task.productId, worktree: task.worktree }];
   const heads = new Map<string, Promise<string | undefined>>();
   const seen = new Set<string>();
@@ -21,6 +22,11 @@ export async function currentSourcePointers(task: Task, pointers: readonly Sourc
   const present = new Set<SourcePointer>();
   await Promise.all([...new Set(eligible.map((entry) => entry.path))].map(async (path) => {
     const group = eligible.filter((entry) => entry.path === path);
+    const fast = git.readLooseObjectPacket(path, group.map(({ pointer }) => `${pointer.revision}:${pointer.path}`));
+    if (fast) {
+      group.forEach(({ pointer }, index) => { if (fast[index] !== undefined) present.add(pointer); });
+      return;
+    }
     const checked = await git.run(["git", "cat-file", "--batch-check=%(objecttype)"], path, group.map(({ pointer }) => `${pointer.revision}:${pointer.path}\n`).join("")).catch(() => undefined);
     if (checked?.code !== 0) return;
     const types = checked.stdout.split("\n");

@@ -21,7 +21,7 @@ export class LifecycleStore {
   set current(value: LifecycleOperation | undefined) {
     if (value) this.db.query("INSERT INTO lifecycle VALUES ('operation',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(JSON.stringify(value));
   }
-  begin(kind: string, a: Record<string, any>, scheduling: "paused" | "running", apply: () => void = () => {}, launcherPid?: number): Result {
+  begin(kind: string, a: { readonly requestId: string }, scheduling: "paused" | "running", apply: () => void = () => {}, launcherPid?: number): Result {
     return this.db.transaction((): Result => {
       // Waiting options belong to the caller, not the effect being retried.
       const hash = fingerprint({ kind, requestId: a.requestId });
@@ -54,7 +54,7 @@ export class LifecycleStore {
     })();
   }
   /** A disconnected follower may join an operation, but must never create a new effect. */
-  follow(kind: string, a: Record<string, any>, observed: LifecycleOperation): Result {
+  follow(kind: string, a: { readonly requestId: string }, observed: LifecycleOperation): Result {
     return this.db.transaction((): Result => {
       if (this.receipt(a.requestId)) return this.begin(kind, a, observed.scheduling);
       const current = this.current;

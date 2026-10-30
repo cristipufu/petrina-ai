@@ -9,7 +9,7 @@ import * as git from "@petrina/repositories/git";
 import { handBackNote } from "./prompts.js";
 import { askMode, clearEnded, type FoundTerminal, launchPlan, type LaunchInput, openTerminal, pickTerminal, removeLauncher, sessionState, writeLauncher } from "@petrina/agent-runtime/terminal";
 import { ADAPTERS } from "@petrina/agent-runtime/tools";
-import { Kernel, type MTask } from "./kernel.js";
+import { Kernel, type RuntimeTask } from "./kernel.js";
 
 export class TakeOver {
   constructor(private readonly k: Kernel) {}
@@ -70,12 +70,19 @@ export class TakeOver {
         if (conversation.access?.canEdit ?? role.canEdit) {
           const before = await git.head(worktree);
           const files = (await git.changedSince(worktree, before)).map((entry) => entry.file);
-          const sha = files.length
-            ? await git.commitAll(worktree, `${current.title} (unfinished work)\n\nThe ${role.name}'s unfinished work, saved by Petrina before the coordinator took over in their terminal. The ${role.name} finishes it after the hand back.\n\nSaved by Petrina: ${this.k.describe(role.id, profile.id)}`)
-            : undefined;
+          let sha: string | undefined;
+          let tree: string | undefined;
+          if (files.length && await git.commitChanges(worktree, `${current.title} (unfinished work)\n\nThe ${role.name}'s unfinished work, saved by Petrina before the coordinator took over in their terminal. The ${role.name} finishes it after the hand back.\n\nSaved by Petrina: ${this.k.describe(role.id, profile.id)}`)) {
+            const committed = await git.commitVersion(worktree);
+            sha = committed.head ?? await git.head(worktree);
+            tree = committed.tree;
+          }
           if (sha) saved = { sha, files };
-          if (worktree === scope!.work.worktree) await this.k.rememberVersion(scope!);
           head = sha ?? before;
+          if (worktree === scope!.work.worktree) {
+            if (sha && tree) await this.k.rememberVersion(scope!, { head: sha, tree });
+            else if (scope!.work.savedVersion?.commit !== head) await this.k.rememberVersion(scope!);
+          }
         } else {
           await this.k.undoReadOnly(current, role.id, worktree);
           head = await git.head(worktree);
@@ -90,7 +97,7 @@ export class TakeOver {
       }
       delete scope!.work.conversation.asked;
       scope!.work.conversation.handbackBoot = this.k.boot;
-      current.agent = agent as MTask["agent"];
+      current.agent = agent as RuntimeTask["agent"];
       current.holdsSlot = true;
       current.statusLine = TAKE_OVER_WORDS.status;
       // The coordinator's own time in the terminal is not the agent's: its clock goes on after the hand back.
@@ -114,7 +121,7 @@ export class TakeOver {
   }
 
   /** The agent stopped for a take-over that did not happen: the step starts again as usual, picking its conversation back up. */
-  private backToWork(task: MTask): void {
+  private backToWork(task: RuntimeTask): void {
     delete task.agent;
     task.holdsSlot = false;
     this.k.toWaiting(task);
@@ -195,33 +202,42 @@ export class TakeOver {
       if (problem) throw new Error(problem);
       const role = this.k.role(driving.roleId)!;
       const [commits, files, status] = await Promise.all([git.commitsSince(worktree, driving.head), git.changedSince(worktree, driving.head), git.worktreeStatus(worktree)]);
-      const leftovers = status.clean
-        ? undefined
-        : await git.commitAll(worktree, `${task.title} (changes made by hand)\n\nMade by the coordinator in their own terminal while driving the ${role.name}, and saved by Petrina at the hand back.\n\nDriven by hand: ${this.k.describe(role.id, driving.profileId)}`);
+      let leftovers: string | undefined;
+      let leftoverTree: string | undefined;
+      if (!status.clean && await git.commitChanges(worktree, `${task.title} (changes made by hand)\n\nMade by the coordinator in their own terminal while driving the ${role.name}, and saved by Petrina at the hand back.\n\nDriven by hand: ${this.k.describe(role.id, driving.profileId)}`)) {
+        const committed = await git.commitVersion(worktree);
+        leftovers = committed.head ?? await git.head(worktree);
+        leftoverTree = committed.tree;
+      }
       const text = handBackNote({ role: role.name, tool, took: Date.now() - driving.since, ...(driving.saved ? { saved: driving.saved.files } : {}), commits, files, leftovers: leftovers !== undefined, note });
       const head = leftovers ?? status.head;
       if (!head) throw new Error("The working copy has no saved commit. Restore it in your terminal, then hand back again.");
 
       const changedProducts = new Set<Id>(files.length ? [scope!.work.productId] : []);
+      const knownHeads: Record<Id, string> = worktree === scope!.work.worktree ? { [scope!.work.productId]: head } : {};
       if (task.repositories && driving.repositoryCopies) {
         const inspected = await completeAll(Object.entries(driving.repositoryCopies).map(async ([id, copy]) => {
           const work = task.repositories!.find(entry => entry.productId === id);
           if (!work?.worktree || copy.path === work.worktree) return undefined;
-          const [branch, clean] = await Promise.all([git.currentBranch(copy.path), git.isClean(copy.path)]);
-          if (branch) throw new Error(`Keep ${work.source!.product.name} on its saved review snapshot, then hand back again.`);
-          if (!clean) await git.commitChanges(copy.path, `${task.title} (changes made by hand)`);
+          const copyStatus = await git.worktreeBranchStatus(copy.path);
+          if (copyStatus.branch) throw new Error(`Keep ${work.source!.product.name} on its saved review snapshot, then hand back again.`);
+          if (!copyStatus.clean) await git.commitChanges(copy.path, `${task.title} (changes made by hand)`);
           if (!(await git.changedSince(copy.path, copy.head)).length) return undefined;
-          const [head, parent] = await Promise.all([git.head(copy.path), git.head(work.worktree)]);
-          const merged = await git.mergeTree(work.worktree, parent, head);
+          const [copyHead, parent] = await Promise.all([
+            copyStatus.clean && copyStatus.head ? Promise.resolve(copyStatus.head) : git.head(copy.path),
+            git.head(work.worktree),
+          ]);
+          const merged = await git.mergeTree(work.worktree, parent, copyHead);
           if (!merged || merged.conflicts.length) throw new Error(`Your changes to ${work.source!.product.name} overlap with its task copy. Resolve them in the snapshot, then hand back again.`);
-          return { work, head, sha: await git.commitTree(work.worktree, merged.tree, parent, `${task.title} (changes made by hand)`) };
+          return { work, head: copyHead, tree: merged.tree, sha: await git.commitTree(work.worktree, merged.tree, parent, `${task.title} (changes made by hand)`) };
         }));
         const prepared = inspected.filter(entry => entry !== undefined);
         // Validate every product before advancing task copies. Keep the old snapshot anchors
         // until every advance succeeds, so a partial failure remains visible on the next hand-back.
         await completeAll(prepared.map(async kept => {
           await git.moveTo(kept.work.worktree!, kept.sha);
-          await this.k.rememberVersion({ task, work: kept.work });
+          await this.k.rememberVersion({ task, work: kept.work }, { head: kept.sha, tree: kept.tree });
+          knownHeads[kept.work.productId] = kept.sha;
           changedProducts.add(kept.work.productId);
           if (kept.work.checks) kept.work.checks.current = false;
           delete kept.work.reviewedTree;
@@ -235,15 +251,19 @@ export class TakeOver {
       }
       // A reviewer works detached from the task's branch. Keep the coordinator's edits in both:
       // its conversation continues in its own copy, and the task's later checks and reviews see them.
+      let primaryRemembered: { head: string; tree: string } | undefined = worktree === scope!.work.worktree && leftovers && leftoverTree ? { head: leftovers, tree: leftoverTree } : undefined;
       if (files.length && worktree !== scope!.work.worktree && (!task.repositories || !driving.repositoryCopies)) {
         const parent = await git.head(scope!.work.worktree!);
         const merged = await git.mergeTree(scope!.work.worktree!, parent, head);
         if (!merged || merged.conflicts.length) throw new Error("Your changes overlap with the task's working copy. Resolve them in the reviewer's copy, then hand back again.");
         const kept = await git.commitTree(scope!.work.worktree!, merged.tree, parent, `${task.title} (changes made by hand)\n\n${text}`);
         await git.moveTo(scope!.work.worktree!, kept);
+        knownHeads[scope!.work.productId] = kept;
+        primaryRemembered = { head: kept, tree: merged.tree };
       }
 
-      await this.k.rememberVersion(scope!);
+      if (primaryRemembered) await this.k.rememberVersion(scope!, primaryRemembered);
+      else if (!(worktree === scope!.work.worktree && !files.length && scope!.work.savedVersion?.commit === head)) await this.k.rememberVersion(scope!);
       this.k.say(task, "system", `You handed back to the ${role.name}`, role.id, driving.profileId);
       this.k.say(task, "you", text);
       const changed = files.length ? `${files.length} file${files.length === 1 ? "" : "s"} changed in ${commits + (leftovers ? 1 : 0)} commit${commits + (leftovers ? 1 : 0) === 1 ? "" : "s"}` : "nothing changed";
@@ -254,7 +274,7 @@ export class TakeOver {
         scope!.work.conversation.head = head;
         scope!.work.conversation.handback = text;
       }
-      if (changedProducts.size) await this.reviewHandChanges(task, [...changedProducts]);
+      if (changedProducts.size) await this.reviewHandChanges(task, [...changedProducts], knownHeads);
       delete task.driving;
       this.k.s.inbox = this.k.s.inbox.filter((item) => !(item.taskId === taskId && item.kind === "driving"));
       await removeLauncher(dir);
@@ -278,10 +298,11 @@ export class TakeOver {
    * Otherwise the chain the coordinator drove in, or the last one behind, runs again once the step
    * they drove finishes, without using up a review round.
    */
-  private async reviewHandChanges(task: MTask, changedProducts: readonly Id[]): Promise<void> {
+  private async reviewHandChanges(task: RuntimeTask, changedProducts: readonly Id[], knownHeads?: Readonly<Record<Id, string>>): Promise<void> {
     const inspected = await Promise.all(changedProducts.map(async (productId) => {
       const scope = executionFor(task, productId);
-      const [problems, sha] = await Promise.all([git.tamperCheck(scope.work.worktree!, scope.work.baseSha ?? scope.work.base!), git.head(scope.work.worktree!)]);
+      const known = knownHeads?.[productId];
+      const [problems, sha] = await Promise.all([git.tamperCheck(scope.work.worktree!, scope.work.baseSha ?? scope.work.base!), known ? Promise.resolve(known) : git.head(scope.work.worktree!)]);
       return { scope, problems, sha };
     }));
     for (const { scope, problems, sha } of inspected) {
@@ -313,7 +334,7 @@ export class TakeOver {
     if (this.k.s.inbox.some((entry) => entry.id === itemId && entry.kind === "driving")) throw new Error(TAKE_OVER_WORDS.handBackFirst);
   }
 
-  notDriving(task: MTask | undefined): void {
+  notDriving(task: RuntimeTask | undefined): void {
     if (task && (task.driving || this.k.switching.has(task.id))) throw new Error(TAKE_OVER_WORDS.handBackFirst);
   }
 
@@ -334,12 +355,12 @@ export class TakeOver {
     return join(this.k.dataDir, "takeover", taskId);
   }
 
-  private launchInput(task: MTask, tool: LaunchInput["tool"], sessionId: string, model: string, effort: string): LaunchInput {
+  private launchInput(task: RuntimeTask, tool: LaunchInput["tool"], sessionId: string, model: string, effort: string): LaunchInput {
     return { platform: this.k.machine.platform, dir: this.takeOverDir(task.id), worktree: this.k.agentWorktree(task), tool, sessionId, model, effort };
   }
 
   /** Write the launcher and open it in the terminal, or only write it for the coordinator to run. */
-  private async launch(task: MTask, terminal: FoundTerminal | undefined, fresh: boolean, tool?: LaunchInput["tool"]): Promise<Launched> {
+  private async launch(task: RuntimeTask, terminal: FoundTerminal | undefined, fresh: boolean, tool?: LaunchInput["tool"]): Promise<Launched> {
     const scope = executionFor(task);
     const driving = task.driving!;
     const conversation = scope.work.conversation!;
@@ -368,7 +389,7 @@ export class TakeOver {
   }
 
   /** Why hand back cannot go on with the working copy as it is, in plain words. */
-  private branchProblem(task: MTask, where: { branch?: string; busy?: string }): string | undefined {
+  private branchProblem(task: RuntimeTask, where: { branch?: string; busy?: string }): string | undefined {
     const scope = executionFor(task);
     if (where.busy) return `The working copy is in the middle of ${where.busy}. Finish it or abort it in your terminal, then hand back.`;
     const separate = this.k.agentWorktree(task) !== scope.work.worktree;

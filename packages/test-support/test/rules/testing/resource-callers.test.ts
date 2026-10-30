@@ -19,6 +19,22 @@ it("retains a direct fixture caller and a Git boundary when no outer source fram
     .toBe("packages/engine/test/contracts/checks/example.test.ts:12");
   expect(gitCaller("Error\n    at head (/checkout/packages/repositories/src/git.ts:500:1)", "/checkout"))
     .toBe("packages/repositories/src/git.ts:500");
+  expect(gitCaller(`Error
+    at begin (/checkout/packages/test-support/src/resources/events.ts:61:8)
+    at run (/checkout/packages/repositories/src/git.ts:182:3)
+    at must (/checkout/packages/repositories/src/git.ts:243:9)
+    at head (/checkout/packages/repositories/src/git.ts:748:3)`, "/checkout"))
+    .toBe("packages/repositories/src/git.ts:748");
+  expect(gitCaller(`Error
+    at begin (/checkout/packages/test-support/src/resources/events.ts:61:8)
+    at run (/checkout/packages/repositories/src/git/exec.ts:130:3)
+    at head (/checkout/packages/repositories/src/git/revisions.ts:95:3)
+    at captureState (/checkout/packages/engine/src/product-checks.ts:370:9)`, "/checkout"))
+    .toBe("packages/engine/src/product-checks.ts:370");
+  expect(gitCaller(`Error
+    at run (/checkout/packages/repositories/src/git/exec.ts:130:3)
+    at head (/checkout/packages/repositories/src/git/revisions.ts:95:3)`, "/checkout"))
+    .toBe("packages/repositories/src/git/revisions.ts:95");
 });
 
 it("normalizes Windows separators without retaining the absolute checkout location", () => {

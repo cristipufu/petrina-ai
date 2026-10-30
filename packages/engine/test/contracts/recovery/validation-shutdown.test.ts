@@ -13,7 +13,7 @@ import { ENGINE_PROFILES } from "@petrina/agent-runtime/tools";
 import { WaitClock } from "@petrina/storage/worklog";
 
 
-import { extraFixture } from "../../extra-fixtures.js";
+import { preparedServiceExtraFixture as extraFixture } from "../../extra-fixtures.js";
 
 const cases = engineCaseFixtures();
 afterAll(() => cases.close());

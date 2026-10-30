@@ -1,25 +1,41 @@
+import { engineCaseFixtures, type EngineCaseOwner } from "../../fixtures/engine-cases.js";
+import { fakeAgentSessions } from "../../fixtures/fake-agent-sessions.js";
+import { installPreparedProduct, privateCloneProduct } from "../../fixtures/prepared-product.js";
+import { installSharedWorkflowFastPaths } from "../../fixtures/shared-preparation.js";
+import { privateAgentToolProbe } from "../../scripted-probes.js";
 import { afterAll, describe, expect, it } from "bun:test";
-import { existsSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { onScreen, slotUses } from "@petrina/core";
-import { Engine } from "../../engine.js";
-import { Fakes, FAKE_AGENT, git, makeProduct, removeDir, tempDir, waitFor } from "../../fixtures.js";
 
-const roots: string[] = [];
-afterAll(() => roots.forEach(removeDir));
+import { Fakes, FAKE_AGENT, makeProduct, waitFor } from "../../fixtures.js";
+const engineCases = engineCaseFixtures();
+afterAll(() => engineCases.close());
+
+
 
 /** Only stand-in agents ask for a screen; their turns end on a controlled file signal. */
-async function fixture() {
-  const root = tempDir("petrina-runtime-wait-screen-"); roots.push(root);
+async function fixture(caseOwner: EngineCaseOwner) {
+  const root = caseOwner.root;
   const fakes = new Fakes(join(root, "fake"));
   fakes.scenario({ planner: "short", builder: "plain", screen: "hold", screenLate: true, reopen: "resume" });
   const clone = await makeProduct(root);
-  await git(clone, "config", "branch.autoSetupMerge", "false");
+  appendFileSync(join(clone, ".git", "config"), "\n[branch]\n\tautoSetupMerge = false\n");
   const home = join(root, "data");
-  const options = { agentCommand: () => [process.execPath, FAKE_AGENT, fakes.dir], remote: join(root, "origin.git") };
-  let engine = new Engine(home, options);
+  const options = {
+    agentCommand: () => [process.execPath, FAKE_AGENT, fakes.dir],
+    startAgentSession: fakeAgentSessions(fakes),
+    toolProbe: privateAgentToolProbe(),
+    runCheckCommand: async (req: { argv: readonly string[] }) =>
+      req.argv[0] === "git" && req.argv[1] === "--version" ? { code: 0, stdout: "git version 2.45.0\n" } : undefined,
+    remote: join(root, "origin.git"),
+  };
+  let engine = installSharedWorkflowFastPaths(caseOwner.open(home, options));
   engine.setPoolPaused(true);
-  const productId = await engine.addProduct(clone);
+  const productId = await caseOwner.run(engine, async () => {
+    await engine.waitUntilReady(); caseOwner.check();
+    return installPreparedProduct(engine, privateCloneProduct(clone));
+  });
   engine.setProductDelivery(productId, "local", true);
   engine.setProductChecks(productId, [{ name: "Version", command: "git --version" }]);
   const prerequisite = engine.addTask({ productId, title: "Fix screen validation", backlog: true });
@@ -37,15 +53,16 @@ async function fixture() {
     asking: (index: number) => task(ids[index]!).state === "waiting" && !!task(ids[index]!).screen && !task(ids[index]!).screen!.granted,
     hold: () => engine.setRuntimeWait(ids[0]!, [prerequisite], "Wait for the screen validation fix", "hold"),
     clear: () => engine.setRuntimeWait(ids[0]!, [], "The coordinator resolved the prerequisite", "clear"),
-    restart: async () => { await engine.shutdown(); engine = new Engine(home, options); await engine.waitUntilReady(); },
-    close: async () => { await engine.shutdown(); },
+    restart: async () => { await caseOwner.stop(engine); engine = installSharedWorkflowFastPaths(caseOwner.open(home, options)); await engine.waitUntilReady(); },
+    close: async () => { await caseOwner.stop(engine); },
   };
   return f;
 }
 
 describe.concurrent("screen requests during a prerequisite wait", () => {
   it.each([false, true])("keeps screen turns local to the task, preserving a held request across restart (held: %s)", async held => {
-    const f = await fixture();
+  return engineCases.use("petrina-runtime-wait-screen-", async caseOwner => {
+    const f = await fixture(caseOwner);
     try {
       f.ask(0); await waitFor(() => f.asking(0), "the first screen request");
       f.ask(1); await waitFor(() => f.asking(1), "the second screen request");
@@ -75,10 +92,13 @@ describe.concurrent("screen requests during a prerequisite wait", () => {
       expect(f.fakes.opens().filter(open => open.session === session).map(open => open.how)).toEqual(["new", "resume"]);
       expect(f.fakes.received("builder").filter(prompt => prompt.session === session)).toHaveLength(2);
     } finally { await f.close(); }
+
   });
+});
 
   it("lets an admitted screen agent finish before giving the next task its turn", async () => {
-    const f = await fixture();
+  return engineCases.use("petrina-runtime-wait-screen-", async caseOwner => {
+    const f = await fixture(caseOwner);
     try {
       f.engine.setScreenUse("on"); f.ask(0);
       await waitFor(() => f.using(0), "the first Builder to use the screen");
@@ -95,10 +115,13 @@ describe.concurrent("screen requests during a prerequisite wait", () => {
       expect(f.fakes.received("code reviewer").filter(prompt => prompt.text.includes("First screen check"))).toHaveLength(0);
       expect(f.task(f.ids[0]!).journey?.flatMap(step => step.agentResults ?? []).filter(result => result.roleId === "builder")).toHaveLength(1);
     } finally { await f.close(); }
+
   });
+});
 
   it("saves a new screen request from an admitted Builder without starting its screen turn while held", async () => {
-    const f = await fixture();
+  return engineCases.use("petrina-runtime-wait-screen-", async caseOwner => {
+    const f = await fixture(caseOwner);
     try {
       f.engine.setScreenUse("on"); f.hold(); f.ask(0);
       await waitFor(() => f.asking(0), "the held Builder to save its screen request");
@@ -110,10 +133,13 @@ describe.concurrent("screen requests during a prerequisite wait", () => {
       expect(onScreen(f.engine.getState().tasks)?.id).toBe(f.ids[1]);
       expect(f.fakes.received("builder").filter(prompt => prompt.session === f.sessions[0])).toHaveLength(1);
     } finally { await f.close(); }
+
   });
+});
 
   it("returns a saved grant to the queue after restart without discarding its conversation", async () => {
-    const f = await fixture();
+  return engineCases.use("petrina-runtime-wait-screen-", async caseOwner => {
+    const f = await fixture(caseOwner);
     try {
       f.engine.setScreenUse("on"); f.ask(0);
       await waitFor(() => f.using(0), "the first Builder to use the screen");
@@ -132,15 +158,18 @@ describe.concurrent("screen requests during a prerequisite wait", () => {
       expect(f.task(f.ids[0]!).screen?.granted).toBe(true);
       expect(f.fakes.opens().filter(open => open.session === f.sessions[0]).map(open => open.how)).toEqual(["new", "resume"]);
     } finally { await f.close(); }
+
   });
+});
 
   it("keeps a terminal owner's saved screen until hand-back reaches the held boundary", async () => {
-    const f = await fixture();
+  return engineCases.use("petrina-runtime-wait-screen-", async caseOwner => {
+    const f = await fixture(caseOwner);
     try {
       f.engine.setScreenUse("on"); f.ask(0);
       await waitFor(() => f.using(0), "the first Builder to use the screen");
       f.hold();
-      await f.engine.shutdown();
+      await caseOwner.stop(f.engine);
       const current = f.engine.task(f.ids[0]!)!;
       const saved = structuredClone(current.screen!);
       // Represent the existing terminal ownership contract without opening a real terminal.
@@ -151,5 +180,7 @@ describe.concurrent("screen requests during a prerequisite wait", () => {
       f.engine.syncScreen();
       expect(current.screen).toEqual({ ...saved, granted: false, heard: false });
     } finally { await f.close(); }
+
   });
+});
 });

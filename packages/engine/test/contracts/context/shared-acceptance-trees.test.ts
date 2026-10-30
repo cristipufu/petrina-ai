@@ -3,7 +3,8 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { versionsOf } from "../../../src/repositories.js";
 import { beginRepair, executionFor } from "@petrina/orchestrator";
-import { git } from "../../support.js";
+import * as gitOps from "@petrina/repositories/git";
+import { commitLooseOnRef } from "../../fixtures/shared-preparation.js";
 import { withRepositoryRecords } from "../../fixtures/shared-records.js";
 
 describe("explicit repository execution contexts", () => {
@@ -24,11 +25,10 @@ describe("explicit repository execution contexts", () => {
       task.journey = [{ id: "prior-test", kind: "agent", roleId: "tester", round: 1, sub: 0, startedAt: 1, endedAt: 3, agentResults: [{ roleId: "tester", profileId: "sol-high", at: 2, versions, value: { summary: "Earlier incomplete acceptance", checks: [] } }] }];
       const read = async () => (await engine["context"].sectionsFor(executionFor(task), "tester")).find(section => section.title === "Why acceptance testing runs again")!.body;
       expect(await read()).toContain("Products with changed trees: none");
-      await git(task.repositories![1]!.worktree!, "commit", "--allow-empty", "-m", "Same tree");
+      commitLooseOnRef(join(task.repositories![1]!.worktree!, ".git"), { ref: "refs/heads/main", message: "Same tree" });
       expect(await read()).toContain("Products with changed trees: none");
       writeFileSync(join(task.repositories![1]!.worktree!, "changed.txt"), "Actual change");
-      await git(task.repositories![1]!.worktree!, "add", "changed.txt");
-      await git(task.repositories![1]!.worktree!, "commit", "-m", "Changed tree");
+      await gitOps.commitChanges(task.repositories![1]!.worktree!, "Changed tree");
       expect(await read()).toContain("Products with changed trees: second");
 
     });

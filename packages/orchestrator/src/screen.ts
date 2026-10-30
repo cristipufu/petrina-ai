@@ -1,14 +1,13 @@
-import { runtimeWaitHolds, onScreen, SCREEN_HOUR_MS, SCREEN_WORDS, screenAllowed, screenMode, screenQueue, screenWait, type Id, type ScreenMode } from "@petrina/core";
-import { executionFor } from "./repository-context.js";
+import { runtimeWaitHolds, onScreen, SCREEN_HOUR_MS, SCREEN_WORDS, screenAllowed, screenMode, screenQueue, screenWait, type ConversationNote, type Id, type ScreenMode } from "@petrina/core";
+import { executionFor, type RepositoryContext } from "./repository-context.js";
 import type { RuntimeTask } from "./model.js";
 import type { ScreenClock, ScreenGroup, ScreenHost } from "./ports/screen.js";
 
 /** Portable permission, queue and deadline coordination. Native session/copy cleanup stays with the host. */
 export class ScreenArbitration {
-  readonly groups = new Map<Id, ScreenGroup>();
   private timer: (() => void) | undefined;
   private releaseTimer: (() => void) | undefined;
-  constructor(private readonly host: ScreenHost, private readonly clock: ScreenClock) {}
+  constructor(private readonly host: ScreenHost, private readonly clock: ScreenClock, readonly groups = new Map<Id, ScreenGroup>()) {}
   stop(): void { this.timer?.(); this.releaseTimer?.(); this.timer = undefined; this.releaseTimer = undefined; }
 
   setScreenUse(mode: ScreenMode, hourMs = SCREEN_HOUR_MS): void {
@@ -32,6 +31,19 @@ export class ScreenArbitration {
     else delete task.screenAllowed;
     this.host.record(task, "you", allowed ? SCREEN_WORDS.taskOn : SCREEN_WORDS.taskOff);
     this.host.schedule();
+  }
+
+  /** Keep the participant's own copy and conversation while its screen request waits. */
+  saveTurn(scope: RepositoryContext, roleId: Id, profileId: Id, member: string, copy: string, note: ConversationNote | undefined, reason: string): boolean {
+    const { task, work } = scope;
+    if (!this.host.task(task.id)?.hunt || !note) return false;
+    const conversation = structuredClone(note);
+    task.hunt!.screenTurns = { ...task.hunt!.screenTurns, [member]: { reason, at: this.clock.now(), copy, conversation } };
+    if (task.screen) this.host.record(scope, "status", SCREEN_WORDS.asked(reason), roleId, profileId);
+    const granted = !task.screen && this.askScreen(task, roleId, profileId, reason, member);
+    if (granted) work.conversation = conversation;
+    this.host.checkpoint(scope);
+    return granted;
   }
 
   /**

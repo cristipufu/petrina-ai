@@ -4,12 +4,15 @@ import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { type ExtraValidation } from "@petrina/core";
 import { Engine, writeFixtureEngineOptions } from "../../engine.js";
-import { git, makeProduct, waitFor } from "../../fixtures.js";
+import { addCopy } from "@petrina/repositories/git";
+import { makeProduct, waitFor } from "../../fixtures.js";
 import { Coordination } from "../../../src/coordination.js";
 import { executionFor } from "@petrina/orchestrator";
 import * as processTree from "@petrina/platform/process-tree";
 import { Store } from "@petrina/storage/store";
-import { extraFixture } from "../../extra-fixtures.js";
+import { preparedServiceExtraFixture } from "../../extra-fixtures.js";
+import { installPreparedProduct, privateCloneProduct } from "../../fixtures/prepared-product.js";
+import { readWorktreeCommit } from "../../fixtures/shared-preparation.js";
 
 const cases = engineCaseFixtures();
 afterAll(() => cases.close());
@@ -17,7 +20,7 @@ afterAll(() => cases.close());
 describe.skipIf(process.platform === "win32")("required extra validation shares the host check queue", () => {
   it("cleans interrupted fake-service publication without inventing a leftover container", async () => {
   return cases.use("petrina-extra-", async owner => {
-    return await extraFixture(owner, async f => {
+    return await preparedServiceExtraFixture(owner, async f => {
     const record = await f.submit("interrupted-publication", ["probe", "hold-before-create"]);
     try {
       f.engine.setPoolPaused(false);
@@ -45,7 +48,7 @@ describe.skipIf(process.platform === "win32")("required extra validation shares 
 
   for (const fail of [false, true]) it(`keeps submission and identical-reference replay consistent when saving ${fail ? "fails" : "succeeds"}`, async () => {
   return cases.use("petrina-extra-", async owner => {
-    return await extraFixture(owner, async f => {
+    return await preparedServiceExtraFixture(owner, async f => {
     await f.engine.waitUntilReady();
     const save = spyOn(f.engine, "save");
     owner.onStop(() => save.mockRestore());
@@ -73,14 +76,14 @@ describe.skipIf(process.platform === "win32")("required extra validation shares 
     expect(current.checkQueue.running).toBe(0);
     expect(readdirSync(join(f.service, "containers"))).toEqual([]);
 
-  });
+  }, {}, { fastClientStop: true, actorLease: false, commandLease: false, scriptedNonHoldRuns: true });
 
   });
 });
 
   for (const kind of ["extra.queued", "extra.finished"] as const) it(`keeps committed ownership and receipts consistent when a ${kind} listener fails`, async () => {
   return cases.use("petrina-extra-", async owner => {
-    return await extraFixture(owner, async f => {
+    return await preparedServiceExtraFixture(owner, async f => {
     const failure = new Error("Event listener unavailable");
     const log = spyOn(console, "error");
     owner.onStop(() => log.mockRestore());
@@ -98,14 +101,14 @@ describe.skipIf(process.platform === "win32")("required extra validation shares 
       expect(log).toHaveBeenCalledWith("Could not publish extra validation event:", failure);
     } finally { off(); log.mockRestore(); await owner.stop(f.engine); }
 
-  });
+  }, {}, { fastClientStop: true, actorLease: false, commandLease: false, scriptedNonHoldRuns: true });
 
   });
 });
 
   for (const mode of ["success", "failed save then retry", "failed save then restart"] as const) it(`keeps queued cancellation recoverable: ${mode}`, async () => {
   return cases.use("petrina-extra-", async owner => {
-    return await extraFixture(owner, async f => {
+    return await preparedServiceExtraFixture(owner, async f => {
     const record = await f.submit("atomic-cancel", ["probe", "pass"]);
     let current = f.engine;
     if (mode !== "success") {
@@ -135,17 +138,17 @@ describe.skipIf(process.platform === "win32")("required extra validation shares 
     current.removeProduct(f.productId);
     expect(current.s.products).toEqual([]);
 
-  });
+  }, {}, { fastClientStop: true, actorLease: false, commandLease: false });
 
   });
 });
 
   for (const mode of ["uncached shutdown", "cached shutdown", "uncached failed-save shutdown", "uncached ordinary", "live ordinary"] as const) it(`saves finished extra evidence in History after ${mode}`, async () => {
   return cases.use("petrina-extra-", async owner => {
-    return await extraFixture(owner, async f => {
+    return await preparedServiceExtraFixture(owner, async f => {
     const work = executionFor(f.task).work;
     const copy = join(f.data, "worktrees", f.productId, f.task.id); mkdirSync(join(f.data, "worktrees", f.productId), { recursive: true });
-    await git(work.worktree!, "worktree", "add", "--detach", copy, "HEAD"); work.worktree = copy;
+    await addCopy(work.worktree!, copy, readWorktreeCommit(work.worktree!)!.commit); work.worktree = copy;
     const record = await f.submit("history-finish"); f.engine.setPoolPaused(false); await f.started(record);
     const entered = Promise.withResolvers<void>(), released = Promise.withResolvers<void>();
     owner.onStop(() => released.resolve());
@@ -199,13 +202,14 @@ describe.skipIf(process.platform === "win32")("required extra validation shares 
 
   it("merges two products' late validation settlements without saving other edits on their shared task", async () => {
   return cases.use("petrina-extra-", async owner => {
-    return await extraFixture(owner, async f => {
+    return await preparedServiceExtraFixture(owner, async f => {
     const secondRoot = join(owner.root, "extra-shared"); mkdirSync(secondRoot);
-    const productId = await f.engine.addProduct(await makeProduct(secondRoot), "Second product");
+    const productId = installPreparedProduct(f.engine, { ...privateCloneProduct(await makeProduct(secondRoot, { origin: "none" })), id: "second-product", name: "Second product" });
     const worktree = f.engine.s.products.find(product => product.id === productId)!.path!;
+    const secondVersion = readWorktreeCommit(worktree)!;
     const first = executionFor(f.task).work;
     f.task.repositories = [{ ...first, delivery: first.delivery ?? "local", completedStages: first.completedStages ?? [] },
-      { productId, worktree, delivery: "local", completedStages: [], savedVersion: { commit: await git(worktree, "rev-parse", "HEAD"), tree: await git(worktree, "rev-parse", "HEAD^{tree}") } }];
+      { productId, worktree, delivery: "local", completedStages: [], savedVersion: { commit: secondVersion.commit, tree: secondVersion.tree } }];
     delete f.task.repository; f.task.activeProductId = f.productId;
     const records: ExtraValidation[] = [];
     for (const product of [f.productId, productId]) {
@@ -247,11 +251,11 @@ describe.skipIf(process.platform === "win32")("required extra validation shares 
 
   for (const storage of ["live", "archive"] as const) for (const phase of ["inside", "checkpoint", "finished"] as const) it(`recovers a killed late ${storage} checkpoint ${phase === "inside" ? "between evidence and ownership writes" : `after the ${phase} commit`}`, async () => {
   return cases.use("petrina-extra-", async owner => {
-    return await extraFixture(owner, async f => {const record = await f.submit("atomic-late-crash", ["probe", "pass"]);
+    return await preparedServiceExtraFixture(owner, async f => {const record = await f.submit("atomic-late-crash", ["probe", "pass"]);
 
     await owner.stop(f.engine);
     const settings = join(f.root, "checkpoint-settings.json"), marker = join(f.root, "checkpoint-marker.json");
-    writeFixtureEngineOptions(settings, f.settings);
+    writeFixtureEngineOptions(settings, f.nativeSettings);
     const childCapture = f.actors.capture(() => Bun.spawn([process.execPath, f.actors.actor("extra-checkpoint-crash.ts"), f.data, settings, marker, phase, storage], { stdin: "ignore", stdout: "ignore", stderr: "pipe" }));
     const child = childCapture.process;
     let replacement: Engine | undefined;
@@ -294,7 +298,7 @@ describe.skipIf(process.platform === "win32")("required extra validation shares 
       expect(calls.filter(args => args[0] === "run")).toHaveLength(1);
     } finally { child.kill("SIGKILL"); await child.exited; await childCapture.drained; await (replacement ? owner.stop(replacement) : undefined); }
 
-  });
+  }, {}, { fastClientStop: true, actorLease: true });
 
   });
 });

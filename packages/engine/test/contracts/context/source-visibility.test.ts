@@ -1,3 +1,4 @@
+import { installPreparedProduct, privateCloneProduct } from "../../fixtures/prepared-product.js";
 import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
 import { mkdtempSync } from "node:fs";
 import { afterAll as closeOwnedCases } from "bun:test";
@@ -7,9 +8,10 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Context } from "../../../src/context.js";
 import type { GuideKeeper } from "../../../src/guide-keeper.js";
+import * as gitOps from "@petrina/repositories/git";
 import { currentSourcePointers } from "@petrina/repositories/source-pointers";
-import { git } from "@petrina/test-support/commands";
-import { makeProduct } from "@petrina/test-support/repositories";
+import { createProductRepository } from "@petrina/test-support/repositories";
+import { privateAgentToolProbe } from "../../scripted-probes.js";
 const cases = engineCaseFixtures();
 closeOwnedCases(() => cases.close());
 
@@ -17,16 +19,16 @@ closeOwnedCases(() => cases.close());
 it("carries only bounded current source locations to design or a first builder, never independent reviewers", async () => {
   return cases.use("petrina-engine-case-", async owner => {
     const root = mkdtempSync(join(owner.root, "petrina-source-pointers-"));
-    const engine = owner.open(join(root, "data"), { usageCommands: { codex: null, grok: null },  });
+    const engine = owner.open(join(root, "data"), { usageCommands: { codex: null, grok: null }, toolProbe: privateAgentToolProbe() });
     try {
       await owner.run(engine, async () => {
         engine.setPoolPaused(true);
-        const copy = await makeProduct(root);
-        const productId = await engine.addProduct(copy);
+        const { path: copy, initialSha: revision } = await createProductRepository(root, { origin: "none" });
+        await engine.waitUntilReady(); owner.check(); engine.stopRequested.signal.throwIfAborted();
+        const productId = installPreparedProduct(engine, privateCloneProduct(copy));
         const id = engine.addTask({ productId, title: "Choose the design independently", backlog: true });
         const task = engine.task(id)!;
         executionFor(task).work.worktree = copy;
-        const revision = await git(copy, "rev-parse", "HEAD");
         const pointer = { productId, revision, path: "README.md" };
         task.sourcePointers = [pointer, pointer, { ...pointer, revision: "f".repeat(40) }, { ...pointer, path: "absent.md" }, { ...pointer, productId: "another-product" }];
         expect(await currentSourcePointers(repositoryView(executionFor(task)), task.sourcePointers)).toEqual([pointer]);
@@ -57,8 +59,7 @@ it("carries only bounded current source locations to design or a first builder, 
         expect(engine.store.loadActive()!.tasks.find((entry) => entry.id === id)!.sourcePointers).toEqual(task.sourcePointers);
         expect(engine.store.loadActive()!.tasks.find((entry) => entry.id === id)!.brief!.sourcePointers).toEqual([pointer]);
         writeFileSync(join(copy, "VERSION"), "2.0.0\n");
-        await git(copy, "add", "VERSION");
-        await git(copy, "commit", "-q", "-m", "A different source version");
+        await gitOps.commitChanges(copy, "A different source version");
         expect(await currentSourcePointers(repositoryView(executionFor(task)), [pointer])).toEqual([]);
 
       });

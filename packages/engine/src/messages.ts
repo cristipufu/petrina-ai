@@ -1,6 +1,6 @@
 // Coordinator instructions belong to durable participant seats, never a process or profile.
 import { messageMember, settleInterruptedMessageDeliveries, unresolvedMessage, removeHeardMessages, addAsk, openStep, pauseClock, resumeClock, type AgentProfile, type QueuedMessage } from "@petrina/core";
-import { Aborted, type Kernel, type MTask } from "./kernel.js";
+import { Aborted, type Kernel, type RuntimeTask } from "./kernel.js";
 import type { RepositoryContext } from "@petrina/orchestrator";
 import type { TurnResult, AgentSession } from "@petrina/orchestrator";
 
@@ -93,7 +93,7 @@ export async function holdUnconfirmed(k: Kernel, scope: RepositoryContext, membe
 }
 
 /** A queued instruction on the live task, writable the same way ordinary prompt handoff writes it. */
-type LaneMessage = MTask["queued"][number];
+type LaneMessage = RuntimeTask["queued"][number];
 
 /** One ordered delivery lane for a participant, alongside its ordinary tracked prompt. */
 export class MessageTurn {

@@ -1,28 +1,80 @@
-import { rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { DeepMutable, Finding } from "@petrina/core";
 import { executionFor } from "@petrina/orchestrator";
+import * as gitOps from "@petrina/repositories/git";
+import { headNow } from "@petrina/test-support/repository-head";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
-import { Fakes, git, makeProduct, tempDir } from "../fixtures.js";
+import { createProductRepository, Fakes, makeProduct, tempDir } from "../fixtures.js";
 import { ScriptedAgents, scriptedResult } from "../scripted-agents.js";
 import { scriptedToolProbe } from "../scripted-probes.js";
 import { directDrivers } from "./direct-drivers.js";
 
 const originalLines = Array.from({ length: 60 }, (_, index) => `Original line ${index}\n`).join("");
 
+interface FileSnapshot {
+  rel: string;
+  mode: number;
+  data: Buffer;
+}
+
+function captureDirectory(dir: string, prefix = ""): FileSnapshot[] {
+  const out: FileSnapshot[] = [];
+  for (const entry of readdirSync(join(dir, prefix), { withFileTypes: true })) {
+    const rel = prefix ? join(prefix, entry.name) : entry.name;
+    if (entry.isDirectory()) out.push(...captureDirectory(dir, rel));
+    else if (entry.isFile()) {
+      const full = join(dir, rel);
+      out.push({ rel, mode: lstatSync(full).mode, data: readFileSync(full) });
+    }
+  }
+  return out;
+}
+
+function applyDirectorySnapshot(dir: string, files: readonly FileSnapshot[]): void {
+  for (const file of files) {
+    const target = join(dir, file.rel);
+    mkdirSync(dirname(target), { recursive: true });
+    rmSync(target, { force: true });
+    writeFileSync(target, file.data, { mode: file.mode });
+  }
+}
+
+let reviewerSeedPromise: Promise<{ files: readonly FileSnapshot[]; base: string }> | undefined;
+
+function getReviewerInputSeed() {
+  reviewerSeedPromise ??= (async () => {
+    const seedTemp = tempDir("petrina-reviewer-input-seed-");
+    try {
+      const { path: seedRepo } = await createProductRepository(seedTemp, { origin: "none" });
+      writeFileSync(join(seedRepo, "REVIEW.md"), "OLD-BASE-GUIDE\n");
+      writeFileSync(join(seedRepo, "overlap.txt"), originalLines);
+      await gitOps.commitChanges(seedRepo, "Prepare the review's original base");
+      const base = headNow(seedRepo);
+      const prepCopy = join(seedTemp, "prep");
+      await gitOps.ensureWorktree(seedRepo, prepCopy, "prepared-review", base);
+      writeFileSync(join(prepCopy, "greeting.txt"), "Initial fixture change\n");
+      writeFileSync(join(prepCopy, "overlap.txt"), originalLines.replace("Original line 0\n", "Task changes the first line\n"));
+      await gitOps.commitChanges(prepCopy, "Prepare the committed change under review");
+      await gitOps.removeWorktree(seedRepo, prepCopy);
+      return { files: captureDirectory(seedRepo), base };
+    } finally {
+      rmSync(seedTemp, { recursive: true, force: true });
+    }
+  })();
+  return reviewerSeedPromise;
+}
+
 /** Real reviewer/input boundaries, starting from explicit committed review prerequisites. No earlier workflow is claimed. */
 export async function preparedReviewerInputs(options: { single?: boolean; native?: boolean; seedFinding?: DeepMutable<Finding> } = {}) {
   const root = tempDir("petrina-prepared-review-input-"), owners = directDrivers(root);
   return setupWithCleanup(() => owners.prepare(async () => {
-    const repo = await makeProduct(root);
-    writeFileSync(join(repo, "REVIEW.md"), "OLD-BASE-GUIDE\n");
-    writeFileSync(join(repo, "overlap.txt"), originalLines);
-    await git(repo, "add", "."); await git(repo, "commit", "-qm", "Prepare the review's original base");
-    const base = await git(repo, "rev-parse", "HEAD"), copy = join(root, "review-copy"), branch = "prepared-review";
-    await git(repo, "worktree", "add", "-b", branch, copy, base);
-    writeFileSync(join(copy, "greeting.txt"), "Initial fixture change\n");
-    writeFileSync(join(copy, "overlap.txt"), originalLines.replace("Original line 0\n", "Task changes the first line\n"));
-    await git(copy, "add", "."); await git(copy, "commit", "-qm", "Prepare the committed change under review");
+    const [repo, seed] = await Promise.all([makeProduct(root), getReviewerInputSeed()]);
+    const configBytes = readFileSync(join(repo, ".git", "config"));
+    applyDirectorySnapshot(repo, seed.files);
+    writeFileSync(join(repo, ".git", "config"), configBytes);
+    const base = seed.base, copy = join(root, "review-copy"), branch = "prepared-review";
+    await gitOps.ensureWorktree(repo, copy, branch, base);
     const fakes = options.native ? new Fakes(join(root, "fake")) : undefined;
     fakes?.scenario({ reopen: "resume", reviewer: "important", fixes: "change" });
     const agents = new ScriptedAgents(prompt => {
@@ -63,14 +115,14 @@ export async function preparedReviewerInputs(options: { single?: boolean; native
     });
     const commitRepair = () => owners.run(engine, async () => {
       writeFileSync(join(copy, "welcome.txt"), "The second review's committed repair prerequisite\n");
-      await git(copy, "add", "."); await git(copy, "commit", "-qm", "Prepare the next review's committed input");
+      await gitOps.commitChanges(copy, "Prepare the next review's committed input");
     });
     const advanceMain = () => owners.run(engine, async () => {
-      const before = await git(repo, "rev-parse", "HEAD");
+      const before = headNow(repo);
       writeFileSync(join(repo, "REVIEW.md"), "NEW-BASE-GUIDE\n");
       writeFileSync(join(repo, "overlap.txt"), originalLines.replace("Original line 59\n", "Main changes the last line\n"));
-      await git(repo, "add", "."); await git(repo, "commit", "-qm", "Advance main independently");
-      return { before, base: await git(repo, "rev-parse", "HEAD") };
+      await gitOps.commitChanges(repo, "Advance main independently");
+      return { before, base: headNow(repo) };
     });
     const removeNativeSession = (sessionId: string) => {
       if (!fakes) throw new Error("Removing a native session requires its real peer");

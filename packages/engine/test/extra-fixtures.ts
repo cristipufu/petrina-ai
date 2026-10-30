@@ -1,58 +1,91 @@
+import { installPreparedProduct, privateCloneProduct } from "./fixtures/prepared-product.js";
 import type { EngineCaseOwner } from "./fixtures/engine-cases.js";
 import { createProcessLease, type ProcessLease } from "@petrina/test-support/process-lease";
+import { createHash } from "node:crypto";
 import { CLEANUP_MS, type Started } from "@petrina/test-support/commands";
 import { stopOwnedProcess } from "@petrina/platform/owned-process";
-import { writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+import { cp, mkdir } from "node:fs/promises";
 import { expect, spyOn } from "bun:test";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { beginAgentStep, type ExtraValidation } from "@petrina/core";
 import type { Engine, EngineOptions } from "./engine.js";
-import { git, makeProduct, SLOW, waitFor } from "./fixtures.js";
+import { makeProduct, SLOW, waitFor } from "./fixtures.js";
+import { commitVersion } from "@petrina/repositories/git";
 import { Coordination } from "../src/coordination.js";
 import { executionFor } from "@petrina/orchestrator";
 import { EngineClient } from "./client.js";
 import { serve } from "../src/server.js";
 import { writeConnection } from "../src/instance.js";
 import { completeAll } from "@petrina/core";
+import { RUN_LABEL } from "../src/extra-container.js";
+import { privateContainerCall, scriptedContainerControl, scriptedContainerInspection } from "./fixtures/container-inspection.js";
+import { preparedValidationSnapshots } from "./fixtures/validation-snapshots.js";
+import { installSharedWorkflowFastPaths, readWorktreeCommit } from "./fixtures/shared-preparation.js";
+import { privateAgentToolProbe } from "./scripted-probes.js";
 
 /** Native actors keep the original bodies/payloads; their lease precedes runnable work. */
-export async function extraActors(owner: EngineCaseOwner) {
+export async function extraActors(owner: EngineCaseOwner, useActorLease = true, useCommandLease = true) {
   let commandLease: ProcessLease | undefined;
-  const actorReady = Promise.withResolvers<ProcessLease>();
+  const actorReady = Promise.withResolvers<ProcessLease | undefined>();
   void actorReady.promise.catch(() => undefined);
   owner.afterBody(async () => { await commandLease?.close(); });
   owner.onStop(() => {
     // Request every actual Engine before closing the actors' independent lease. Command
     // clients keep their separate lease until Engine ps/stop/rm work has really settled.
     const stopped = (async () => { await owner.stopAll(); })();
-    const actors = (async () => { await (await actorReady.promise).close(); })();
+    const actors = (async () => { await (await actorReady.promise)?.close(); })();
     return Promise.allSettled([stopped, actors]).then(results => {
       const errors = results.flatMap(result => result.status === "rejected" ? [result.reason] : []);
       if (errors.length === 1) throw errors[0];
       if (errors.length) throw new AggregateError(errors, "Extra-validation Engine and independent actor cleanup failed");
     });
   });
-  let actorLease: ProcessLease;
+  let actorLease: ProcessLease | undefined;
   try {
-    commandLease = await createProcessLease();
-    owner.check();
-    actorLease = await createProcessLease();
+    if (useCommandLease) {
+      commandLease = await createProcessLease();
+      owner.check();
+    }
+    if (useActorLease) {
+      actorLease = await createProcessLease();
+      owner.check();
+    }
     actorReady.resolve(actorLease);
-    owner.check();
   } catch (error) { actorReady.reject(error); throw error; }
-  const client = join(owner.root, "owned-extra-client.ts"), child = join(owner.root, "owned-extra-child.ts");
-  writeFileSync(client, commandLease.program(`await import(${JSON.stringify(import.meta.resolve("./fake-extra-container.ts"))}); process.exit(process.exitCode ?? 0);`));
-  writeFileSync(child, actorLease.program(`process.once('SIGUSR1', () => process.exit(0)); console.log('child-ready'); setInterval(() => {}, 1000); await new Promise(() => {});`));
-  const unrelated = join(owner.root, "owned-unrelated-extra-control.ts");
-  writeFileSync(unrelated, actorLease.program(`console.log('ready'); setInterval(() => {}, 1000); await new Promise(() => {});`));
+  const client = join(owner.root, "owned-extra-client.ts");
+  if (commandLease) {
+    writeFileSync(client, commandLease.program(`await import(${JSON.stringify(import.meta.resolve("./fake-extra-container.ts"))}); process.exit(process.exitCode ?? 0);`));
+  }
+  const child = actorLease ? join(owner.root, "owned-extra-child.ts") : undefined;
+  if (actorLease && child) {
+    writeFileSync(child, actorLease.program(`process.once('SIGUSR1', () => process.exit(0)); console.log('child-ready'); setInterval(() => {}, 1000); await new Promise(() => {});`));
+  }
+  const unrelatedPath = actorLease ? join(owner.root, "owned-unrelated-extra-control.ts") : undefined;
+  if (actorLease && unrelatedPath) {
+    writeFileSync(unrelatedPath, actorLease.program(`console.log('ready'); setInterval(() => {}, 1000); await new Promise(() => {});`));
+  }
   const actor = (entry: "extra-crash-engine.ts" | "extra-checkpoint-crash.ts") => {
+    if (!actorLease) throw new Error("Enable actorLease on ExtraFixturePolicy when spawning independent actors");
     owner.check();
     const file = join(owner.root, "owned-" + entry);
     writeFileSync(file, actorLease.program(`await import(${JSON.stringify(import.meta.resolve("./" + entry))});`, entry === "extra-checkpoint-crash.ts" ? { monitor: "worker" } : undefined));
     return file;
   };
-  return { client, child, unrelated, actor, capture: <T extends Started>(start: () => T) => captureExtraActor(owner, start) };
+  return {
+    client,
+    get child(): string {
+      if (!child) throw new Error("Enable actorLease on ExtraFixturePolicy when spawning independent child actors");
+      return child;
+    },
+    get unrelated(): string {
+      if (!unrelatedPath) throw new Error("Enable actorLease on ExtraFixturePolicy when spawning unrelated actors");
+      return unrelatedPath;
+    },
+    hasActorLease: Boolean(actorLease),
+    actor,
+    capture: <T extends Started>(start: () => T) => captureExtraActor(owner, start),
+  };
 }
 
 /** Capture the actual starter/handle and drain its output before any fixture disposal. */
@@ -93,24 +126,151 @@ function captureExtraActor<T extends Started>(owner: EngineCaseOwner, start: () 
   return result;
 }
 
-async function prepareExtraFixture(owner: EngineCaseOwner, options: EngineOptions = {}) {
+function patchFastClientStop(eng: Engine): Engine {
+  installSharedWorkflowFastPaths(eng, { fastCheckCapture: true });
+  const container = eng.extraValidations["container"];
+  const origStop = container["stopClient"].bind(container);
+  const groupOrPidAlive = (pid: number) => {
+    for (const target of [-pid, pid]) {
+      try {
+        process.kill(target, 0);
+        return true;
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException)?.code === "EPERM") return true;
+      }
+    }
+    return false;
+  };
+  container["stopClient"] = async (record) => {
+    const pid = record.clientPid;
+    if (!pid || !groupOrPidAlive(pid)) return true;
+    for (const target of [-pid, pid]) {
+      try { process.kill(target, "SIGKILL"); } catch {}
+    }
+    const deadline = Date.now() + 250;
+    while (Date.now() < deadline) {
+      if (!groupOrPidAlive(pid)) return true;
+      await Bun.sleep(5);
+    }
+    return origStop(record);
+  };
+  return eng;
+}
+
+export interface ExtraFixturePolicy {
+  fastClientStop?: boolean;
+  actorLease?: boolean;
+  commandLease?: boolean;
+  scriptedNonHoldRuns?: boolean;
+}
+
+export function scriptedExtraCheckRunner(clientPath: string, serviceDir: string, prev?: EngineOptions["runCheckCommand"]): NonNullable<EngineOptions["runCheckCommand"]> {
+  return async (req) => {
+    if (prev) {
+      const prior = await prev(req);
+      if (prior) return prior;
+    }
+    if (req.argv[0] !== process.execPath || req.argv[1] !== clientPath || req.argv[2] !== serviceDir) {
+      return undefined;
+    }
+    const raw = req.argv.slice(3);
+    let args = raw[0]?.startsWith("--fixture-child=") ? raw.slice(1) : raw;
+    while (args[0] === "--host" || args[0] === "--config") args = args.slice(2);
+    if (args[0] !== "run") return undefined;
+    const mode = args.at(-1);
+    if (mode?.startsWith("hold")) return undefined;
+    let reply: string | undefined;
+    try {
+      reply = privateContainerCall(serviceDir, args);
+    } catch (error) {
+      return { code: 1, ...(error instanceof Error && error.message ? { stderr: `${error.message}\n` } : {}) };
+    }
+    if (reply !== undefined) {
+      return { code: 0, ...(reply ? { stdout: `${reply}\n` } : {}) };
+    }
+    const value = (flag: string) => args[args.indexOf(flag) + 1]!;
+    const labels = args.flatMap((word, index) => (word === "--label" ? [args[index + 1]!] : []));
+    const name = value("--name");
+    const id = labels.find((label) => label.startsWith(`${RUN_LABEL}=`))!.split("=")[1]!;
+    const snapshot = value("--mount").match(/src=(.*),dst=/)?.[1];
+    if (!snapshot) throw new Error("The private snapshot mount is required");
+    const record = { args, labels, pid: process.pid, childPid: undefined, id, name, snapshot };
+    writeFileSync(`${join(serviceDir, "started", id)}.tmp`, JSON.stringify(record));
+    renameSync(`${join(serviceDir, "started", id)}.tmp`, join(serviceDir, "started", id));
+    return {
+      code: mode === "fail" ? 1 : 0,
+      stdout: `Original complete diagnostic for ${id}\nOriginal ending for ${id}\n`,
+    };
+  };
+}
+
+async function prepareExtraFixture(owner: EngineCaseOwner, options: EngineOptions = {}, preparedCopies = false, serviceControls = false, policy: ExtraFixturePolicy = {}) {
+  if (preparedCopies && options.validationSnapshots) throw new Error("Choose either the prepared copy input or an explicit validation snapshot effect");
   const root = owner.root;
-  const actors = await extraActors(owner);
+  const useActorLease = policy.actorLease ?? (!serviceControls || policy.fastClientStop === false);
+  const actors = await extraActors(owner, useActorLease, policy.commandLease ?? true);
   owner.check();
     const service = join(root, "service"); mkdirSync(service);
     const data = join(root, "data");
-    const settings: EngineOptions = { agentCommand: () => { throw new Error("Extra-validation controls must not start agents"); }, containerTool: [process.execPath, actors.client, service, `--fixture-child=${actors.child}`],
-      extraCleanupEveryMs: 60_000, ...options };
-    const engine = owner.open(data, settings); engine.setPoolPaused(true);
-    const product = await makeProduct(root);
+    const suppliedProduct = preparedCopies ? await makeProduct(root, { origin: "none" }) : undefined;
     owner.check();
-    const productId = await engine.addProduct(product);
+    let snapshotProductId: string | undefined;
+    const rawSnapshots = suppliedProduct ? await preparedValidationSnapshots(owner, suppliedProduct, data, () => snapshotProductId) : undefined;
+    type SnapshotRecord = Parameters<NonNullable<typeof rawSnapshots>["snapshot"]>[0];
+    const baseSnapshot = rawSnapshots ? async (record: SnapshotRecord) => {
+      if (snapshotProductId && record.productId !== snapshotProductId && existsSync(record.source)) {
+        owner.check();
+        await mkdir(join(data, "extra-snapshots"), { recursive: true });
+        await cp(record.source, record.snapshot, { recursive: true, force: false, errorOnExist: true });
+        owner.check();
+        return;
+      }
+      return rawSnapshots.snapshot(record);
+    } : undefined;
+    let currentEngine: Engine | undefined;
+    const snapshots = rawSnapshots && baseSnapshot ? {
+      version: rawSnapshots.version,
+      snapshot: (record: SnapshotRecord) => currentEngine ? currentEngine.extraValidations["container"].snapshot(record) : baseSnapshot(record),
+    } : undefined;
+    owner.check();
+    const containerTool = actors.hasActorLease
+      ? [process.execPath, actors.client, service, `--fixture-child=${actors.child}`]
+      : [process.execPath, actors.client, service];
+    const nativeSettings: EngineOptions = { agentCommand: () => { throw new Error("Extra-validation controls must not start agents"); }, containerTool,
+      extraCleanupEveryMs: 60_000, ...options };
+    // Explicit transport/deadline overrides keep native metadata. Child fixtures serialize that
+    // native recipe; in-process generations retain this process-local service observation.
+    const settings: EngineOptions = { ...nativeSettings, ...(policy.scriptedNonHoldRuns ? { runCheckCommand: scriptedExtraCheckRunner(actors.client, service, options.runCheckCommand) } : {}), ...(options.toolProbe ? {} : { toolProbe: privateAgentToolProbe() }), ...(snapshots ? { validationSnapshots: snapshots } : {}),
+      ...(serviceControls && !["containerControl", "containerInspection", "containerTool", "containerCommandTimeoutMs"].some(key => Object.hasOwn(options, key))
+        && process.env.DOCKER_HOST === undefined && process.env.DOCKER_CONTEXT === undefined && process.env.DOCKER_CONFIG === undefined
+        ? { containerControl: scriptedContainerControl(service, () => createHash("sha256").update(realpathSync(data)).digest("hex")) } : {}),
+      ...(["containerInspection", "containerTool", "containerCommandTimeoutMs"].some(key => Object.hasOwn(options, key))
+        || process.env.DOCKER_HOST !== undefined || process.env.DOCKER_CONTEXT !== undefined
+        ? {} : { containerInspection: scriptedContainerInspection(service) }) };
+    if (baseSnapshot || policy.fastClientStop) {
+      const rawOpen = owner.open.bind(owner);
+      owner.open = (targetData: string, targetOptions: EngineOptions = {}) => {
+        const opened = rawOpen(targetData, targetOptions);
+        currentEngine = opened;
+        if (baseSnapshot) opened.extraValidations["container"].snapshot = baseSnapshot;
+        return policy.fastClientStop ? patchFastClientStop(opened) : opened;
+      };
+    }
+    const engine = owner.open(data, settings); engine.setPoolPaused(true);
+    const product = suppliedProduct ?? await makeProduct(root, { origin: "none" });
+    owner.check(); await engine.waitUntilReady(); owner.check(); engine.stopRequested.signal.throwIfAborted();
+    const productId = installPreparedProduct(engine, privateCloneProduct(product));
+    snapshotProductId = productId;
     const add = () => owner.prepare(async () => {
       const task = engine.task(engine.addTask({ productId, title: "Required platform acceptance", backlog: true }))!;
       task.held = true; task.startedAt = Date.now();
       const scope = executionFor(task);
       scope.work.worktree = engine.s.products.find(product => product.id === productId)!.path;
-      scope.work.savedVersion = { commit: await git(scope.work.worktree!, "rev-parse", "HEAD"), tree: await git(scope.work.worktree!, "rev-parse", "HEAD^{tree}") };
+      const fast = !snapshots ? readWorktreeCommit(scope.work.worktree!) : undefined;
+      const version = snapshots?.version ?? (fast ? { head: fast.commit, tree: fast.tree } : await commitVersion(scope.work.worktree!));
+      owner.check();
+      if (!version.head || !version.tree) throw new Error("The validation fixture has no committed version");
+      scope.work.savedVersion = { commit: version.head, tree: version.tree };
       beginAgentStep(task, "tester", "sol-high", Date.now(), engine.s.roles, undefined, scope.work);
       // Stay in Backlog through async setup, then use a checkpoint that also survives restart.
       engine.raise(task, "delivery", "Waiting for required platform validation", false);
@@ -130,7 +290,7 @@ async function prepareExtraFixture(owner: EngineCaseOwner, options: EngineOption
       await waitFor(() => engine.extraValidations.get(record.requestId)?.outcome === "completed", "extra evidence to finish");
       return engine.extraValidations.get(record.requestId)!.validation as ExtraValidation;
     };
-    return { root, data, settings, service, engine, productId, task, add, coordination, request, submit, started, release, finished, owner, actors };
+    return { root, data, settings, nativeSettings, service, engine, productId, task, add, coordination, request, submit, started, release, finished, owner, actors };
 }
 
 export type ExtraFixture = Awaited<ReturnType<typeof prepareExtraFixture>>;
@@ -139,6 +299,33 @@ export type ExtraFixture = Awaited<ReturnType<typeof prepareExtraFixture>>;
 export function extraFixture<T>(owner: EngineCaseOwner, body: (fixture: ExtraFixture) => Promise<T>, options: EngineOptions = {}): Promise<T> {
   return owner.prepare(async () => {
     const fixture = await prepareExtraFixture(owner, options);
+    owner.check();
+    return body(fixture);
+  });
+}
+
+/** Explicit copy input; native commands, logs, client ownership, cleanup and SQLite still execute normally. */
+export function preparedExtraFixture<T>(owner: EngineCaseOwner, body: (fixture: ExtraFixture) => Promise<T>, options: EngineOptions = {}): Promise<T> {
+  return owner.prepare(async () => {
+    const fixture = await prepareExtraFixture(owner, options, true);
+    owner.check();
+    return body(fixture);
+  });
+}
+
+/** Explicit private service controls; the workload, diagnostic and local client cleanup still run natively. */
+export function serviceExtraFixture<T>(owner: EngineCaseOwner, body: (fixture: ExtraFixture) => Promise<T>, options: EngineOptions = {}, policy: ExtraFixturePolicy = { actorLease: false }): Promise<T> {
+  return owner.prepare(async () => {
+    const fixture = await prepareExtraFixture(owner, options, false, true, policy);
+    owner.check();
+    return body(fixture);
+  });
+}
+
+/** Supplied saved-copy input plus explicit private service controls for their declared independent subjects. */
+export function preparedServiceExtraFixture<T>(owner: EngineCaseOwner, body: (fixture: ExtraFixture) => Promise<T>, options: EngineOptions = {}, policy: ExtraFixturePolicy = { fastClientStop: true, actorLease: false }): Promise<T> {
+  return owner.prepare(async () => {
+    const fixture = await prepareExtraFixture(owner, options, true, true, policy);
     owner.check();
     return body(fixture);
   });

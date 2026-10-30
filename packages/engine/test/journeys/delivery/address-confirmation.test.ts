@@ -1,26 +1,33 @@
+import { installPreparedProduct, acmeDemoProduct } from "../../fixtures/prepared-product.js";
+import { legacyDeliveryAgents } from "../../fixtures/legacy-delivery-agents.js";
+import { installSharedWorkflowFastPaths, readRef } from "../../fixtures/shared-preparation.js";
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { State } from "@petrina/core";
 import { Engine } from "../../engine.js";
-import { ADDRESS, coordinator, finish, git, itemOf, remoteRef, taskOf, until } from "../../support.js";
+import { ADDRESS, coordinator, finish, itemOf, remoteRef, taskOf, until } from "../../support.js";
 import { securityWorlds } from "../../fixtures/security.js";
 
-const { world, forget, close } = securityWorlds();
+const { world, close } = securityWorlds();
 afterAll(close);
 describe.concurrent("Products added before Petrina kept their GitHub address", () => {
 it("shows the current address once, keeps the answer, and then fetches and publishes there", async () => {
     await world("confirm", async fixture => {
     const w = fixture.world;
-    const productId = await fixture.engine(async engine => {
-      const productId = await engine.addProduct(w.clone);
-      engine.setProductDelivery(productId, "pull-request", false);
-      await engine.shutdown();
-      return productId;
-    });
-    forget(w);
     return fixture.engine(async engine => {
     try {
+      installSharedWorkflowFastPaths(engine, {
+        keepFetchInPrepare: true,
+        skipUpToDate: true,
+        skipPrepareChecks: true,
+        skipReviewCopies: true,
+        fastCheckCapture: true,
+        fastCleanup: true,
+      });
+      await engine.waitUntilReady(); engine.stopRequested.signal.throwIfAborted();
+      const productId = installPreparedProduct(engine, { ...acmeDemoProduct(w.clone), remote: undefined });
+      engine.setProductDelivery(productId, "pull-request", false);
       expect(engine.getState().products[0]!.remote).toBeUndefined();
       engine.setPoolPaused(true);
       const first = engine.addTask({ productId, title: "First", description: "A greeting file. [quick]" });
@@ -44,22 +51,26 @@ it("shows the current address once, keeps the answer, and then fetches and publi
     } finally {
       await engine.shutdown();
     }
-    });
+    }, legacyDeliveryAgents(w));
     });
   });
 
 it("stops credentialed work after a No, and still delivers locally", async () => {
     await world("refuse", async fixture => {
     const w = fixture.world;
-    const productId = await fixture.engine(async engine => {
-      const productId = await engine.addProduct(w.clone);
-      engine.setProductDelivery(productId, "pull-request", false);
-      await engine.shutdown();
-      return productId;
-    });
-    forget(w);
     return fixture.engine(async engine => {
     try {
+      installSharedWorkflowFastPaths(engine, {
+        keepFetchInPrepare: true,
+        skipUpToDate: true,
+        skipPrepareChecks: true,
+        skipReviewCopies: true,
+        fastCheckCapture: true,
+        fastCleanup: true,
+      });
+      await engine.waitUntilReady(); engine.stopRequested.signal.throwIfAborted();
+      const productId = installPreparedProduct(engine, { ...acmeDemoProduct(w.clone), remote: undefined });
+      engine.setProductDelivery(productId, "pull-request", false);
       const taskId = engine.addTask({ productId, title: "Add a greeting", description: "A greeting file. [quick]" });
       const refuse = (current: Engine, state: State) => {
         for (const item of state.inbox) if (item.kind === "question" && item.title.startsWith("Is ")) current.answer(item.id, "No, it is not");
@@ -75,26 +86,30 @@ it("stops credentialed work after a No, and still delivers locally", async () =>
       const local = engine.addTask({ productId, title: "Add a local greeting", description: "A greeting file. [quick]", delivery: "local", approveDelivery: false });
       task = taskOf(await finish(engine, local), local);
       expect(task.state).toBe("done");
-      expect(await git(w.clone, "rev-parse", "main")).toBe(await git(w.clone, "rev-parse", task.branch!));
+      expect(readRef(join(w.clone, ".git"), "refs/heads/main")).toBe(readRef(join(w.clone, ".git"), `refs/heads/${task.branch!}`));
     } finally {
       await engine.shutdown();
     }
-    });
+    }, legacyDeliveryAgents(w));
     });
   });
 
 it("publishes nothing when the saved address is not the product's repository", async () => {
     await world("mismatch", async fixture => {
     const w = fixture.world;
-    const productId = await fixture.engine(async engine => {
-      const productId = await engine.addProduct(w.clone);
-      engine.setProductDelivery(productId, "pull-request", false);
-      await engine.shutdown();
-      return productId;
-    });
-    w.editSaved((state) => ((state.products[0] as { remote?: string }).remote = "git@github.com:evil/demo.git"));
     return fixture.engine(async engine => {
     try {
+      installSharedWorkflowFastPaths(engine, {
+        keepFetchInPrepare: true,
+        skipUpToDate: true,
+        skipPrepareChecks: true,
+        skipReviewCopies: true,
+        fastCheckCapture: true,
+        fastCleanup: true,
+      });
+      await engine.waitUntilReady(); engine.stopRequested.signal.throwIfAborted();
+      const productId = installPreparedProduct(engine, { ...acmeDemoProduct(w.clone), remote: "git@github.com:evil/demo.git" });
+      engine.setProductDelivery(productId, "pull-request", false);
       const taskId = engine.addTask({ productId, title: "Add a greeting", description: "A greeting file. [quick]" });
       const task = taskOf(await finish(engine, taskId), taskId);
       expect(task.state).toBe("failed");
@@ -105,7 +120,7 @@ it("publishes nothing when the saved address is not the product's repository", a
     } finally {
       await engine.shutdown();
     }
-    });
+    }, legacyDeliveryAgents(w));
     });
   });
 

@@ -1,33 +1,39 @@
-import { describe as originalDescribe } from "bun:test";
-import { resolve as testFixturePath } from "node:path";
-const TEST_FIXTURE_ROOT = testFixturePath(import.meta.dir, "../..");
-
-import { afterAll, expect, it } from "bun:test";
+import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
+import { installPreparedProduct, privateCloneProduct } from "../../fixtures/prepared-product.js";
+import { afterAll, describe, expect, it } from "bun:test";
 import { join } from "node:path";
 import { readFileSync } from "node:fs";
 import { ACCEPTANCE_RESTORED, draftOf } from "@petrina/core";
-import { Engine } from "../../engine.js";
 import { MAY_CHANGE } from "../../../src/prompts.js";
-import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "../../fixtures.js";
+import { Fakes, git, makeProduct, waitFor } from "../../fixtures.js";
+import { fakeAgentSessions } from "../../fixtures/fake-agent-sessions.js";
+import { installSharedWorkflowFastPaths } from "../../fixtures/shared-preparation.js";
 
-const roots: string[] = [];
-afterAll(() => roots.forEach(removeDir));
+const engineCases = engineCaseFixtures();
+afterAll(() => engineCases.close());
 
-
-originalDescribe("the tester tries the change once, and the final code once more", () => {
-it("keeps a tester's permitted edits before review and undoes its edits and commits on the final acceptance pass, leaving that pass unverified", async () => {
-    const root = tempDir("petrina-tester-edits-");
-    roots.push(root);
-    const fakes = new Fakes(join(root, "fake"));
-    fakes.scenario({ planner: "tester-first", builder: "plain", reviewer: "important", fixes: "change", tester: "writes" });
-    const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, join(TEST_FIXTURE_ROOT, "fake-agent.ts"), fakes.dir] });
+describe("the tester tries the change once, and the final code once more", () => {
+  it("keeps a tester's permitted edits before review and undoes its edits and commits on the final acceptance pass, leaving that pass unverified", async () => {
+    return engineCases.use("petrina-tester-edits-", async (caseOwner) => {
+      const root = caseOwner.root;
+      const fakes = new Fakes(join(root, "fake"));
+      fakes.scenario({ planner: "tester-first", builder: "plain", reviewer: "important", fixes: "change", tester: "writes" });
+      const engine = caseOwner.open(join(root, "data"), {
+        agentCommand: () => [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), fakes.dir],
+        startAgentSession: fakeAgentSessions(fakes),
+      });
+      installSharedWorkflowFastPaths(engine);
     try {
       const tester = engine.getState().roles.find((role) => role.id === "tester")!;
       engine.saveRole(tester.id, { ...draftOf(tester), canEdit: true });
       const repo = await makeProduct(root);
       // Exercise Git's Windows checkout conversion on every platform.
       await git(repo, "config", "core.autocrlf", "true");
-      const productId = await engine.addProduct(repo);
+      const productId = await caseOwner.run(engine, async () => {
+        await engine.waitUntilReady();
+        caseOwner.check(); engine.stopRequested.signal.throwIfAborted();
+        return installPreparedProduct(engine, privateCloneProduct(repo));
+      });
       engine.setProductDelivery(productId, "local", true);
       const taskId = engine.addTask({ productId, title: "Try the greeting", description: "[no-check]" });
       const task = await waitFor(() => {
@@ -57,7 +63,9 @@ it("keeps a tester's permitted edits before review and undoes its edits and comm
       expect(task.acceptancePassed).toBe(false); expect(task.acceptanceUnverified).toBe(true);
       expect(engine.getState().inbox.find((item) => item.taskId === taskId && item.kind === "delivery")!.title).toContain("could not be verified");
     } finally {
-      await engine.shutdown();
+      await caseOwner.stop(engine);
     }
+
   });
+});
 });

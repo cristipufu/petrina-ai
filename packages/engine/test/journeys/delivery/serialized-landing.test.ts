@@ -1,12 +1,14 @@
 import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
-import { mkdtempSync } from "node:fs";
-import { afterAll as closeOwnedCases } from "bun:test";
-import { expect, it } from "bun:test";
-import { readFileSync, writeFileSync } from "node:fs";
+import { installPreparedProduct, privateCloneProduct } from "../../fixtures/prepared-product.js";
+import { installSharedWorkflowFastPaths, readWorktreeCommit } from "../../fixtures/shared-preparation.js";
+import { privateAgentToolProbe } from "../../scripted-probes.js";
+import * as gitOps from "@petrina/repositories/git";
+import { appendFileSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { afterAll as closeOwnedCases, expect, it } from "bun:test";
 import { join } from "node:path";
 import { executionFor } from "@petrina/orchestrator";
 import { commandInputText } from "../../../src/checks.js";
-import { git, makeProduct } from "../../fixtures.js";
+import { createProductRepository } from "../../fixtures.js";
 const cases = engineCaseFixtures();
 closeOwnedCases(() => cases.close());
 
@@ -16,24 +18,30 @@ closeOwnedCases(() => cases.close());
 it("serializes concurrent local landings and checks the second integrated tree before moving main", async () => {
   return cases.use("petrina-engine-case-", async owner => {
     const root = mkdtempSync(join(owner.root, "petrina-landing-reliability-"));
-    const engine = owner.open(join(root, "data"), { agentCommand: () => undefined, terminals: () => [] });
+    const log = join(root, "checks.jsonl");
+    const script = join(root, "check.ts");
+    const engine = installSharedWorkflowFastPaths(owner.open(join(root, "data"), {
+      agentCommand: () => undefined,
+      toolProbe: privateAgentToolProbe(),
+      terminals: () => [],
+      runCheckCommand: (req) => {
+        if (req.argv[0] !== process.execPath || req.argv[1] !== script) return undefined;
+        const ver = readWorktreeCommit(req.cwd)!;
+        const ok = !(existsSync(join(req.cwd, "feature-a")) && existsSync(join(req.cwd, "feature-b")));
+        appendFileSync(req.argv[2]!, `${JSON.stringify({ tree: ver.tree, ok })}\n`);
+        return { code: ok ? 0 : 1 };
+      },
+    }), { skipDriverPrepare: false, skipUpToDate: true, fastCheckCapture: true });
     engine.schedule = () => {};
     engine.setPoolPaused(false);
     try {
       await owner.run(engine, async () => {
-        const repo = await makeProduct(root);
-        // An explicitly local product: no account, GitHub address confirmation or remote service.
-        await git(repo, "remote", "remove", "origin");
-        const productId = await engine.addProduct(repo);
-        const base = await git(repo, "rev-parse", "HEAD");
-        const log = join(root, "checks.jsonl");
-        const script = join(root, "check.ts");
-        // A product check: the engine's check runner bounds this program and stops its whole process group.
-        writeFileSync(script, `import { appendFileSync, existsSync } from "node:fs";
-const result = Bun.spawnSync(["git", "rev-parse", "HEAD^{tree}"], { stdout: "pipe" });
-const ok = !(existsSync("feature-a") && existsSync("feature-b"));
-appendFileSync(process.argv[2], JSON.stringify({ tree: result.stdout.toString().trim(), ok }) + "\\n");
-process.exit(ok ? 0 : 1);`);
+        const { path: repo, initialSha: base } = await createProductRepository(root, { origin: "none" });
+        owner.check(); engine.stopRequested.signal.throwIfAborted();
+        await engine.waitUntilReady();
+        owner.check(); engine.stopRequested.signal.throwIfAborted();
+        const productId = installPreparedProduct(engine, { ...privateCloneProduct(repo), remote: undefined });
+        writeFileSync(script, `import { appendFileSync } from "node:fs";`);
         engine.setProductChecks(productId, [{ name: "Tests", command: commandInputText([process.execPath, script, log]) }]);
         const signal = owner.signal;
         const tasks: NonNullable<ReturnType<typeof engine.task>>[] = [];
@@ -48,10 +56,9 @@ process.exit(ok ? 0 : 1);`);
           const work = executionFor(task).work;
           work.delivery = "local"; work.base = "main"; work.baseSha = base;
           work.branch = `task-${name}`; work.worktree = join(root, `copy-${name}`);
-          await git(repo, "worktree", "add", "-q", "-b", work.branch, work.worktree, base);
+          await gitOps.ensureWorktree(repo, work.worktree, work.branch, base);
           writeFileSync(join(work.worktree, `feature-${name}`), name);
-          await git(work.worktree, "add", ".");
-          await git(work.worktree, "commit", "-q", "-m", task.title);
+          await gitOps.commitChanges(work.worktree, task.title);
           task.plan = { rationale: "Focused delivery fixture", plannerProfileId: "opus-high", stages: [
               { id: "delivery", title: "Delivery", kind: "gate", gate: "delivery", roleId: "coordinator", profileIds: [] },
               { id: "ship", title: "Ship", kind: "do", roleId: "release-manager", profileIds: ["opus-high"] },
@@ -62,7 +69,7 @@ process.exit(ok ? 0 : 1);`);
         for (const task of tasks) {
           const scope = executionFor(task);
           expect((await engine["checks"].failing(scope, signal)).kind).toBe("passed");
-          const tested = await git(scope.work.worktree!, "rev-parse", "HEAD");
+          const tested = readWorktreeCommit(scope.work.worktree!)!.commit;
           scope.work.approvedSha = tested;
           scope.work.approvedPatch = await engine["updates"].patch(scope);
           scope.work.shipping = { moves: 0, failures: 0, base, start: tested, prepared: { tested, summary: task.title } };
@@ -72,7 +79,7 @@ process.exit(ok ? 0 : 1);`);
         expect(tasks.every(task => !engine["checks"].deliveryOrders.has(task.id))).toBe(true);
         const landed = tasks[results.indexOf("done")]!;
         const second = tasks[results.indexOf("again")]!;
-        const firstTip = await git(repo, "rev-parse", "main");
+        const firstTip = await gitOps.revParse(repo, "main");
         expect(firstTip).toBe(executionFor(landed).work.approvedSha!);
         expect(executionFor(second).work.shipping?.prepared).toBeUndefined();
         // Re-enter the real preparation boundary. Its integrated tree fails, so it cannot publish.
@@ -83,7 +90,7 @@ process.exit(ok ? 0 : 1);`);
         expect(evidence[2]!.tree).not.toBe(evidence[1]!.tree);
         expect(executionFor(second).work.checks?.tree).toBe(evidence[2]!.tree);
         expect(executionFor(second).work.approvedSha).toBeUndefined();
-        expect(await git(repo, "rev-parse", "main")).toBe(firstTip);
+        expect(await gitOps.revParse(repo, "main")).toBe(firstTip);
         expect(second.stageIndex).toBe(0);
         expect(engine["checks"].deliveryOrders.has(second.id)).toBe(false);
 

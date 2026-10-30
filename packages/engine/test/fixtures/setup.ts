@@ -1,12 +1,17 @@
 import { afterAll } from "bun:test";
 import { join } from "node:path";
 import { checkOf, type AgentProfile, type CheckId, type State, type Task } from "@petrina/core";
+import type { ToolProbe } from "@petrina/orchestrator";
+import { NativeToolProbe } from "../../src/tool-probe.js";
 import { Engine, type EngineOptions } from "../engine.js";
 import { findProgram } from "@petrina/agent-runtime/tools";
-import { FAKE_GH } from "../support.js";
+import { FAKE_GH, Fakes } from "../support.js";
+import { scriptedGitHub } from "../scripted-github.js";
 import { removeDir, tempDir } from "@petrina/test-support/fixtures";
 import { SLOW } from "@petrina/test-support/slow";
+import { fakeAgentSessions } from "./fake-agent-sessions.js";
 import { installPreparedProduct } from "./prepared-product.js";
+import { installSharedWorkflowFastPaths } from "./shared-preparation.js";
 import { ADDRESS } from "@petrina/test-support/repositories";
 import { nativeWorldFixtures, type NativeWorld } from "./native-worlds.js";
 import { clone, makeGitHubClone } from "../../../repositories/test/fixtures/discovery.js";
@@ -23,7 +28,7 @@ export function setupFixtures() {
   });
 
   let made = 0;
-  const fresh = (name: string) => join(temp, `${name}-${(made += 1)}`);
+  const fresh = (name: string, parent = temp) => join(parent, `${name}-${(made += 1)}`);
 
   /**
    * Fake agents per tool: "ok", logged out (refusing conversations), not logged in (opening conversations
@@ -32,11 +37,14 @@ export function setupFixtures() {
    * opens one and ignores being told to stop.
    */
   type Behaviour = "ok" | "logged-out" | "not-logged-in" | "silent-login" | "wont-start" | "hang" | "stubborn" | "silent-stubborn";
-  const agents = (tools: Partial<Record<CheckId, Behaviour>>, dir?: string): EngineOptions["agentCommand"] => (profile: AgentProfile) => {
-    const behaviour = tools[profile.toolId as CheckId] ?? (["grok", "antigravity"].includes(profile.toolId) ? "logged-out" : "ok");
+  const toolFlags = (tools: Partial<Record<CheckId, Behaviour>>, toolId: string): string[] => {
+    const behaviour = tools[toolId as CheckId] ?? (["grok", "antigravity"].includes(toolId) ? "logged-out" : "ok");
     const flags = behaviour === "ok" ? [] : behaviour === "stubborn" ? ["--hang", "--stubborn"] : behaviour === "silent-stubborn" ? ["--silent-login", "--stubborn"] : [`--${behaviour}`];
-    // Like the real Grok, which sends no login report: it signs in as a conversation opens, and refuses it logged out.
-    if (profile.toolId === "grok" && !flags.includes("--silent-login")) flags.push("--silent-login");
+    if (toolId === "grok" && !flags.includes("--silent-login")) flags.push("--silent-login");
+    return flags;
+  };
+  const agents = (tools: Partial<Record<CheckId, Behaviour>>, dir?: string): EngineOptions["agentCommand"] => (profile: AgentProfile) => {
+    const flags = toolFlags(tools, profile.toolId);
     return [process.execPath, fake, ...(dir ? [dir] : []), ...flags];
   };
 
@@ -84,18 +92,51 @@ export function setupFixtures() {
   };
 
 
-  const run = async <T>(tools: Partial<Record<CheckId, Behaviour>>, body: (run: { engine: Engine; taskId: string; w: NativeWorld }) => Promise<T>, options: EngineOptions = {}): Promise<T> =>
+  const nativeProbeOnly = (getEngine: () => Engine, ...ids: CheckId[]): ToolProbe => {
+    const allowed = new Set<CheckId>(ids);
+    let inner: NativeToolProbe | undefined;
+    const probe = () => (inner ??= new NativeToolProbe(getEngine()));
+    return {
+      absent: (id) => !allowed.has(id) || probe().absent(id),
+      run: (id, req) => probe().run(id, req),
+    };
+  };
+
+  const run = async <T>(tools: Partial<Record<CheckId, Behaviour>>, body: (run: { engine: Engine; taskId: string; w: NativeWorld }) => Promise<T>, options: EngineOptions | ((world: NativeWorld, getEngine: () => Engine) => EngineOptions) = {}): Promise<T> =>
     worlds.world("tools", async fixture => {
       const w = fixture.world;
+      const fakes = new Fakes(w.dir);
+      let current!: Engine;
       return fixture.engine(async engine => {
-        await engine.checkTools();
+        current = engine;
+        installSharedWorkflowFastPaths(engine, {
+          skipUpToDate: true,
+          skipPrepareChecks: true,
+          skipReviewCopies: true,
+          skipReviewInputDiffs: true,
+          fastCheckCapture: true,
+        });
+        await engine.waitUntilReady(); engine.stopRequested.signal.throwIfAborted();
+        await engine.checkTools(); engine.stopRequested.signal.throwIfAborted();
         const productId = installPreparedProduct(engine, { id: "demo", name: "Clone", repo: "acme/demo", tone: "blue", path: w.clone,
           remote: ADDRESS, defaultBranch: "main", delivery: "pull-request", approveDelivery: true });
+        const product = engine.s.products.find((entry) => entry.id === productId)!;
+        product.checks = [];
+        product.checksBy = "coordinator";
         engine.setProductDelivery(productId, "release", false);
         const taskId = engine.addTask({ productId, title: "Add a greeting", description: "A greeting file." });
         return body({ engine, taskId, w });
-      }, { agentCommand: agents(tools), gh: [process.execPath, FAKE_GH, join(w.dir, "github.json"), w.remote], remote: w.remote, toolCheckTimeoutMs: LIMIT, ...options }, { defaults: "none" });
+      }, {
+        agentCommand: agents(tools, w.dir),
+        startAgentSession: fakeAgentSessions(fakes, { flags: (toolId) => toolFlags(tools, toolId) }),
+        github: scriptedGitHub({ "acme/demo": { state: join(w.dir, "github.json"), remote: w.remote } }),
+        usageCommands: { codex: null, grok: null, antigravity: null },
+        gh: [process.execPath, FAKE_GH, join(w.dir, "github.json"), w.remote],
+        remote: w.remote,
+        toolCheckTimeoutMs: LIMIT,
+        ...(typeof options === "function" ? options(w, () => current) : options),
+      }, { defaults: "none" });
     }, { version: "1.0.0" });
 
-  return { fakeGh, temp, worlds, fresh, agents, until, status, taskOf, toolsUsed, LIMIT, noGh, sentences, refusal, run, clone, makeGitHubClone };
+  return { fakeGh, temp, worlds, fresh, agents, until, status, taskOf, toolsUsed, LIMIT, noGh, sentences, refusal, nativeProbeOnly, run, clone, makeGitHubClone };
 }

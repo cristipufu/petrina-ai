@@ -3,10 +3,18 @@ import { tmpdir } from "node:os";
 import { run, commandFailure, isRefName, isRepoName, EXIT_UNREPORTED, FETCH_TIMEOUT_MS, OUTPUT_INCOMPLETE, OUTPUT_UNREADABLE, type Gh, type Check, type RunResult } from "./git.js";
 const GH: Gh = ["gh"];
 
+/** Explicit transport for a host-supplied service; native commands retain their existing bounded lifecycle. */
+export interface GitHubRequests { request(args: readonly string[], input?: string): Promise<RunResult> }
+export type GitHubCommand = Gh | GitHubRequests;
+export function request(command: GitHubCommand, args: readonly string[], input?: string): Promise<RunResult> {
+  return "request" in command ? command.request(args, input)
+    : run([...command, ...args], tmpdir(), input, { credentials: true, timeoutMs: FETCH_TIMEOUT_MS });
+}
+
 /** gh with the coordinator's login, pinned to the product's repository and run outside any working copy. */
-export async function gh(cmd: Gh, repo: string, args: readonly string[], input?: string): Promise<RunResult> {
+export async function gh(cmd: GitHubCommand, repo: string, args: readonly string[], input?: string): Promise<RunResult> {
   if (!isRepoName(repo)) return { code: 2, stdout: "", stderr: `not a GitHub repository: ${repo}` };
-  return inGitHubTerms(await run([...cmd, ...args, "--repo", repo], tmpdir(), input, { credentials: true, timeoutMs: FETCH_TIMEOUT_MS }));
+  return inGitHubTerms(await request(cmd, [...args, "--repo", repo], input));
 }
 
 const UNFINISHED: readonly (readonly [string, string])[] = [
@@ -58,9 +66,9 @@ const noRelease = (result: RunResult) => !result.timedOut && /^release not found
  * counts: GitHub answers "not found" alike for a missing release and a repository the login cannot see.
  * Only GitHub's own answer says the login cannot see it: no answer leaves that unknown, never visible.
  */
-export async function canSee(repo: string, cmd: Gh = GH): Promise<Check<void>> {
+export async function canSee(repo: string, cmd: GitHubCommand = GH): Promise<Check<void>> {
   if (!isRepoName(repo)) return { ok: false, error: `not a GitHub repository: ${repo}` };
-  const result = inGitHubTerms(await run([...cmd, "repo", "view", repo, "--json", "nameWithOwner", "--jq", ".nameWithOwner"], tmpdir(), undefined, { credentials: true, timeoutMs: FETCH_TIMEOUT_MS }));
+  const result = inGitHubTerms(await request(cmd, ["repo", "view", repo, "--json", "nameWithOwner", "--jq", ".nameWithOwner"]));
   if (result.startFailure) return { ok: false, error: `Petrina couldn't start the repository check for ${repo} (${commandFailure(result).error})` };
   if (result.timedOut) return { ok: false, error: `Petrina could not confirm whether your GitHub login can see ${repo} (${commandFailure(result).error})` };
   if (result.code !== 0) return { ok: false, error: `your GitHub login cannot see ${repo} (${commandFailure(result).error})` };
@@ -68,7 +76,7 @@ export async function canSee(repo: string, cmd: Gh = GH): Promise<Check<void>> {
 }
 
 /** "Not there", once the login is known to see the repository; otherwise why GitHub could not say. */
-async function notThere<T>(repo: string, cmd: Gh): Promise<Check<T | undefined>> {
+async function notThere<T>(repo: string, cmd: GitHubCommand): Promise<Check<T | undefined>> {
   const seen = await canSee(repo, cmd);
   return seen.ok ? { ok: true, value: undefined } : seen;
 }
@@ -78,7 +86,7 @@ const stateOf = (value: unknown): "open" | "merged" | "closed" => {
   return state === "merged" ? "merged" : state === "closed" ? "closed" : "open";
 };
 
-export async function prState(repo: string, number: number, cmd: Gh = GH): Promise<"open" | "merged" | "closed" | undefined> {
+export async function prState(repo: string, number: number, cmd: GitHubCommand = GH): Promise<"open" | "merged" | "closed" | undefined> {
   const result = await gh(cmd, repo, ["pr", "view", String(number), "--json", "state", "--jq", ".state"]);
   if (result.code !== 0) return undefined;
   return stateOf(result.stdout);
@@ -88,7 +96,7 @@ export async function prState(repo: string, number: number, cmd: Gh = GH): Promi
  * Every pull request from this branch, open, closed or merged. A listing that may be cut short does
  * not count, and an empty one only once the login is known to see the repository.
  */
-export async function pullRequests(repo: string, branch: string, cmd: Gh = GH): Promise<Check<PullRequestInfo[]>> {
+export async function pullRequests(repo: string, branch: string, cmd: GitHubCommand = GH): Promise<Check<PullRequestInfo[]>> {
   if (!isRefName(branch)) return { ok: false, error: "not a branch Petrina looks up" };
   const result = await gh(cmd, repo, ["pr", "list", "--head", branch, "--state", "all", "--limit", String(LIST_LIMIT), "--json", "number,url,state,headRefName,baseRefName,headRefOid,isCrossRepository"]);
   if (result.code !== 0) return commandFailure(result);
@@ -116,7 +124,7 @@ export async function pullRequests(repo: string, branch: string, cmd: Gh = GH): 
 export type Created = { ok: true; url: string } | { ok: false; exists: boolean; error: string };
 
 /** Open a pull request from an already pushed branch. The title and body stay text: arguments and standard input, never a shell. */
-export async function openPullRequest(repo: string, pr: { head: string; base: string; title: string; body: string }, cmd: Gh = GH): Promise<Created> {
+export async function openPullRequest(repo: string, pr: { head: string; base: string; title: string; body: string }, cmd: GitHubCommand = GH): Promise<Created> {
   if (!isRefName(pr.head) || !isRefName(pr.base)) return { ok: false, exists: false, error: "not a branch Petrina publishes" };
   const result = await gh(cmd, repo, ["pr", "create", "--head", pr.head, "--base", pr.base, `--title=${pr.title}`, "--body-file", "-"], pr.body);
   return created(result);
@@ -128,7 +136,7 @@ function created(result: RunResult): Created {
 }
 
 /** The latest published release's tag; undefined only when the login sees the repository and it has none. */
-export async function latestRelease(repo: string, cmd: Gh = GH): Promise<Check<string | undefined>> {
+export async function latestRelease(repo: string, cmd: GitHubCommand = GH): Promise<Check<string | undefined>> {
   const result = await gh(cmd, repo, ["release", "view", "--json", "tagName"]);
   if (result.code !== 0) return noRelease(result) ? notThere(repo, cmd) : commandFailure(result);
   try {
@@ -140,7 +148,7 @@ export async function latestRelease(repo: string, cmd: Gh = GH): Promise<Check<s
 }
 
 /** The release for a tag; undefined only when the login sees the repository and it has none. */
-export async function findRelease(repo: string, tag: string, cmd: Gh = GH): Promise<Check<{ tag: string; url: string; draft: boolean } | undefined>> {
+export async function findRelease(repo: string, tag: string, cmd: GitHubCommand = GH): Promise<Check<{ tag: string; url: string; draft: boolean } | undefined>> {
   if (!isRefName(tag)) return { ok: false, error: "not a tag Petrina looks up" };
   const result = await gh(cmd, repo, ["release", "view", tag, "--json", "tagName,url,isDraft"]);
   if (result.code !== 0) return noRelease(result) ? notThere(repo, cmd) : commandFailure(result);
@@ -154,7 +162,7 @@ export async function findRelease(repo: string, tag: string, cmd: Gh = GH): Prom
 }
 
 /** Publish the release on a tag already on GitHub: it can never create or pick another tag. */
-export async function createRelease(repo: string, tag: string, notes: string, cmd: Gh = GH): Promise<Created> {
+export async function createRelease(repo: string, tag: string, notes: string, cmd: GitHubCommand = GH): Promise<Created> {
   if (!isRefName(tag)) return { ok: false, exists: false, error: "not a tag Petrina publishes" };
   const result = await gh(cmd, repo, ["release", "create", tag, "--verify-tag", `--title=${tag}`, "--notes-file", "-"], notes);
   return created(result);

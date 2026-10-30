@@ -7,7 +7,7 @@ const { voting, checkedFinding, plain, inject, close } = independentReviewFixtur
 afterAll(close);
 describe.concurrent("bounded verifier panels", () => {
 it("retains a finished tool's vote across restart while its partner is unfinished", async () => {
-    const f = await voting({ verifier: "not-a-bug" });
+    const f = await voting({ verifier: "not-a-bug" }, 3, ["claude-code"], false, { acceptedBuild: true });
     try {
       await f.run(async () => {
       await f.advance(() => checkedFinding(f)?.votes?.length === 1, (role, session) => role !== "verifier" || f.model(session) === "gpt-6.1-sol");
@@ -23,7 +23,7 @@ it("retains a finished tool's vote across restart while its partner is unfinishe
   });
 
 it("keeps the first pair's answers and its third place through a pause and a restart", async () => {
-    const f = await voting({ verifier: "not-a-bug" }, 3, []);
+    const f = await voting({ verifier: "not-a-bug" }, 3, [], false, { acceptedBuild: true });
     try {
       await f.run(async () => {
       await f.advance(() => f.fakes.received("verifier").length === 2, (role) => role !== "verifier");
@@ -52,7 +52,7 @@ it("keeps the first pair's answers and its third place through a pause and a res
   });
 
 it("saves partial reports before repair and restarts only the missing verdicts", async () => {
-    const f = await voting({ partialVerification: true, verifier: "not-a-bug" }, 1, ["claude-code", "grok"]);
+    const f = await voting({ partialVerification: true, verifier: "not-a-bug" }, 1, ["claude-code", "grok"], false, { acceptedBuild: true });
     try {
       await f.run(async () => {
       inject(f, "second", "opus-high");
@@ -72,7 +72,7 @@ it("saves partial reports before repair and restarts only the missing verdicts",
   });
 
 it("keeps a voter's starting role and partial work when its model changes before restart", async () => {
-    const f = await voting({ partialVerification: true, verifier: "not-a-bug" }, 3, ["codex", "grok"]);
+    const f = await voting({ partialVerification: true, verifier: "not-a-bug" }, 3, ["codex", "grok"], false, { acceptedBuild: true });
     try {
       await f.run(async () => {
       inject(f, "second", "opus-high");

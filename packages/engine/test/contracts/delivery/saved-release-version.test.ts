@@ -3,13 +3,9 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type ExtraValidation } from "@petrina/core";
-
-import { git } from "../../fixtures.js";
-
+import * as gitOps from "@petrina/repositories/git";
 import { executionFor } from "@petrina/orchestrator";
-
-
-import { extraFixture } from "../../extra-fixtures.js";
+import { serviceExtraFixture } from "../../extra-fixtures.js";
 
 const cases = engineCaseFixtures();
 afterAll(() => cases.close());
@@ -18,12 +14,12 @@ afterAll(() => cases.close());
 describe.skipIf(process.platform === "win32")("required extra validation shares the host check queue", () => {
 for (const route of ["no version change", "working edits"] as const) it(`pins the restored saved work after ${route}`, async () => {
   return cases.use("petrina-extra-", async owner => {
-    return await extraFixture(owner, async f => {
+    return await serviceExtraFixture(owner, async f => {
     const scope = executionFor(f.task), path = scope.work.worktree!, shipping = f.engine["shipping"];
-    scope.work.branch = await git(path, "branch", "--show-current");
+    scope.work.branch = await gitOps.currentBranch(path);
     scope.work.delivery = "release";
     writeFileSync(join(path, "package.json"), '{"name":"fixture","version":"1.0.0"}\n');
-    await git(path, "add", "."); await git(path, "commit", "-qm", "Declare the release version");
+    await gitOps.commitChanges(path, "Declare the release version");
     await f.engine.rememberVersion(scope);
     const saved = structuredClone(scope.work.savedVersion!);
     scope.work.shipping = { start: saved.commit, moves: 0, failures: 0, version: route === "no version change" ? "1.0.0" : "1.0.1", tag: "v1.0.1" };
@@ -37,8 +33,8 @@ for (const route of ["no version change", "working edits"] as const) it(`pins th
     ] };
     f.task.stageIndex = 2;
     await shipping.clearUnpublishedVersion(scope);
-    expect(await git(path, "rev-parse", "HEAD")).toBe(saved.commit);
-    expect(await git(path, "status", "--porcelain")).toBe("");
+    expect(await gitOps.head(path)).toBe(saved.commit);
+    expect(await gitOps.isClean(path)).toBe(true);
     expect(scope.work.savedVersion).toEqual(saved);
     f.engine.commitNow();
     const stored = f.engine.store.load()!.tasks.find(task => task.id === f.task.id)!;
@@ -52,18 +48,18 @@ for (const route of ["no version change", "working edits"] as const) it(`pins th
     expect(reply.message!.includes("The working copy currently has changes that are excluded")).toBe(route === "working edits");
     await owner.stop(f.engine);
 
-  });
+  }, {}, { actorLease: false, commandLease: false });
 
   });
 });
 
 it("keeps an already queued release snapshot when restoring the saved work", async () => {
   return cases.use("petrina-extra-", async owner => {
-    return await extraFixture(owner, async f => {const scope = executionFor(f.task), path = scope.work.worktree!;
+    return await serviceExtraFixture(owner, async f => {const scope = executionFor(f.task), path = scope.work.worktree!;
 
-    scope.work.branch = await git(path, "branch", "--show-current");
+    scope.work.branch = await gitOps.currentBranch(path);
     writeFileSync(join(path, "package.json"), '{"name":"fixture","version":"1.0.0"}\n');
-    await git(path, "add", "."); await git(path, "commit", "-qm", "Declare the release version");
+    await gitOps.commitChanges(path, "Declare the release version");
     await f.engine.rememberVersion(scope);
     const saved = structuredClone(scope.work.savedVersion!);
     scope.work.shipping = { start: saved.commit, moves: 0, failures: 0, version: "1.0.1", tag: "v1.0.1" };
@@ -76,8 +72,8 @@ it("keeps an already queued release snapshot when restoring the saved work", asy
     expect(retry.validation).toEqual(queued);
     f.engine.setPoolPaused(false);
     await f.started(queued);
-    expect(await git(queued.snapshot, "rev-parse", "HEAD")).toBe(queued.commit);
-    expect(await git(queued.snapshot, "rev-parse", "HEAD^{tree}")).toBe(queued.tree);
+    expect(await gitOps.head(queued.snapshot)).toBe(queued.commit);
+    expect(await gitOps.treeOf(queued.snapshot)).toBe(queued.tree);
     f.release(queued);
     const result = await f.finished(queued);
     expect(result.result).toBe("passed");
@@ -85,7 +81,7 @@ it("keeps an already queued release snapshot when restoring the saved work", asy
     expect(result.commit).not.toBe(saved.commit);
     await owner.stop(f.engine);
 
-  });
+  }, {}, { fastClientStop: true, actorLease: false });
 
   });
 });

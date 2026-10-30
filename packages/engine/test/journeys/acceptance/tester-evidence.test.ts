@@ -1,7 +1,5 @@
 import { describe as originalDescribe } from "bun:test";
 import { testerAgents } from "../../fixtures/tester-agents.js";
-import { resolve as testFixturePath } from "node:path";
-const TEST_FIXTURE_ROOT = testFixturePath(import.meta.dir, "../..");
 import { executionFor } from "@petrina/orchestrator";
 import { afterAll, expect, it } from "bun:test";
 import { join } from "node:path";
@@ -9,7 +7,7 @@ import { join } from "node:path";
 import { journeyProblems, JOURNEY_WORDS as W, type Task } from "@petrina/core";
 import { testerEvidenceFixtures } from "../../fixtures/tester-evidence.js";
 
-import { Fakes, headNow, tempDir, waitFor } from "../../fixtures.js";
+import { headNow, tempDir, waitFor } from "../../fixtures.js";
 
 const fixtures = testerEvidenceFixtures();
 afterAll(fixtures.close);
@@ -60,7 +58,7 @@ for (const changes of [true]) it(`bounds failing acceptance with changed code ${
     let engine = owner.open(data, options);
     try {
       await owner.prepare(async () => {
-      const { id } = await fixtures.prepare(engine, root, "Try the greeting", true);
+      const { id } = await fixtures.prepare(engine, root, "Try the greeting", true, fakes);
       const task = await waitFor(() => {
         const state = engine.getState();
         const plan = state.inbox.find((item) => item.taskId === id && item.kind === "plan");
@@ -102,18 +100,18 @@ originalDescribe("the tester tries the change once, and the final code once more
 for (const handoff of [false, true]) it(`skips the tester in fix rounds, tries the final code before the delivery check, and sends a failure there back to the builder${handoff ? ", crediting the stand-in" : ""}`, async () => {
     const root = tempDir("petrina-tester-");
     const owner = fixtures.own(root);
-    const fakes = new Fakes(join(root, "fake"));
+    const fakes = testerAgents();
     // Build, try it, two reviewers; the first review raises an Important finding; the fix changes the code; the
     // tester's pass on the final code fails once.
     fakes.scenario({ planner: "tester-first", reviewer: handoff ? "important-twice" : "important", fixes: "change", tester: "fail-once", ...(handoff ? { learnings: "tester", limited: [{ model: "opus", role: "tester" }] } : {}) });
-    const engine = owner.open(join(root, "data"), { agentCommand: () => [process.execPath, join(TEST_FIXTURE_ROOT, "fake-agent.ts"), fakes.dir] });
+    const engine = owner.open(join(root, "data"), { startAgentSession: fakes.start, toolProbe: fakes.toolProbe });
     let roundTwoReviewHead: string | undefined;
     // A failed read is reported by the test, not thrown into the engine's announcement.
     let captureFailure: unknown;
     let unsubscribe = () => {};
     try {
       await owner.prepare(async () => {
-      const { id: taskId } = await fixtures.prepare(engine, root, "Add a greeting", true, handoff);
+      const { id: taskId } = await fixtures.prepare(engine, root, "Add a greeting", true, fakes);
       // Announcements stay synchronous: read the reviewed code's HEAD from Git's files at that moment.
       unsubscribe = engine.subscribe(() => {
         const current = engine.task(taskId);

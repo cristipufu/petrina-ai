@@ -1,6 +1,10 @@
 import type { Product } from "@petrina/core";
 export interface RepositoryNavigation { title: string; body: string }
 import * as git from "@petrina/repositories/git";
+import { readObjects, treeNames } from "./object-batch.js";
+
+/** Keep navigation paths on one line without hiding readable Unicode names. */
+const shownPath = (path: string) => /[\x00-\x1f\x7f"\\]/.test(path) ? JSON.stringify(path) : path;
 
 /** Bounded source facts for navigation, never another agent's conclusions. */
 export class RepoOrientation {
@@ -21,27 +25,27 @@ export class RepoOrientation {
 
   private async prepare(product: Product, tree: string): Promise<RepositoryNavigation> {
     const path = product.path!;
-    const [listed, manifest, agents, readme] = await Promise.all([
-      git.run(["git", "ls-tree", "--name-only", tree], path),
-      git.fileAt(path, tree, "package.json"), git.fileAt(path, tree, "AGENTS.md"), git.fileAt(path, tree, "README.md"),
-    ]);
-    if (listed.code) throw new Error("Repository navigation is unavailable.");
-    const top = listed.stdout.split("\n").slice(0, 60);
+    const [listed, ...documents] = await readObjects(path, [tree, ...["package.json", "AGENTS.md", "README.md"].map(file => `${tree}:${file}`)]);
+    if (!listed) throw new Error("Repository navigation is unavailable.");
+    const [manifest, agents, readme] = documents.map(document => document?.type === "blob" ? document.body.toString("utf8") : undefined);
+    const top = treeNames(listed).slice(0, 60);
     const packages: string[] = [];
-    for (const folder of ["packages", "apps"]) if (top.includes(folder)) {
-      const children = await git.run(["git", "ls-tree", "--name-only", `${tree}:${folder}`], path);
-      if (!children.code) packages.push(...children.stdout.split("\n").filter(Boolean).slice(0, 12).map((name) => `${folder}/${name}`));
+    const folders = ["packages", "apps"].filter(folder => top.includes(folder));
+    const children = await readObjects(path, folders.map(folder => `${tree}:${folder}`));
+    for (const [index, child] of children.entries()) if (child?.type === "tree") {
+      packages.push(...treeNames(child).slice(0, 12).map(name => `${folders[index]}/${name}`));
     }
-    const manifests = await Promise.all(packages.slice(0, 12).map(async (name) => {
-      const text = await git.fileAt(path, tree, `${name}/package.json`);
+    const names = packages.slice(0, 12), files = await readObjects(path, names.map(name => `${tree}:${name}/package.json`));
+    const manifests = files.map((file, index) => {
+      const text = file?.type === "blob" ? file.body.toString("utf8") : undefined;
       if (!text) return;
-      try { const value = JSON.parse(text); return `${name}: ${JSON.stringify({ name: value.name, scripts: value.scripts })}`; } catch { return; }
-    }));
+      try { const value = JSON.parse(text); return `${shownPath(names[index]!)}: ${JSON.stringify({ name: value.name, scripts: value.scripts })}`; } catch { return; }
+    });
     let scripts = "";
     try { const value = JSON.parse(manifest ?? "{}"); scripts = JSON.stringify({ workspaces: value.workspaces, scripts: value.scripts }); } catch { /* Optional navigation. */ }
     const body = [
       `Product ${product.id}; local default branch ${product.defaultBranch ?? "main"}; exact tree ${tree}. Navigation only, not a plan or requirements. A selected branch or pull request may differ. Inspect the actual source before deciding scope or risk. Nothing was fetched or executed.`,
-      `Top-level paths (up to 60):\n${top.join("\n")}`,
+      `Top-level paths (up to 60):\n${top.map(shownPath).join("\n")}`,
       scripts ? `Declared root workspace/scripts:\n${scripts}` : "",
       manifests.some(Boolean) ? `Workspace manifests (up to 12):\n${manifests.filter(Boolean).join("\n")}` : "",
       agents ? `AGENTS.md excerpt (up to 4,000 characters; read the complete file at this version before acting):\n${agents.slice(0, 4_000)}` : "",

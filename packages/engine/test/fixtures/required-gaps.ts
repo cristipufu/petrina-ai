@@ -4,15 +4,16 @@ import { installPreparedProduct } from "./prepared-product.js";
 import { acceptanceAgents } from "./acceptance-agents.js";
 import { scriptedToolProbe } from "../scripted-probes.js";
 import type { Scenario } from "../fake-agent.js";
-import { spyOn } from "bun:test";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { cpSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { completeAll, type DeepMutable, type Product } from "@petrina/core";
-import { Fakes, git, makeProduct, tempDir } from "../fixtures.js";
+import * as gitOps from "@petrina/repositories/git";
+import { repositorySeed } from "@petrina/test-support/repositories";
+import { Fakes, createProductRepository, tempDir } from "../fixtures.js";
 import { executionFor } from "@petrina/orchestrator";
-import { commandInputText } from "../../src/checks.js";
-
-const TEST_FIXTURE_ROOT = resolve(import.meta.dir, "..");
+import { installAcceptedBuildCompletion } from "./check-build-completion.js";
+import { fakeEngineSettings } from "./fake-agent-sessions.js";
+import { installSharedWorkflowFastPaths, materializePreparedWorktree } from "./shared-preparation.js";
 
 /** Private native acceptance worlds; each caller owns its collection and returned operations. */
 export function requiredGapFixtures(required: string) {
@@ -27,7 +28,8 @@ export function requiredGapFixtures(required: string) {
    * A task past its build, with delivery approval off for the task and its products: the plan has no delivery check.
    * The Tester, the reviewer and publishing run for real; the coding tools are the scripted stand-ins.
    */
-  async function fixture(options: { shared?: boolean; checklist?: readonly string[]; role?: "built-in" | "custom" | "task-owned"; github?: boolean; native?: boolean } = {}) {
+  async function fixture(options: { shared?: boolean; checklist?: readonly string[]; role?: "built-in" | "custom" | "task-owned"; github?: boolean; native?: boolean; acceptedBuilds?: boolean } = {}) {
+    if (options.native && options.acceptedBuilds) throw new Error("A native provider fixture cannot supply accepted Builder results");
     const root = tempDir("petrina-acceptance-gap-"); roots.push(root);
     const lifetime = directDrivers(root); fixtures.add(lifetime);
     const close = async () => { await lifetime.close(); fixtures.delete(lifetime); };
@@ -45,7 +47,7 @@ export function requiredGapFixtures(required: string) {
       // With `github`, a local folder stands in for the product's GitHub repository, holding main as the task started.
       const github = options.github ? join(root, "github.git") : undefined;
       // Saved maintenance profiles also read startup tool availability: every tool here is a stand-in.
-      const engineOptions = { ...(native ? { agentCommand: () => [process.execPath, join(TEST_FIXTURE_ROOT, "fake-agent.ts"), native.dir], toolPath: () => process.execPath }
+      const engineOptions = { ...(native ? fakeEngineSettings(native)
         : { startAgentSession: replies.start, toolProbe: scriptedToolProbe({ "claude-code": { status: "ready" }, codex: { status: "ready" }, grok: { status: "ready" }, antigravity: { status: "not-installed" }, gh: { status: "not-installed" }, git: { status: "ready" }, node: { status: "ready" } }) }),
         terminals: () => [], ...(github ? { remote: github } : {}) };
       const engine = lifetime.open(join(root, "data"), engineOptions);
@@ -54,30 +56,40 @@ export function requiredGapFixtures(required: string) {
       if (!native) await engine.checkTools();
       engine.setPoolPaused(false);
       const products: DeepMutable<Product>[] = [];
+      const initialVersions = new Map<DeepMutable<Product>, string>();
       for (let i = 0; i < (options.shared ? 2 : 1); i++) {
         const dir = join(root, `product-${i}`); mkdirSync(dir);
-        const repo = await makeProduct(dir, { origin: "none" });
+        const { path: repo, initialSha } = await createProductRepository(dir, { origin: "none" });
         const id = installPreparedProduct(engine, { id: i === 0 ? "clone" : "clone-2", path: repo, name: `Product ${i + 1}`, repo: "local/clone",
           tone: i === 0 ? "blue" : "green", defaultBranch: "main", delivery: "local", approveDelivery: false });
-        engine.setProductChecks(id, [{ name: "Test", command: commandInputText([process.execPath, "-e", "process.exit(0)"]) }]);
         const product = engine.s.products.find(product => product.id === id)!;
+        // Acceptance reports and delivery decisions are the subject. The actual check owner
+        // still observes the repository, with no unrelated dummy command to execute.
+        product.checks = []; product.checksBy = "coordinator";
         if (github) {
           // As after Petrina's earlier reads of GitHub's main, the product's copy knows where it is.
-          await git(root, "init", "-q", "--bare", github); await git(repo, "push", "-q", github, "HEAD:refs/heads/main");
-          await git(repo, "fetch", "-q", github, "+refs/heads/main:refs/remotes/origin/main");
+          if (!existsSync(github)) {
+            const bareSeed = await repositorySeed(undefined, true, undefined, "none");
+            cpSync(bareSeed.origin, github, { recursive: true });
+          }
+          const originMain = join(repo, ".git", "refs", "remotes", "origin", "main");
+          mkdirSync(dirname(originMain), { recursive: true });
+          writeFileSync(originMain, `${initialSha}\n`);
           product.repo = "acme/greeting"; product.remote = "https://github.com/acme/greeting.git";
         }
         products.push(product);
+        initialVersions.set(product, initialSha);
       }
       const task = engine.task(engine.addTask({ productId: products[0]!.id, title: "Show the greeting", backlog: true }))!;
       const owners = [];
       for (const [i, product] of products.entries()) {
-        const worktree = join(root, `work-${i}`), baseSha = await git(product.path!, "rev-parse", "HEAD"), branch = `greeting-${i}`;
-        await git(product.path!, "worktree", "add", "-q", "-b", branch, worktree, baseSha);
-        writeFileSync(join(worktree, "greeting.txt"), "Hello\n");
-        await git(worktree, "add", "."); await git(worktree, "commit", "-q", "-m", "Add the greeting");
-        owners.push({ productId: product.id, worktree, baseSha, base: baseSha, branch, delivery: "local" as const, completedStages: ["build"], preparation: "ready" as const,
-          source: { product, start: { kind: "default" as const, branch: "main" }, destination: { mode: "local" as const, kind: "branch" as const, repo: product.repo, branch: "main" }, confirmed: true } });
+        const baseSha = initialVersions.get(product);
+        if (!baseSha) throw new Error("The private acceptance-gap product lost its initial commit");
+        const worktree = join(root, `work-${i}`), branch = `greeting-${i}`;
+        const work = { productId: product.id, worktree, baseSha, base: baseSha, branch, delivery: "local" as const, completedStages: ["build"], preparation: "ready" as const,
+          source: { product, start: { kind: "default" as const, branch: "main" }, destination: { mode: "local" as const, kind: "branch" as const, repo: product.repo, branch: "main" }, confirmed: true } };
+        await materializePreparedWorktree(engine, { task, work } as unknown as ReturnType<typeof executionFor>, product.path!, baseSha, baseSha, "greeting.txt", "Hello\n", "Add the greeting");
+        owners.push(work);
       }
       if (options.shared) { delete task.repository; task.repositories = owners; task.activeProductId = products[0]!.id; }
       else task.repository = owners[0];
@@ -97,14 +109,19 @@ export function requiredGapFixtures(required: string) {
       const checklist = options.checklist ?? [required];
       if (checklist.length) task.brief = { summary: "Show the greeting", areas: [], forUsers: [], risks: [], acceptance: checklist.map(text => ({ text })) };
       task.state = "running"; task.stageIndex = 1;
+      const prepareBuilds = (generation: typeof engine) => {
+        installSharedWorkflowFastPaths(generation, { skipDriverPrepare: false, skipUpToDate: true, skipPrepareChecks: true, skipReviewCopies: true, skipReviewInputDiffs: true, fastCheckCapture: true, fastCleanup: true, fastCheckpoints: true });
+        if (options.acceptedBuilds) installAcceptedBuildCompletion(generation, task.id, replies, () => generation.stopRequested.signal.throwIfAborted());
+      };
+      prepareBuilds(engine);
       const f = {
         root, fakes, engine, task, close, scope: executionFor(task), products, owners, build, tester, review, ship, github,
         testerName: tester.roleId === "tester" ? "tester" : "quality partner",
-        mains: () => lifetime.run(f.engine, () => completeAll(products.map(product => git(product.path!, "rev-parse", "main")))),
+        mains: () => lifetime.run(f.engine, () => completeAll(products.map(async product => (await gitOps.revParse(product.path!, "main"))!))),
         drive: async () => {
-          const admit = spyOn(f.engine["driver"].workflow as unknown as { admitNext: () => Promise<boolean> }, "admitNext").mockResolvedValue(true);
-          try { f.task.state = "running"; await lifetime.run(f.engine, () => f.engine["driver"].workflow["drive"](f.task.id)); if (f.engine.task(f.task.id)?.state === "failed") throw new Error(f.task.error); }
-          finally { admit.mockRestore(); }
+          f.task.state = "running";
+          await lifetime.run(f.engine, () => f.engine["driver"].workflow["drive"](f.task.id));
+          if (f.engine.task(f.task.id)?.state === "failed") throw new Error(f.task.error);
         },
         decisions: () => f.engine.s.inbox.filter(item => item.taskId === f.task.id && item.kind === "delivery"),
         runs: (roleId = tester.roleId) => f.task.journey!.filter(step => step.kind === "agent" && step.roleId === roleId),
@@ -117,6 +134,7 @@ export function requiredGapFixtures(required: string) {
           replacement.schedule = () => {};
           await replacement.waitUntilReady(); replacement.setPoolPaused(false);
           f.task = replacement.task(task.id)!; f.scope = executionFor(f.task);
+          prepareBuilds(replacement);
         }),
       };
       return f;

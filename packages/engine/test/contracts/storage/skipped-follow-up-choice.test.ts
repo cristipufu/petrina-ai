@@ -2,12 +2,11 @@ import { afterAll, expect, it } from "bun:test";
 import { ReviewResult } from "../../../src/roles.js";
 import { checkReviewEvidence } from "@petrina/core";
 import { createFollowUpFixtures, STEPS, EVIDENCE, older, taskOf, cardFor, plant } from "../../fixtures/follow-up-native.js";
-
-const { open, reopen, close, shutdown } = createFollowUpFixtures();
+const { open, reopen, close, use } = createFollowUpFixtures();
 afterAll(close);
-
 it("recovers a skipped choice after the shown card finishes, preserving votes, pictures and one card through restart", async () => {
-  const world = await open();
+  return use(async caseOwner => {
+  const world = await open(caseOwner);
   try {
     const { engine } = world;
     const shown = engine.addTask({ productId: world.shop, kind: "bug", title: "Already finished", backlog: true });
@@ -22,6 +21,7 @@ it("recovers a skipped choice after the shown card finishes, preserving votes, p
     })]);
     plant(engine, source.id, text);
     const release = engine.holdFollowUp(source.id);
+    caseOwner.onStop(release);
     try {
       source.state = "done";
       source.column = "done";
@@ -42,5 +42,6 @@ it("recovers a skipped choice after the shown card finishes, preserving votes, p
     await world.engine["followUps"].catchUp();
     expect(cardFor(world.engine, "silent")).toHaveLength(1);
     expect(world.engine.task(card.id)!.session.flatMap(line => line.images ?? [])).toHaveLength(1);
-  } finally { await shutdown(world.engine); }
+  } finally { await caseOwner.stop(world.engine); }
+  });
 });

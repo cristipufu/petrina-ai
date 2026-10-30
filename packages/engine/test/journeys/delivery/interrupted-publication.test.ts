@@ -1,27 +1,84 @@
 import { acmeDemoProduct, installPreparedProduct } from "../../fixtures/prepared-product.js";
 import { legacyDeliveryAgents } from "../../fixtures/legacy-delivery-agents.js";
 import { queuePreparedDelivery } from "../../fixtures/queued-delivery.js";
+import { commitLooseOnRef, installSharedWorkflowFastPaths } from "../../fixtures/shared-preparation.js";
 // A delivery interrupted at any step never goes out twice: each publishing step is saved before it starts,
 // and what went out is looked up first after a restart, a pause, a Retry or a cancel.
 import { afterAll, describe, expect, it } from "bun:test";
-import { existsSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { completeAll, type ShippingRecord, type State } from "@petrina/core";
-import type { Engine } from "../../engine.js";
-import { nativeWorldFixtures, type NativeWorldFixture } from "../../fixtures/native-worlds.js";
+import type { Engine, EngineOptions } from "../../engine.js";
+import { nativeWorldFixtures, type NativeWorld, type NativeWorldFixture } from "../../fixtures/native-worlds.js";
 import { branchName } from "@petrina/repositories/git";
-import { finish, git, gitWith, itemOf, remoteRef, taskOf, testGitEnv, until, SLOW } from "../../support.js";
+import { finish, gitWith, itemOf, taskOf, testGitEnv, until, SLOW } from "../../support.js";
+import { ScriptedAgents, scriptedResult } from "../../scripted-agents.js";
 
 const worlds = nativeWorldFixtures();
-const world = async <T>(name: string, body: (fixture: NativeWorldFixture) => Promise<T>, options: { allowOverlap?: true } = {}): Promise<T> => {
+const world = async <T>(name: string, body: (fixture: NativeWorldFixture) => Promise<T>, options: { allowOverlap?: true; nativeGitHub?: false } = {}): Promise<T> => {
   let directory: string | undefined;
-  return worlds.world(name, fixture => { directory = fixture.world.dir; return body(fixture); }, options, {
+  return worlds.world(name, fixture => {
+    directory = fixture.world.dir;
+    return body({
+      ...fixture,
+      engine: (run, engineOptions, mode) =>
+        fixture.engine(
+          current => run(installSharedWorkflowFastPaths(current, { skipDriverPrepare: true, skipUpToDate: true, fastCheckCapture: true, fastCleanup: true, fastCheckpoints: true })),
+          engineOptions,
+          mode,
+        ),
+    });
+  }, options, {
     stopPeers() {
       if (directory) for (const name of readdirSync(directory)) if (name === "hold" || name.startsWith("hold-")) rmSync(join(directory, name), { force: true });
     },
   });
 };
+/** These cases supply GitHub answers; their private Git mutations and Engine restarts still run natively. */
+const serviceWorld: typeof world = (name, body, options = {}) => world(name, body, { ...options, nativeGitHub: false });
 afterAll(worlds.close);
+
+function remoteRef(remote: string, ref: string): string | undefined {
+  const file = join(remote, ...ref.split("/"));
+  return existsSync(file) ? readFileSync(file, "utf8").trim() : undefined;
+}
+
+function writeRef(remote: string, ref: string, sha: string): void {
+  const file = join(remote, ...ref.split("/"));
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, `${sha}\n`);
+}
+
+function deleteRef(remote: string, ref: string): void {
+  rmSync(join(remote, ...ref.split("/")), { force: true });
+}
+
+function branchRef(clone: string, branch: string): string {
+  return readFileSync(join(clone, ".git", "refs", "heads", ...branch.split("/")), "utf8").trim();
+}
+
+function deliveryAgents(w: NativeWorld): Pick<EngineOptions, "startAgentSession" | "toolProbe"> {
+  const base = legacyDeliveryAgents(w);
+  const held = new ScriptedAgents(async (prompt, signal) => {
+    const hold = w.script().hold;
+    if (hold && (hold.role ?? "builder") === "release manager" && (!hold.title || prompt.text.includes(hold.title))) {
+      writeFileSync(`${hold.file}.reached`, "");
+      while (existsSync(hold.file) && !signal.aborted) await Bun.sleep(20);
+    }
+    w.setScript(current => { (current.releaseManagerPrompts ??= []).push(prompt.text); });
+    return scriptedResult({
+      summary: "Wrote the release notes.",
+      notes: "## What's new\n- People see a greeting.",
+    });
+  });
+  return {
+    toolProbe: base.toolProbe,
+    startAgentSession(options, role) {
+      if (role.result === "delivery") return held.start(options, role);
+      return base.startAgentSession!(options, role);
+    },
+  };
+}
 
 /** Start a task that delivers without asking; the fake GitHub holds `command` after doing its work. */
 async function startHeld<T>(fixture: NativeWorldFixture, mode: "pull-request" | "release", command: string, body: (held: { engine: Engine; taskId: string; hold: string }) => Promise<T>): Promise<T> {
@@ -32,7 +89,7 @@ async function startHeld<T>(fixture: NativeWorldFixture, mode: "pull-request" | 
   return fixture.engine(async engine => {
     const productId = installPreparedProduct(engine, acmeDemoProduct(w.clone));
     engine.setProductDelivery(productId, mode, false);
-    const taskId = await queuePreparedDelivery(engine, { productId, title: "Add a greeting", description: "A greeting file. [quick]" });
+    const taskId = await queuePreparedDelivery(engine, { productId, title: "Add a greeting", description: "A greeting file. [quick]" }, { checks: "none" });
     const respond = (current: Engine, state: State) => {
       for (const item of state.inbox) if (item.kind === "permission") current.allow(item.id, "once");
     };
@@ -44,7 +101,7 @@ async function startHeld<T>(fixture: NativeWorldFixture, mode: "pull-request" | 
       await Bun.sleep(30);
     }
     return body({ engine, taskId, hold });
-  }, legacyDeliveryAgents(w));
+  }, deliveryAgents(w));
 }
 
 /** Edit the real stopped generation's saved record, then hand the actual successor to its callback. */
@@ -54,19 +111,19 @@ async function stuckThenEdit<T>(fixture: NativeWorldFixture, mode: "pull-request
   const taskId = await fixture.engine(async engine => {
     const productId = installPreparedProduct(engine, acmeDemoProduct(w.clone));
     engine.setProductDelivery(productId, mode, false);
-    const taskId = await queuePreparedDelivery(engine, { productId, title: "Add a greeting", description: "A greeting file. [quick]" });
+    const taskId = await queuePreparedDelivery(engine, { productId, title: "Add a greeting", description: "A greeting file. [quick]" }, { checks: "none" });
     const task = taskOf(await finish(engine, taskId), taskId);
     expect(task.state).toBe("failed");
     await engine.shutdown();
     return taskId;
-  }, legacyDeliveryAgents(w));
+  }, deliveryAgents(w));
   let editing: unknown;
   w.editSaved((state) => { editing = edit(state.tasks.find((entry) => entry.id === taskId)!.shipping as ShippingRecord); });
   await editing;
   return fixture.engine(async engine => {
     engine.retry(itemOf(engine.getState(), taskId, "stuck")!.id);
     return body({ engine, taskId });
-  }, legacyDeliveryAgents(w));
+  }, deliveryAgents(w));
 }
 
 describe.concurrent("A delivery interrupted at any step never goes out twice", () => {
@@ -101,7 +158,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
   });
 
   it("pushes the same commit again when its push went through but was not saved, overwriting nothing", async () => {
-    await world("repeat-push", async fixture => {
+    await serviceWorld("repeat-push", async fixture => {
       const w = fixture.world;
 
       await stuckThenEdit(fixture, "pull-request", { "pr create": 1 }, (shipping) => (shipping.step = "push"), async ({ engine, taskId }) => {
@@ -109,7 +166,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
       try {
         const task = taskOf(await finish(engine, taskId), taskId);
         expect(task.state).toBe("pr-open");
-        expect(await remoteRef(w.remote, `refs/heads/${task.branch}`)).toBe(await git(task.worktree!, "rev-parse", "HEAD"));
+        expect(remoteRef(w.remote, `refs/heads/${task.branch}`)).toBe(branchRef(w.clone, task.branch!));
         expect(w.github().prs).toHaveLength(1);
         expect(task.timeline.filter((entry) => entry.text.startsWith("Ready to publish"))).toHaveLength(1);
       } finally {
@@ -142,13 +199,13 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
       }
 
 
-      }, legacyDeliveryAgents(w))]);
+      }, deliveryAgents(w))]);
       });
     }, { allowOverlap: true });
   });
 
   it("finds a release push that went through but was not saved, and publishes the release on that tag with no new version", async () => {
-    await world("release-pushed", async fixture => {
+    await serviceWorld("release-pushed", async fixture => {
       const w = fixture.world;
 
       await stuckThenEdit(fixture, "release", { "release create": 1 }, (shipping) => {
@@ -160,7 +217,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
         const task = taskOf(await finish(engine, taskId), taskId);
         expect(task.error).toBeUndefined();
         expect(task.release?.tag).toBe("v0.1.0");
-        expect(await remoteRef(w.remote, "refs/tags/v0.1.1")).toBeUndefined();
+        expect(remoteRef(w.remote, "refs/tags/v0.1.1")).toBeUndefined();
         expect(task.timeline.some((entry) => entry.text.startsWith("Checked: main and the tag v0.1.0 are already on GitHub"))).toBe(true);
         expect(w.script().releaseManagerPrompts).toHaveLength(1);
       } finally {
@@ -174,20 +231,20 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
 
   for (const how of ["moved", "gone"] as const) {
     it(`creates no release on Retry when the tag on GitHub ${how === "moved" ? "moved" : "went away"} after Petrina's push`, async () => {
-    await world(`release-tag-${how}`, async fixture => {
+    await serviceWorld(`release-tag-${how}`, async fixture => {
       const w = fixture.world;
 
         await stuckThenEdit(fixture, "release", { "release create": 1 }, async (shipping) => {
           expect(shipping.pushed).toBe(true);
           const tested = shipping.prepared!.tested;
           if (how === "gone") {
-            await gitWith({}, "--git-dir", w.remote, "update-ref", "-d", "refs/tags/v0.1.0");
+            deleteRef(w.remote, "refs/tags/v0.1.0");
             return;
           }
           // Someone points the tag at untested work on top of the tested commit.
-          const env = testGitEnv({ ...process.env, GIT_AUTHOR_NAME: "Someone", GIT_AUTHOR_EMAIL: "s@example.com", GIT_COMMITTER_NAME: "Someone", GIT_COMMITTER_EMAIL: "s@example.com" });
-          const other = await gitWith({ env }, "--git-dir", w.remote, "commit-tree", `${tested}^{tree}`, "-p", tested, "-m", "Untested change");
-          await gitWith({}, "--git-dir", w.remote, "update-ref", "refs/tags/v0.1.0", other);
+          const other = commitLooseOnRef(w.remote, { parentSha: tested, message: "Untested change", author: "Someone <s@example.com>" })
+            ?? await gitWith({ env: testGitEnv({ ...process.env, GIT_AUTHOR_NAME: "Someone", GIT_AUTHOR_EMAIL: "s@example.com", GIT_COMMITTER_NAME: "Someone", GIT_COMMITTER_EMAIL: "s@example.com" }) }, "--git-dir", w.remote, "commit-tree", `${tested}^{tree}`, "-p", tested, "-m", "Untested change");
+          writeRef(w.remote, "refs/tags/v0.1.0", other);
         }, async ({ engine, taskId }) => {
 
         try {
@@ -211,11 +268,11 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
 
   for (const where of ["preparing", "publishing"] as const) {
     it(`never takes a release published just before shipping for this delivery, interrupted while ${where}`, async () => {
-    await world(`release-before-${where}`, async fixture => {
+    await (where === "preparing" ? world : serviceWorld)(`release-before-${where}`, async fixture => {
       const w = fixture.world;
 
         // v1.0.0 came out just before this delivery started.
-        await gitWith({}, "--git-dir", w.remote, "update-ref", "refs/tags/v1.0.0", w.initial);
+        writeRef(w.remote, "refs/tags/v1.0.0", w.initial);
         w.setGitHub((github) => github.releases.push({ tagName: "v1.0.0", url: "https://github.com/acme/demo/releases/tag/v1.0.0", publishedAt: new Date().toISOString(), isDraft: false, name: "v1.0.0", body: "" }));
         const hold = join(w.dir, "hold-release-manager");
         if (where === "preparing") {
@@ -225,13 +282,13 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
           await fixture.engine(async first => {
             const productId = installPreparedProduct(first, acmeDemoProduct(w.clone));
             first.setProductDelivery(productId, "release", false);
-            const taskId = await queuePreparedDelivery(first, { productId, title: "Add a greeting", description: "A greeting file. [quick]" });
+            const taskId = await queuePreparedDelivery(first, { productId, title: "Add a greeting", description: "A greeting file. [quick]" }, { checks: "none" });
             await until(first, () => existsSync(`${hold}.reached`));
             expect(taskOf(first.getState(), taskId).shipping?.tag).toBe("v1.0.1");
             const stopping = first.shutdown();
             w.setScript((script) => delete script.hold);
-            await completeAll([stopping, fixture.engine(engine => completed(engine, taskId, stopping), legacyDeliveryAgents(w))]);
-          });
+            await completeAll([stopping, fixture.engine(engine => completed(engine, taskId, stopping), deliveryAgents(w))]);
+          }, deliveryAgents(w));
         } else {
           // Main and the tag went out; Petrina stopped before the release did.
           await stuckThenEdit(fixture, "release", { "release create": 1 }, (shipping) => expect(shipping.step).toBe("release"), async ({ engine, taskId }) => completed(engine, taskId));
@@ -243,8 +300,8 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
           expect(task.state).toBe("done");
           expect(task.release?.tag).toBe("v1.0.1");
           expect(w.github().releases.map((entry) => entry.tagName)).toEqual(["v1.0.0", "v1.0.1"]);
-          expect(await remoteRef(w.remote, "refs/tags/v1.0.1")).toBe(await remoteRef(w.remote, "refs/heads/main"));
-          expect(await remoteRef(w.remote, "refs/tags/v1.0.0")).toBe(w.initial);
+          expect(remoteRef(w.remote, "refs/tags/v1.0.1")).toBe(remoteRef(w.remote, "refs/heads/main"));
+          expect(remoteRef(w.remote, "refs/tags/v1.0.0")).toBe(w.initial);
           expect(task.timeline.some((entry) => entry.text.includes("v1.0.0") && entry.text.includes("already gone out"))).toBe(false);
         } finally {
           rmSync(hold, { force: true });
@@ -266,10 +323,10 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
 
       const productId = installPreparedProduct(engine, acmeDemoProduct(w.clone));
       engine.setProductDelivery(productId, "local", false);
-      const taskId = await queuePreparedDelivery(engine, { productId, title: "Add a greeting", description: "A greeting file. [quick]" });
+      const taskId = await queuePreparedDelivery(engine, { productId, title: "Add a greeting", description: "A greeting file. [quick]" }, { checks: "none" });
       let task = taskOf(await finish(engine, taskId), taskId);
       expect(task.state).toBe("done");
-      const tested = await git(w.clone, "rev-parse", "main");
+      const tested = branchRef(w.clone, "main");
       await engine.shutdown();
         return { taskId, tested, task };
       }, legacyDeliveryAgents(w));
@@ -323,28 +380,6 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
     });
   });
 
-  it("keeps the link to a pull request that went out while the task was cancelled, and keeps it cancelled", async () => {
-    await world("cancel", async fixture => {
-
-      await startHeld(fixture, "pull-request", "pr create", async ({ engine, taskId, hold }) => {
-
-      try {
-        engine.cancel(taskId);
-        rmSync(hold);
-        const task = taskOf(await until(engine, (current) => !!taskOf(current, taskId).pr), taskId);
-        expect(task.state).toBe("cancelled");
-        expect(task.column).toBe("done");
-        expect(task.pr).toMatchObject({ number: 1, url: "https://github.com/acme/demo/pull/1" });
-        expect(task.timeline.map((entry) => entry.text)).toContain("Pull request #1 went out while you cancelled it: https://github.com/acme/demo/pull/1");
-      } finally {
-        await engine.shutdown();
-      }
-
-
-      });
-    });
-  });
-
   it("keeps the link when GitHub opened the pull request but its answer was lost as the task was cancelled", async () => {
     await world("cancel-lost", async fixture => {
       const w = fixture.world;
@@ -358,6 +393,8 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
         const task = taskOf(await until(engine, (current) => !!taskOf(current, taskId).pr), taskId);
         expect(task.state).toBe("cancelled");
         expect(task.statusLine).toBe("Cancelled");
+        expect(task.column).toBe("done");
+        expect(task.timeline.map((entry) => entry.text)).toContain("Pull request #1 went out while you cancelled it: https://github.com/acme/demo/pull/1");
         expect(task.pr).toMatchObject({ number: 1, url: "https://github.com/acme/demo/pull/1" });
         expect(task.shipping).toBeUndefined();
         expect(w.github().prs).toHaveLength(1);
@@ -407,49 +444,28 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
     });
   });
 
-  for (const how of ["released", "pushed"] as const) {
-    it(`keeps a release that went out as the task was cancelled${how === "pushed" ? ", and says when only its push did" : ""}`, async () => {
-    await world(`cancel-${how}`, async fixture => {
+  it("keeps a cancelled release's push and says when no release was published", async () => {
+    await serviceWorld("cancel-pushed", async fixture => {
       const w = fixture.world;
-
-        const hold = join(w.dir, "hold");
-        writeFileSync(hold, "");
-        // Held right after GitHub created the release; or the release creation fails once main and the tag went out.
-        w.setGitHub((github) => (how === "released" ? (github.hold = { command: "release create", file: hold }) : (github.fail = { "release create": 1 })));
-        await fixture.engine(async engine => {
-
-        try {
-          const productId = installPreparedProduct(engine, acmeDemoProduct(w.clone));
-          engine.setProductDelivery(productId, "release", false);
-          const taskId = await queuePreparedDelivery(engine, { productId, title: "Add a greeting", description: "A greeting file. [quick]" });
-          if (how === "released") await until(engine, () => existsSync(`${hold}.reached`));
-          else expect(taskOf(await finish(engine, taskId), taskId).shipping?.step).toBe("release");
-          engine.cancel(taskId);
-          rmSync(hold);
-          const task = taskOf(await until(engine, (current) => !taskOf(current, taskId).shipping), taskId);
-          expect(task.state).toBe("cancelled");
-          expect(await remoteRef(w.remote, "refs/tags/v0.1.0")).toBe(await remoteRef(w.remote, "refs/heads/main"));
-          if (how === "released") {
-            expect(task.release?.tag).toBe("v0.1.0");
-            expect(task.timeline.map((entry) => entry.text)).toContain("Release v0.1.0 went out while you cancelled it: https://github.com/acme/demo/releases/tag/v0.1.0");
-          } else {
-            expect(task.release).toBeUndefined();
-            expect(w.github().releases).toEqual([]);
-            expect(task.timeline.some((entry) => entry.text.startsWith("main and the tag v0.1.0 went out to GitHub at") && entry.text.endsWith("while you cancelled it, with no release for that tag"))).toBe(true);
-          }
-        } finally {
-          await engine.shutdown();
-        }
-
-
-      }, legacyDeliveryAgents(w));
+      w.setGitHub(github => { github.fail = { "release create": 1 }; });
+      await fixture.engine(async engine => {
+        const productId = installPreparedProduct(engine, acmeDemoProduct(w.clone));
+        engine.setProductDelivery(productId, "release", false);
+        const taskId = await queuePreparedDelivery(engine, { productId, title: "Add a greeting", description: "A greeting file. [quick]" }, { checks: "none" });
+        expect(taskOf(await finish(engine, taskId), taskId).shipping?.step).toBe("release");
+        engine.cancel(taskId);
+        const task = taskOf(await until(engine, current => !taskOf(current, taskId).shipping), taskId);
+        expect(task.state).toBe("cancelled");
+        expect(remoteRef(w.remote, "refs/tags/v0.1.0")).toBe(remoteRef(w.remote, "refs/heads/main"));
+        expect(task.release).toBeUndefined();
+        expect(w.github().releases).toEqual([]);
+        expect(task.timeline.some(entry => entry.text.startsWith("main and the tag v0.1.0 went out to GitHub at") && entry.text.endsWith("while you cancelled it, with no release for that tag"))).toBe(true);
+      }, deliveryAgents(w));
     });
   });
-  }
-
 
   it("waits for Retry when GitHub cannot be asked, and never takes that for an empty answer", async () => {
-    await world("lookup", async fixture => {
+    await serviceWorld("lookup", async fixture => {
       const w = fixture.world;
 
       w.setGitHub((github) => (github.fail = { "pr list": 1 }));
@@ -458,11 +474,11 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
       try {
         const productId = installPreparedProduct(engine, acmeDemoProduct(w.clone));
         engine.setProductDelivery(productId, "pull-request", false);
-        const taskId = await queuePreparedDelivery(engine, { productId, title: "Add a greeting", description: "A greeting file. [quick]" });
+        const taskId = await queuePreparedDelivery(engine, { productId, title: "Add a greeting", description: "A greeting file. [quick]" }, { checks: "none" });
         let task = taskOf(await finish(engine, taskId), taskId);
         expect(task.state).toBe("failed");
         expect(task.error).toContain("could not check GitHub for this task's pull request");
-        expect(await remoteRef(w.remote, `refs/heads/${task.branch}`)).toBeUndefined();
+        expect(remoteRef(w.remote, `refs/heads/${task.branch}`)).toBeUndefined();
         engine.retry(itemOf(engine.getState(), taskId, "stuck")!.id);
         task = taskOf(await finish(engine, taskId), taskId);
         expect(task.state).toBe("pr-open");
@@ -471,43 +487,9 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
       }
 
 
-      }, legacyDeliveryAgents(w));
+      }, deliveryAgents(w));
     });
   });
-
-  for (const mode of ["pull-request", "release"] as const) {
-    it(`looks again when GitHub says a ${mode === "pull-request" ? "pull request" : "release"} already exists, and records it when it matches`, async () => {
-    await world(`exists-${mode}`, async fixture => {
-      const w = fixture.world;
-
-        const create = mode === "pull-request" ? "pr create" : "release create";
-        // The first create goes through but its answer is lost; the next listing lags behind.
-        w.setGitHub((github) => (github.lose = { [create]: 1 }));
-        await fixture.engine(async engine => {
-
-        try {
-          const productId = installPreparedProduct(engine, acmeDemoProduct(w.clone));
-          engine.setProductDelivery(productId, mode, false);
-          const taskId = await queuePreparedDelivery(engine, { productId, title: "Add a greeting", description: "A greeting file. [quick]" });
-          let task = taskOf(await finish(engine, taskId), taskId);
-          expect(task.state).toBe("failed");
-          expect(task.error).toContain("GitHub did not");
-          w.setGitHub((github) => (github.stale = { [mode === "pull-request" ? "pr list" : "release view"]: 1 }));
-          engine.retry(itemOf(engine.getState(), taskId, "stuck")!.id);
-          task = taskOf(await finish(engine, taskId), taskId);
-          expect(task.error).toBeUndefined();
-          expect(task.state).toBe(mode === "pull-request" ? "pr-open" : "done");
-          expect(w.github().calls.filter((call) => `${call[0]} ${call[1]}` === create)).toHaveLength(2);
-          expect(mode === "pull-request" ? w.github().prs.length : w.github().releases.length).toBe(1);
-        } finally {
-          await engine.shutdown();
-        }
-
-
-      }, legacyDeliveryAgents(w));
-    });
-  });
-  }
 
   it("records a merged or closed pull request found after an interruption, even with its branch deleted", async () => {
     await world("merged", async fixture => {
@@ -525,7 +507,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
       });
       const { saved, branch } = first;
       // The branch is deleted on GitHub after the pull request closes; GitHub keeps its last commit.
-      await gitWith({}, "--git-dir", w.remote, "update-ref", "-d", `refs/heads/${branch}`);
+      deleteRef(w.remote, `refs/heads/${branch}`);
       for (const state of ["MERGED", "CLOSED"] as const) {
         w.setGitHub((github) => {
           github.prs[0]!.state = state;
@@ -548,7 +530,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
         } finally {
           await engine.shutdown();
         }
-        }, legacyDeliveryAgents(w));
+        }, deliveryAgents(w));
       }
 
 
@@ -556,7 +538,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
   });
 
   it("stops when GitHub has a different pull request from the task's branch", async () => {
-    await world("unexpected", async fixture => {
+    await serviceWorld("unexpected", async fixture => {
       const w = fixture.world;
 
       await fixture.engine(async engine => {
@@ -564,21 +546,21 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
       try {
         const productId = installPreparedProduct(engine, acmeDemoProduct(w.clone));
         engine.setProductDelivery(productId, "pull-request", false);
-        const taskId = await queuePreparedDelivery(engine, { productId, title: "Add a greeting", description: "A greeting file. [quick]" });
+        const taskId = await queuePreparedDelivery(engine, { productId, title: "Add a greeting", description: "A greeting file. [quick]" }, { checks: "none" });
         w.setGitHub((github) =>
           github.prs.push({ number: 7, url: "https://github.com/acme/demo/pull/7", headRefName: branchName("Add a greeting", taskId), baseRefName: "main", headRefOid: "f".repeat(40), state: "CLOSED", isCrossRepository: false, title: "Old", body: "" }),
         );
         const task = taskOf(await finish(engine, taskId), taskId);
         expect(task.state).toBe("failed");
         expect(task.error).toContain("GitHub already has pull request #7 from this task's branch, but it is not this work");
-        expect(await remoteRef(w.remote, `refs/heads/${task.branch}`)).toBeUndefined();
+        expect(remoteRef(w.remote, `refs/heads/${task.branch}`)).toBeUndefined();
         expect(w.github().prs).toHaveLength(1);
       } finally {
         await engine.shutdown();
       }
 
 
-      }, legacyDeliveryAgents(w));
+      }, deliveryAgents(w));
     });
   });
 
@@ -591,16 +573,16 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
       try {
         // Someone pushes onto the branch while the pull request is being opened.
         const branch = taskOf(engine.getState(), taskId).branch!;
-        const at = (await remoteRef(w.remote, `refs/heads/${branch}`))!;
-        const env = testGitEnv({ ...process.env, GIT_AUTHOR_NAME: "Someone", GIT_AUTHOR_EMAIL: "s@example.com", GIT_COMMITTER_NAME: "Someone", GIT_COMMITTER_EMAIL: "s@example.com" });
-        const other = await gitWith({ env }, "--git-dir", w.remote, "commit-tree", `${at}^{tree}`, "-p", at, "-m", "Someone else's change");
-        await gitWith({}, "--git-dir", w.remote, "update-ref", `refs/heads/${branch}`, other);
+        const at = remoteRef(w.remote, `refs/heads/${branch}`)!;
+        const other = commitLooseOnRef(w.remote, { parentSha: at, ref: `refs/heads/${branch}`, message: "Someone else's change", author: "Someone <s@example.com>" })
+          ?? await gitWith({ env: testGitEnv({ ...process.env, GIT_AUTHOR_NAME: "Someone", GIT_AUTHOR_EMAIL: "s@example.com", GIT_COMMITTER_NAME: "Someone", GIT_COMMITTER_EMAIL: "s@example.com" }) }, "--git-dir", w.remote, "commit-tree", `${at}^{tree}`, "-p", at, "-m", "Someone else's change");
+        writeRef(w.remote, `refs/heads/${branch}`, other);
         rmSync(hold);
         const task = taskOf(await finish(engine, taskId), taskId);
         expect(task.state).toBe("pr-open");
         expect(task.error).toBeUndefined();
         expect(task.pr?.number).toBe(w.github().prs[0]!.number);
-        expect(await remoteRef(w.remote, `refs/heads/${branch}`)).toBe(other);
+        expect(remoteRef(w.remote, `refs/heads/${branch}`)).toBe(other);
         expect(w.github().calls.filter((args) => args[0] === "pr" && args[1] === "create")).toHaveLength(1);
       } finally {
         await engine.shutdown();
@@ -612,7 +594,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
   });
 
   it("stops rather than overwrite a task branch GitHub holds at other work", async () => {
-    await world("branch-taken", async fixture => {
+    await serviceWorld("branch-taken", async fixture => {
       const w = fixture.world;
 
       await fixture.engine(async engine => {
@@ -620,15 +602,15 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
       try {
         const productId = installPreparedProduct(engine, acmeDemoProduct(w.clone));
         engine.setProductDelivery(productId, "pull-request", false);
-        const taskId = await queuePreparedDelivery(engine, { productId, title: "Add a greeting", description: "A greeting file. [quick]" });
+        const taskId = await queuePreparedDelivery(engine, { productId, title: "Add a greeting", description: "A greeting file. [quick]" }, { checks: "none" });
         // Someone else's work is already on GitHub under this task's branch name.
-        const env = testGitEnv({ ...process.env, GIT_AUTHOR_NAME: "Someone", GIT_AUTHOR_EMAIL: "s@example.com", GIT_COMMITTER_NAME: "Someone", GIT_COMMITTER_EMAIL: "s@example.com" });
-        const other = await gitWith({ env }, "--git-dir", w.remote, "commit-tree", `${w.initial}^{tree}`, "-p", w.initial, "-m", "Someone else's work");
-        await gitWith({}, "--git-dir", w.remote, "update-ref", `refs/heads/${branchName("Add a greeting", taskId)}`, other);
+        const other = commitLooseOnRef(w.remote, { parentSha: w.initial, message: "Someone else's work", author: "Someone <s@example.com>" })
+          ?? await gitWith({ env: testGitEnv({ ...process.env, GIT_AUTHOR_NAME: "Someone", GIT_AUTHOR_EMAIL: "s@example.com", GIT_COMMITTER_NAME: "Someone", GIT_COMMITTER_EMAIL: "s@example.com" }) }, "--git-dir", w.remote, "commit-tree", `${w.initial}^{tree}`, "-p", w.initial, "-m", "Someone else's work");
+        writeRef(w.remote, `refs/heads/${branchName("Add a greeting", taskId)}`, other);
         const task = taskOf(await finish(engine, taskId), taskId);
         expect(task.state).toBe("failed");
         expect(task.error).toContain(`GitHub has this task's branch at ${other.slice(0, 7)}, which is not this work, so Petrina pushed nothing`);
-        expect(await remoteRef(w.remote, `refs/heads/${task.branch}`)).toBe(other);
+        expect(remoteRef(w.remote, `refs/heads/${task.branch}`)).toBe(other);
         expect(w.github().prs).toEqual([]);
       } finally {
         await engine.shutdown();

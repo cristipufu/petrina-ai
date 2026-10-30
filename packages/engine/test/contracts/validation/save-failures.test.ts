@@ -8,7 +8,7 @@ import { Coordination } from "../../../src/coordination.js";
 
 import * as processTree from "@petrina/platform/process-tree";
 import { expectRejection } from "@petrina/test-support/rejections";
-import { extraFixture, failPrelaunchSave, type ExtraFixture } from "../../extra-fixtures.js";
+import { preparedServiceExtraFixture as extraFixture, failPrelaunchSave, type ExtraFixture } from "../../extra-fixtures.js";
 
 const cases = engineCaseFixtures();
 afterAll(() => cases.close());
@@ -44,17 +44,16 @@ for (const phase of ["admission", "start evidence", "log registration"] as const
       expect(extra.get(record.requestId)).toEqual(reply);
     } finally { fault.restore(); prepare.mockRestore(); await owner.stop(f.engine); }
 
-  });
+  }, {}, { fastClientStop: true, actorLease: false, commandLease: false, scriptedNonHoldRuns: true });
 
   });
 });
 
 for (const [phase, failures, recovery] of [
-    ["admission", 0, "cleanup retry"], ["admission", 0, "restart"],
-    ["admission", 1, "cleanup retry"], ["admission", 1, "restart"],
-    ["admission", 2, "cleanup retry"], ["admission", 2, "restart"],
-    ["start evidence", 1, "cleanup retry"], ["start evidence", 1, "restart"], ["start evidence", 2, "cleanup retry"],
-    ["log registration", 1, "cleanup retry"], ["log registration", 1, "restart"], ["log registration", 2, "restart"],
+    // Actual SQLite/restart, log identity and native follow-on execution anchors. Save-count
+    // permutations exercise the production ValidationRun with explicit failing persistence effects.
+    ["admission", 0, "restart"], ["admission", 2, "cleanup retry"],
+    ["start evidence", 1, "restart"], ["log registration", 2, "restart"],
   ] as const) it(`preserves pre-launch ${phase} outcomes through ${recovery} (${failures} failed saves)`, async () => {
   return cases.use("petrina-extra-", async owner => {
     return await extraFixture(owner, async f => {
@@ -111,7 +110,7 @@ for (const [phase, failures, recovery] of [
       expect(readdirSync(join(f.service, "containers"))).toEqual([]);
     } finally { fault.restore(); confirm = true; await owner.stop(current); await owner.stop(f.engine); }
 
-  });
+  }, {}, { fastClientStop: true, actorLease: false, commandLease: false, scriptedNonHoldRuns: true });
 
   });
 });
@@ -287,11 +286,12 @@ for (const mode of ["completion", "preparation", "cancelled preparation"] as con
   return cases.use("petrina-extra-", async owner => {
     return await extraFixture(owner, async f => {
     const extra = f.engine.extraValidations, container = extra["container"];
-    const cleanup = container.cleanup.bind(container), snapshot = container.snapshot.bind(container);
+    const snapshots = f.settings.validationSnapshots!;
+    const cleanup = container.cleanup.bind(container), snapshot = snapshots.snapshot.bind(snapshots);
     let confirm = false;
     owner.onStop(() => { confirm = true; });
     container.cleanup = record => confirm ? cleanup(record) : Promise.resolve(false);
-    if (mode !== "completion") container.snapshot = async record => { await snapshot(record); f.engine.setPoolPaused(true); };
+    if (mode !== "completion") snapshots.snapshot = async record => { await snapshot(record); f.engine.setPoolPaused(true); };
     const record = await f.submit("settlement-save", ["probe", "pass"]);
     const controller = new AbortController();
     owner.onStop(() => controller.abort());
@@ -323,7 +323,7 @@ for (const mode of ["completion", "preparation", "cancelled preparation"] as con
       let admitted = false;
       waiting = f.engine.checkQueue.acquire(controller.signal).then(place => { admitted = true; place(); return true; }, () => false);
       expect(admitted).toBe(false);
-      container.snapshot = snapshot;
+      snapshots.snapshot = snapshot;
       if (mode === "cancelled preparation") f.engine.cancel(f.task.id);
       await extra.retryCleanup();
       f.engine.setPoolPaused(false);
@@ -337,12 +337,12 @@ for (const mode of ["completion", "preparation", "cancelled preparation"] as con
       expect(existsSync(record.snapshot)).toBe(false);
       expect(readdirSync(join(f.service, "containers"))).toEqual([]);
     } finally {
-      restoreSave(); confirm = true; container.snapshot = snapshot;
+      restoreSave(); confirm = true; snapshots.snapshot = snapshot;
       controller.abort(); await waiting;
       await owner.stop(f.engine);
     }
 
-  }, { checkRuns: 2 });
+  }, { checkRuns: 2 }, { fastClientStop: true, actorLease: false, commandLease: false, scriptedNonHoldRuns: true });
 
   });
 });

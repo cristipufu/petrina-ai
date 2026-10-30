@@ -119,3 +119,39 @@ it("preserves method-backed effect receivers and step state cleanup", async () =
   await owner.complete(f.scope, { stageId: "build", canEdit: true, testedVersions: f.versions });
   expect(ports.calls).toEqual(["finish", "end", "rerun", "versions", "checkpoint", "finish", "end", "rerun", "versions", "changed"]);
 });
+
+for (const evidence of ["absent", "empty-versions", "failed"] as const) it(`advances a shared editable stage without observations for ${evidence} evidence`, async () => {
+  const f = workCompletionFixture(true, "none");
+  f.task.stageIndex = 0;
+  if (evidence !== "absent") f.task.brief = { summary: "Together", forUsers: [], areas: [], risks: [], acceptance: [
+    { text: "Greeting", verification: evidence === "failed" ? "failed" : "passed", versions: evidence === "failed" ? { a: "old" } : {} },
+  ] };
+  const brief = structuredClone(f.task.brief);
+  f.host.invalidateAcceptance = async () => { throw new Error("No saved evidence consumes version observations"); };
+  await f.owner.complete(f.scope, { stageId: "build", canEdit: true });
+  expect(f.scope.work.completedStages).toEqual(["build"]);
+  expect(f.task.activeProductId).toBe("b"); expect(f.task.stageIndex).toBe(0);
+  expect(f.task.brief).toEqual(brief);
+  expect(f.calls).toEqual(["finish", "end", "rerun", "checkpoint"]);
+});
+
+it("observes the current versions for saved check records without acceptance items", async () => {
+  const f = workCompletionFixture(); f.task.stageIndex = 0;
+  f.versions.b = "changed-tree";
+  await f.owner.complete(f.scope, { stageId: "build", canEdit: true });
+  expect(f.task.repositories!.map(work => work.checks!.current)).toEqual([true, false]);
+  expect(f.calls).toEqual(["finish", "end", "rerun", "versions", "checkpoint"]);
+});
+
+it("observes the current versions for passing acceptance without check records", async () => {
+  const f = workCompletionFixture(true, "none"); f.task.stageIndex = 0;
+  f.task.acceptancePassed = true;
+  f.task.brief = { summary: "Together", forUsers: [], areas: [], risks: [], acceptance: [
+    { text: "Greeting", verification: "passed", met: true, versions: { a: f.versions.a! } },
+  ] };
+  f.versions.a = "changed-tree";
+  await f.owner.complete(f.scope, { stageId: "build", canEdit: true });
+  expect(f.task.brief.acceptance[0]!.verification).toBe("stale");
+  expect(f.task.brief.acceptance[0]!.met).toBeUndefined(); expect(f.task.acceptancePassed).toBe(false);
+  expect(f.calls).toEqual(["finish", "end", "rerun", "versions", "checkpoint"]);
+});

@@ -3,6 +3,7 @@ import type { Scenario } from "../fake-agent.js";
 import type { Engine } from "../engine.js";
 import type { EngineCaseOwner } from "./engine-cases.js";
 import { Fakes, makeProduct } from "../fixtures.js";
+import { fakeAgentSessions } from "./fake-agent-sessions.js";
 import { executionFor } from "@petrina/orchestrator";
 import type { CheckId } from "@petrina/core";
 import { ENGINE_TEST_ROOT } from "./runtime-paths.js";
@@ -17,6 +18,7 @@ async function prepareNativeCoordinatorTask(owner: EngineCaseOwner, title: strin
     fakes.scenario(scenario);
     engine = owner.open(join(root, "data"), {
       agentCommand: () => [process.execPath, join(ENGINE_TEST_ROOT, "fake-agent.ts"), fakes.dir],
+      startAgentSession: fakeAgentSessions(fakes),
       browser: false,
     });
     engine.schedule = () => {};

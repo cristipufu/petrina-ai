@@ -5,11 +5,14 @@ import { beginAgentStep, MAINTENANCE_ROLES, type DeepMutable, type Finding, type
 import { directDrivers, closeDirectDrivers } from "./direct-drivers.js";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { installPreparedProduct } from "./prepared-product.js";
+import { installSharedWorkflowFastPaths } from "./shared-preparation.js";
 import { executionFor } from "@petrina/orchestrator";
+import * as gitOps from "@petrina/repositories/git";
 
 import { ReviewResult } from "../../src/roles.js";
 
-import { git, makeProduct, tempDir } from "../fixtures.js";
+import { createProductRepository, tempDir } from "../fixtures.js";
+import { privateAgentToolProbe } from "../scripted-probes.js";
 
 // Controls for a coordinator's decision to continue an exhausted review (the whole workflow is in
 // review-continuation.test.ts): one review round at a time, on real working copies.
@@ -31,18 +34,20 @@ async function rounds(options: { shared?: boolean; later?: string; builder?: str
   const lifetime = directDrivers(root); fixtures.add(lifetime);
   const close = async () => { await lifetime.close(); fixtures.delete(lifetime); };
   return setupWithCleanup(() => lifetime.prepare(async () => {
-  const engine = lifetime.open(join(root, "data"), { agentCommand: () => undefined, terminals: () => [] });
+  const engine = installSharedWorkflowFastPaths(
+    lifetime.open(join(root, "data"), { agentCommand: () => undefined, toolProbe: privateAgentToolProbe(), terminals: () => [] }),
+  );
   engine.schedule = () => {};
   engine.setPoolPaused(true);
   const owner = async (index: number, name: string) => {
-    const repo = await makeProduct(join(root, `product-${index}`), { origin: "none" });
+    const { path: repo, initialSha: baseSha } = await createProductRepository(join(root, `product-${index}`), { origin: "none" });
     const productId = installPreparedProduct(engine, { id: index === 0 ? "clone" : "clone-2", path: repo, name, repo: "local/clone",
       tone: index === 0 ? "blue" : "green", defaultBranch: "main", delivery: "local", approveDelivery: true });
     const product = engine.s.products.find((entry) => entry.id === productId)!;
-    const worktree = join(root, `work-${index}`), baseSha = await git(repo, "rev-parse", "HEAD"), branch = `continued-${index}`;
-    await git(repo, "worktree", "add", "-q", "-b", branch, worktree, baseSha);
+    const worktree = join(root, `work-${index}`), branch = `continued-${index}`;
+    await gitOps.ensureWorktree(repo, worktree, branch, baseSha);
     writeFileSync(join(worktree, "feature.txt"), "the task's change\n");
-    await git(worktree, "add", "."); await git(worktree, "commit", "-q", "-m", "Add the feature");
+    await gitOps.commitChanges(worktree, "Add the feature");
     return { productId, repo, worktree, baseSha, base: baseSha, branch, delivery: "local" as const, completedStages: ["build"], preparation: "ready" as const,
       source: { product, start: { kind: "default" as const, branch: "main" }, destination: { mode: "local" as const, kind: "branch" as const, repo: product.repo, branch: "main" }, confirmed: true } };
   };
@@ -94,7 +99,7 @@ async function rounds(options: { shared?: boolean; later?: string; builder?: str
   const step = () => task.journey!.findLast((entry) => entry.kind === "agent" && entry.stageId === "security")!;
   const commit = async (index = 0) => {
     writeFileSync(join(owners[index]!.worktree, "feature.txt"), "the task's change, changed again\n");
-    await git(owners[index]!.worktree, "commit", "-qam", "Change the feature");
+    await gitOps.commitChanges(owners[index]!.worktree, "Change the feature");
   };
   return { engine, task, owners,
     exhaust: (...args: Parameters<typeof exhaust>) => lifetime.run(engine, () => exhaust(...args)),

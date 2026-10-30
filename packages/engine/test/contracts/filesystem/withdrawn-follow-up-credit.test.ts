@@ -2,12 +2,11 @@ import { afterAll, expect, it } from "bun:test";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { createFollowUpFixtures, failedAssignment } from "../../fixtures/follow-up-native.js";
-
-const { open, close, shutdown } = createFollowUpFixtures();
+const { open, close, use } = createFollowUpFixtures();
 afterAll(close);
-
 it("withdraws a picture retry when its report is fixed instead of retaining an unfinished credit", async () => {
-  const world = await open();
+  return use(async caseOwner => {
+  const world = await open(caseOwner);
   let release = () => {};
   try {
     const saved = await failedAssignment(world, "no-choice");
@@ -20,5 +19,6 @@ it("withdraws a picture retry when its report is fixed instead of retaining an u
     release();
     await world.engine["cleanup"].removeCaptures(saved.source.id);
     expect(existsSync(join(world.data, "captures", saved.source.id))).toBe(false);
-  } finally { release(); await shutdown(world.engine); }
+  } finally { release(); await caseOwner.stop(world.engine); }
+  });
 });

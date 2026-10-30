@@ -52,38 +52,45 @@ export class Store {
   /** Explicit compatibility/debug read, including archived conversations. Production uses loadActive. */
   load(): State | undefined {
     return this.db.transaction(() => {
-      const state = this.readSnapshot();
-      if (!state) return undefined;
+      const snapshot = this.readSnapshot();
+      if (!snapshot) return undefined;
+      const { state } = snapshot;
       const live = new Set(state.tasks.map((task) => task.id));
       return { ...state, tasks: [...state.tasks, ...this.history.all().filter((task) => !live.has(task.id))] };
     })();
   }
 
-  private readSnapshot(): State | undefined {
+  private readSnapshot(): { state: State; split: boolean } | undefined {
     const row = this.db.query<{ value: string }, [string]>("SELECT value FROM kv WHERE key = ?").get("state");
     if (!row) return undefined;
     let saved: State & { taskIds?: Id[] };
     try { saved = JSON.parse(row.value); } catch { return undefined; }
-    if (!saved.taskIds) return saved;
+    if (!saved.taskIds) return { state: saved, split: false };
     const rows = new Map(this.db.query<{ id: string; body: string }, []>("SELECT id, body FROM active_tasks").all().map((row) => [row.id, row.body]));
     const { taskIds, ...state } = saved;
-    return { ...state, tasks: taskIds.map((id) => {
-      const body = rows.get(id);
-      if (!body) throw new Error("A saved task is missing. Keep this data folder for recovery.");
-      return JSON.parse(body) as Task;
-    }) };
+    return {
+      split: true,
+      state: {
+        ...state,
+        tasks: taskIds.map((id) => {
+          const body = rows.get(id);
+          if (!body) throw new Error("A saved task is missing. Keep this data folder for recovery.");
+          return JSON.parse(body) as Task;
+        }),
+      },
+    };
   }
 
   loadActive(normalize?: (state: State) => void): State | undefined {
-    const state = this.readSnapshot();
-    if (!state) return undefined;
+    const snapshot = this.readSnapshot();
+    if (!snapshot) return undefined;
+    const { state, split } = snapshot;
     normalize?.(state);
     // Old installs saved all completed bodies in this one value. Move them and the new current
     // snapshot in the same transaction: interruption never leaves a task in neither place.
     // A write failure must propagate, never turn a valid saved install into an empty one.
     const retire = state.tasks.filter(settledHistoryTask).map((task) => task.id);
-    const split = this.db.query<{ value: string }, []>("SELECT value FROM kv WHERE key='state'").get()?.value;
-    if (state.tasks.some(finishedTask) || !split || !("taskIds" in JSON.parse(split))) this.save(state, retire);
+    if (state.tasks.some(finishedTask) || !split) this.save(state, retire);
     const omit = new Set(retire);
     return { ...state, tasks: state.tasks.filter((task) => !omit.has(task.id)) };
   }

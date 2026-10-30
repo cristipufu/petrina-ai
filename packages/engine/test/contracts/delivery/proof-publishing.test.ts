@@ -1,13 +1,13 @@
 import { afterAll, expect, it, spyOn } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { proofDecision, proofGap } from "@petrina/core";
-import { git } from "../../fixtures.js";
+import { commandInputText, proofDecision, proofGap } from "@petrina/core";
 import { executionFor } from "@petrina/orchestrator";
 import { versionsOf } from "../../../src/repositories.js";
 import { recordReviewProofs } from "@petrina/orchestrator";
 import * as gitSteps from "@petrina/repositories/git";
 import { proofRequestFixtures } from "../../fixtures/proof-requests.js";
+import { readRef, readWorktreeCommit } from "../../fixtures/shared-preparation.js";
 
 const { signal, fixture, close } = proofRequestFixtures();
 afterAll(close);
@@ -15,7 +15,8 @@ it("checks a saved prepared delivery again after main moves and retains the publ
   const f = await fixture(); await f.request(); await f.recordPass();
   try {
     const versions = await versionsOf(f.task); f.task.approvedProofDecision = proofDecision(f.task, versions);
-    f.scope.work.shipping = { moves: 0, failures: 0, base: f.scope.work.baseSha, start: await git(f.scope.work.worktree!, "rev-parse", "HEAD"), prepared: { tested: await git(f.scope.work.worktree!, "rev-parse", "HEAD"), summary: "Prepared" } };
+    const head = readWorktreeCommit(f.scope.work.worktree!)!.commit;
+    f.scope.work.shipping = { moves: 0, failures: 0, base: f.scope.work.baseSha, start: head, prepared: { tested: head, summary: "Prepared" } };
     expect(await f.engine["shipping"]["proofApprovalCurrent"](f.task, signal(), true)).toBe(true);
     await f.advance();
     expect(await f.engine["shipping"]["proofApprovalCurrent"](f.task, signal(), true)).toBe(false);
@@ -35,7 +36,7 @@ it("refreshes a released prerequisite before publishing and retains exact-versio
     const prerequisite = f.engine.addTask({ productId: f.products[0]!.id, title: "Land the required fix", backlog: true });
     f.engine.setRuntimeWait(f.task.id, [prerequisite], "Publishing needs this fix", "proof-wait");
     await f.advance();
-    const destination = await git(f.products[0]!.path!, "rev-parse", "main");
+    const destination = readRef(join(f.products[0]!.path!, ".git"), "refs/heads/main");
     f.engine.setRuntimeWait(f.task.id, [], "The required source is ready", "proof-clear");
     expect(await f.engine["shipping"].deliver(f.task, f.ship, signal())).toBe("continue");
     expect(f.task.runtimeWait?.refreshPending).toBe(true);
@@ -48,7 +49,7 @@ it("refreshes a released prerequisite before publishing and retains exact-versio
     expect(request.status).toBe("stale");
     expect(f.task.proofRefreshes).toBe(2);
     expect(f.task.findings).toEqual([]);
-    expect(await git(f.products[0]!.path!, "rev-parse", "main")).toBe(destination);
+    expect(readRef(join(f.products[0]!.path!, ".git"), "refs/heads/main")).toBe(destination);
     await f.drive();
     expect(f.engine.s.inbox.find(item => item.kind === "delivery")!.title).toContain("earlier version");
     expect(f.task.checkedProofDecision).not.toEqual(approved);
@@ -60,12 +61,13 @@ it("requires explicit release-gap approval and permits only Petrina's verified v
   const f = await fixture(true); await f.request(); await f.recordPass();
   try {
     const release = f.task.repositories![0]!; release.delivery = "release";
-    writeFileSync(join(release.worktree!, "package.json"), JSON.stringify({ name: "fixture", version: "0.1.0" })); await git(release.worktree!, "add", "."); await git(release.worktree!, "commit", "-q", "-m", "Declare the fixture version");
+    writeFileSync(join(release.worktree!, "package.json"), JSON.stringify({ name: "fixture", version: "0.1.0" }));
+    await gitSteps.commitChanges(release.worktree!, "Declare the fixture version");
     await f.recordPass();
     f.task.checkedProofDecision = proofDecision(f.task, await versionsOf(f.task));
     expect(proofGap(f.task)).toContain("release version"); expect(f.engine["driver"]["shipsUnasked"](f.task)).toBe(false);
     f.engine.gate(f.task, "delivery"); f.engine.approve(f.engine.s.inbox.find(item => item.kind === "delivery")!.id);
-    const start = await git(release.worktree!, "rev-parse", "HEAD");
+    const start = readWorktreeCommit(release.worktree!)!.commit;
     release.shipping = { moves: 0, failures: 0, base: release.baseSha, start, version: "0.2.0", tag: "v0.2.0" };
     const releaseScope = executionFor(f.task, release.productId);
     const versions = await f.engine["shipping"].releases["declaredVersions"](release.worktree!, start);
@@ -80,14 +82,18 @@ it("requires explicit release-gap approval and permits only Petrina's verified v
     const preparedRelease = release.shipping; delete release.shipping;
     expect(await f.engine["shipping"]["proofApprovalCurrent"](f.task, signal(), true)).toBe(true);
     delete release.release; release.shipping = preparedRelease; delete release.shipping.pushed;
-    writeFileSync(join(release.worktree!, "unexpected.txt"), "unreviewed edit"); await git(release.worktree!, "add", "."); await git(release.worktree!, "commit", "-q", "-m", "Unexpected change");
+    writeFileSync(join(release.worktree!, "unexpected.txt"), "unreviewed edit");
+    await gitSteps.commitChanges(release.worktree!, "Unexpected change");
     expect(await f.engine["shipping"]["proofApprovalCurrent"](f.task, signal(), true)).toBe(false);
   } finally { await f.close(); }
 });
 
 it("adds final preparation to a plan that omitted delivery approval, while current proof keeps its authorized automatic route", async () => {
-  const f = await fixture();
+  const f = await fixture(false, false, undefined, {
+    runCheckCommand: (req) => req.argv[0] === process.execPath && req.argv[1] === "-e" && req.argv[2] === "process.exit(0)" ? { code: 0 } : undefined,
+  });
   try {
+    f.engine.setProductChecks(f.task.productId, [{ name: "Test", command: commandInputText([process.execPath, "-e", "process.exit(0)"]) }]);
     f.task.approveDelivery = false; f.task.plan!.stages = f.task.plan!.stages.filter(stage => stage.id !== "gate"); f.task.stageIndex = 2;
     f.task.hunt = { stageId: "review", round: 1, reported: { "0": true }, findings: 0, input: { file: "unused", digest: "unused", heads: {}, trees: await versionsOf(f.task) } };
     recordReviewProofs(f.engine, f.task, f.review, [{ text: "Required Linux proof", reason: "Exact final version required", productIds: [f.task.productId] }], "sol-high", "code-reviewer", "0");
@@ -112,12 +118,13 @@ it("discards an unpublished release identity before proving and preparing a newl
   });
   const choose = spyOn(release, "chooseVersion").mockImplementation(async scope => {
     scope.work.shipping!.version = "0.3.0"; scope.work.shipping!.tag = "v0.3.0";
-    return release["declaredVersions"](scope.work.worktree!, await git(scope.work.worktree!, "rev-parse", "HEAD"));
+    return release["declaredVersions"](scope.work.worktree!, readWorktreeCommit(scope.work.worktree!)!.commit);
   });
   try {
-    writeFileSync(join(f.scope.work.worktree!, "package.json"), JSON.stringify({ name: "fixture", version: "0.1.0" })); await git(f.scope.work.worktree!, "add", "."); await git(f.scope.work.worktree!, "commit", "-q", "-m", "Declare fixture version");
+    writeFileSync(join(f.scope.work.worktree!, "package.json"), JSON.stringify({ name: "fixture", version: "0.1.0" }));
+    await gitSteps.commitChanges(f.scope.work.worktree!, "Declare fixture version");
     await f.recordPass();
-    const start = await git(f.scope.work.worktree!, "rev-parse", "HEAD");
+    const start = readWorktreeCommit(f.scope.work.worktree!)!.commit;
     f.scope.work.shipping = { moves: 0, failures: 0, start, base: f.scope.work.baseSha, version: "0.2.0", tag: "v0.2.0" };
     const tested = await release.setVersion(f.scope, await release["declaredVersions"](f.scope.work.worktree!, start));
     f.scope.work.proofRelease = { start, tested }; f.scope.work.shipping.prepared = { tested, summary: "Earlier release preparation" };
@@ -137,9 +144,9 @@ it("retains an exact local update awaiting its push while rejecting a newer dest
   const f = await fixture(); await f.request(); await f.recordPass();
   try {
     f.task.approvedProofDecision = proofDecision(f.task, await versionsOf(f.task));
-    const tested = await git(f.scope.work.worktree!, "rev-parse", "HEAD");
+    const tested = readWorktreeCommit(f.scope.work.worktree!)!.commit;
     f.scope.work.shipping = { moves: 0, failures: 0, base: f.scope.work.baseSha, start: tested, localUpdated: tested, prepared: { tested, summary: "Local update awaits its push" } };
-    await git(f.products[0]!.path!, "reset", "--hard", tested);
+    await gitSteps.resetTo(f.products[0]!.path!, tested);
     expect(await f.engine["shipping"]["proofApprovalCurrent"](f.task, signal(), true)).toBe(true);
     await f.advance();
     expect(await f.engine["shipping"]["proofApprovalCurrent"](f.task, signal(), true)).toBe(false);
@@ -157,10 +164,10 @@ it("guards a pending local push through interrupted delivery recovery while pres
   const refs = spyOn(gitSteps, "remoteRefs").mockResolvedValue({ ok: true, value: new Map() });
   const push = spyOn(gitSteps, "push").mockResolvedValue({ ok: true, value: undefined });
   try {
-    const tested = await git(f.scope.work.worktree!, "rev-parse", "HEAD");
+    const tested = readWorktreeCommit(f.scope.work.worktree!)!.commit;
     f.task.stageIndex = 4; f.task.approvedProofDecision = proofDecision(f.task, await versionsOf(f.task));
     f.scope.work.shipping = { moves: 0, failures: 0, base: f.scope.work.baseSha, start: tested, localUpdated: tested, prepared: { tested, summary: "Local placement is complete" }, step: "push", boot: "earlier-boot" };
-    await git(product.path!, "reset", "--hard", tested);
+    await gitSteps.resetTo(product.path!, tested);
     f.scope.work.localUpdate = { branch: "main", sha: tested, pushed: false };
     // A changed proof status is part of the bound decision even when the placed code is identical.
     delete f.task.proofRequests![0]!.proof;

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { BuilderContext } from "@petrina/core";
-import { COORDINATOR_NOTES_RULE, coordinatorNoteStep, renderCoordinatorNote, type Section } from "./context.js";
+import { COORDINATOR_NOTES_RULE, coordinatorNoteStep, renderCoordinatorNote, type Section } from "./context-input.js";
 
 export interface ContextOmission { title: string; digest: string; noteId?: string }
 

@@ -13,6 +13,8 @@ import { Aborted } from "../../../src/kernel.js";
 import { executionFor } from "@petrina/orchestrator";
 import type { MachineRecords } from "../../../src/check-interruption.js";
 import { heldMachineRecords, makeProduct, noMachineRecords, powerLogSleep, tempDir, waitFor } from "../../fixtures.js";
+import { installSharedWorkflowFastPaths } from "../../fixtures/shared-preparation.js";
+import { privateAgentToolProbe } from "../../scripted-probes.js";
 
 
 // Enter at check recording: no agents or unrelated planning/review workflow.
@@ -25,10 +27,11 @@ it.each(["failed", "interrupted", "mixed", "passed"] as const)("keeps %s results
   let records: MachineRecords = noMachineRecords, restore: (() => void) | undefined;
   try {
     const { engine, task, scope, checks } = await setupWithCleanup(() => owners.prepare(async () => {
-      const engine = owners.open(join(root, "data"), { usageCommands: { codex: null, grok: null }, agentCommand: () => undefined, terminals: () => [], machineRecords: (signal) => { reads.push(signal); return records(signal); } });
+      const engine = owners.open(join(root, "data"), { usageCommands: { codex: null, grok: null }, agentCommand: () => undefined, toolProbe: privateAgentToolProbe(), terminals: () => [], machineRecords: (signal) => { reads.push(signal); return records(signal); } });
+      installSharedWorkflowFastPaths(engine, { fastCheckCapture: true });
       engine.schedule = () => {};
       engine.setPoolPaused(true);
-      const repo = await makeProduct(root);
+      const repo = await makeProduct(root, { origin: "none" });
       engine.s.products.push({ id: "product", name: "Shop", repo: "local/shop", path: repo, tone: "blue", delivery: "local", checksBy: "coordinator" });
       const task = engine.task(engine.addTask({ productId: "product", title: "Check evidence" }))!;
       const scope = executionFor(task);

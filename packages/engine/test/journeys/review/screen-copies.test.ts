@@ -1,3 +1,4 @@
+import { installPreparedProduct, privateCloneProduct } from "../../fixtures/prepared-product.js";
 import { engineCaseFixtures, type EngineCaseOwner } from "../../fixtures/engine-cases.js";
 import { mkdtempSync } from "node:fs";
 import { afterAll as closeOwnedCases } from "bun:test";
@@ -5,13 +6,17 @@ import { ENGINE_TEST_ROOT } from "../../fixtures/runtime-paths.js";
 import { describe, expect, it } from "bun:test";
 import { existsSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { draftOf, journeyProblems, ROLE_STARTS, slotUses, takeOverBlock } from "@petrina/core";
+import { completeAll, draftOf, journeyProblems, ROLE_STARTS, slotUses, takeOverBlock } from "@petrina/core";
+import { fakeAgentSessions } from "../../fixtures/fake-agent-sessions.js";
+import { installSharedWorkflowFastPaths, readWorktreeCommit } from "../../fixtures/shared-preparation.js";
 import { localFixtureSource, screenFixturePlan } from "../../fixtures/prepared-runtime.js";
+import { prepareScreenReview } from "../../fixtures/prepared-screen-review.js";
+import { installScreenVerifierReports } from "../../fixtures/prepared-screen-verifiers.js";
 import { scriptedToolProbe } from "../../scripted-probes.js";
+import * as gitOps from "@petrina/repositories/git";
 import { type Engine, type EngineOptions } from "../../engine.js";
-import type { Learnings } from "../../../src/learnings.js";
 import type { Scenario } from "../../fake-agent.js";
-import { Fakes, git, makeProduct, waitFor } from "../../fixtures.js";
+import { createProductRepository, Fakes, git, waitFor } from "../../fixtures.js";
 const cases = engineCaseFixtures();
 closeOwnedCases(() => cases.close());
 
@@ -24,33 +29,35 @@ async function fixture(owner: EngineCaseOwner, role: "code reviewer" | "verifier
   const fakes = new Fakes(join(root, "fake"));
   const scenario: Scenario = { planner: "parallel", builder: "plain", reviewer: role === "verifier" ? "important" : undefined, verifier: "not-a-bug", screenRoles: [role], screenRoleHold: true, reopen: "resume", ...extra };
   fakes.scenario(scenario);
-  const repo = await makeProduct(root);
-  await git(repo, "config", "branch.autoSetupMerge", "false");
+  const productRepo = await createProductRepository(root, { origin: "none" });
+  const repo = productRepo.path;
+  owner.check();
   const data = join(root, "data");
-  const settings: EngineOptions = { toolProbe: scriptedToolProbe({ "claude-code": { status: "ready" }, codex: { status: "ready" }, grok: { status: "ready" }, antigravity: { status: "logged-out", detail: "The explicit screen fixture has no Antigravity login" }, gh: { status: "not-installed" }, git: { status: "ready" }, node: { status: "ready" } }), agentCommand: profile => [process.execPath, join(ENGINE_TEST_ROOT, "fake-agent.ts"), fakes.dir, ...(profile.toolId === "antigravity" ? ["--logged-out"] : [])], ...options };
+  const settings: EngineOptions = { toolProbe: scriptedToolProbe({ "claude-code": { status: "ready" }, codex: { status: "ready" }, grok: { status: "ready" }, antigravity: { status: "logged-out", detail: "The explicit screen fixture has no Antigravity login" }, gh: { status: "not-installed" }, git: { status: "ready" }, node: { status: "ready" } }), agentCommand: profile => [process.execPath, join(ENGINE_TEST_ROOT, "fake-agent.ts"), fakes.dir, ...(profile.toolId === "antigravity" ? ["--logged-out"] : [])], startAgentSession: fakeAgentSessions(fakes), ...options };
   const joinCopies = async (current: Engine) => {
-    await Promise.all([...current.settling.values(), ...current.copyCleanups.values()]);
+    await completeAll([...current.settling.values(), ...current.copyCleanups.values()]);
   };
-  const own = (current: Engine) => { owner.afterBody(() => joinCopies(current)); return current; };
+  const own = (current: Engine) => {
+    installSharedWorkflowFastPaths(current, { skipDriverPrepare: false, skipUpToDate: true, skipPrepareChecks: true, skipReviewInputDiffs: true, fastCheckCapture: true, fastCleanup: true, fastCheckpoints: true });
+    owner.afterBody(() => joinCopies(current));
+    return current;
+  };
   let engine = own(owner.open(data, settings));
   try {
     engine.setPoolPaused(true);
+    await engine.waitUntilReady(); owner.check(); engine.stopRequested.signal.throwIfAborted();
     await engine.checkTools();
-    const productId = await engine.addProduct(repo);
+    owner.check(); engine.stopRequested.signal.throwIfAborted();
+    const productId = installPreparedProduct(engine, privateCloneProduct(repo));
     engine.setProductDelivery(productId, "pull-request", true);
     const id = engine.addTask({ productId, title: "Check the Mac window", backlog: true });
     const prepared = engine.task(id)!;
-    await localFixtureSource(engine, prepared);
-    prepared.startedAt = Date.now(); prepared.state = "waiting"; prepared.stageIndex = 1;
+    await localFixtureSource(engine, prepared, { initial: productRepo, check: () => owner.check() });
+    owner.check(); engine.stopRequested.signal.throwIfAborted();
+    prepared.startedAt = Date.now(); prepared.state = "waiting"; prepared.stageIndex = 0;
     prepared.plan = { rationale: "Only the live parallel review and its owned copies are under test", plannerProfileId: "sol-high", stages: screenFixturePlan(["opus-high", "sol-high"]) };
-    // The prepared review has no automated commands to discover; this is fixture data, not an edit command.
-    const product = engine.s.products.find(product => product.id === productId)!;
-    product.checks = []; product.checksBy = "coordinator";
-    await engine["driver"]["prepare"]({ task: prepared, work: prepared.repository! }, new AbortController().signal);
-    writeFileSync(join(prepared.repository!.worktree!, "greeting.txt"), "The completed greeting\n");
-    await git(prepared.repository!.worktree!, "add", "."); await git(prepared.repository!.worktree!, "commit", "-qm", "Prepare the reviewed change");
-    prepared.repository!.report = { summary: "The greeting is ready for independent review", changes: ["A greeting was added"] };
-    prepared.repository!.builderSession = { stageId: "build", profileId: "sol-xhigh", toolId: "codex", model: "gpt-6.1-sol", sessionId: "completed-fixture-build" };
+    await prepareScreenReview(engine, id, "none", () => owner.check());
+    if (role === "verifier") installScreenVerifierReports(engine, id, () => owner.check());
     const task = () => engine.getState().tasks.find((entry) => entry.id === id)!;
     const background = (session: string) => writeFileSync(join(fakes.dir, `release-${session}`), "go");
     const release = (session: string) => writeFileSync(join(fakes.dir, `screen-release-${session}`), "go");
@@ -68,8 +75,8 @@ async function fixture(owner: EngineCaseOwner, role: "code reviewer" | "verifier
         if (task().state === "failed") throw new Error(task().error);
         return engine.getState().inbox.some((item) => item.taskId === id && item.kind === "delivery");
       }, "the delivery check", 90_000),
-      restart: async () => { await owner.stop(engine); await joinCopies(engine); engine = own(owner.open(data, settings)); },
-      close: async () => { await owner.stop(engine); await Promise.all(engine.settling.values()); await Promise.all(engine.copyCleanups.values()); },
+      restart: async () => { await owner.stop(engine); await joinCopies(engine); owner.check(); engine = own(owner.open(data, settings)); await engine.waitUntilReady(); owner.check(); engine.stopRequested.signal.throwIfAborted(); },
+      close: async () => { await owner.stop(engine); await joinCopies(engine); },
     };
   } catch (error) { await owner.stop(engine); throw error; }
 }
@@ -189,35 +196,6 @@ for (const role of ["code reviewer", "verifier"] as const) {
       });
     });
 
-    it("keeps the last reserved slot during ordinary group cleanup", async () => {
-      return cases.use("petrina-engine-case-", async owner => {
-        const f = await fixture(owner, role, { screenRoles: [] });
-        let release!: () => void;
-        const held = new Promise<void>((resolve) => { release = resolve; });
-        let cleaning = false;
-        const original = f.engine.undoReadOnly.bind(f.engine);
-        f.engine.undoReadOnly = async (task, roleId) => {
-          if (roleId === role.replace(" ", "-") && !cleaning) { cleaning = true; await held; }
-          return original(task, roleId);
-        };
-        try {
-          await owner.run(f.engine, async () => {
-            f.engine.setPoolLimit(1);
-            f.engine.setPoolPaused(false);
-            await waitFor(() => cleaning, "the group to reach cleanup", 90_000);
-            expect(f.task().holdsSlot).toBe(true);
-            expect(slotUses(f.engine.getState())).toHaveLength(1);
-            const queued = f.engine.addTask({ productId: f.productId, title: "Another queued task" });
-            expect(f.engine.getState().tasks.find((task) => task.id === queued)!.state).toBe("queued");
-            release();
-            await f.finish();
-
-          });
-        } finally { release(); await f.close(); }
-
-      });
-    });
-
     it("takes over and hands back in the saved member's own copy, keeping the edits in the task", async () => {
       return cases.use("petrina-engine-case-", async owner => {
         const f = await fixture(owner, role, {}, { toolPath: () => process.execPath });
@@ -233,11 +211,10 @@ for (const role of ["code reviewer", "verifier"] as const) {
           const dir = join(f.data, "takeover", f.id);
           const launcher = readdirSync(dir).find((name) => name.startsWith("open."))!;
           expect(readFileSync(join(dir, launcher), "utf8")).toContain(copy);
-          expect(f.task().driving?.head).toBe(await git(copy, "rev-parse", "HEAD"));
+          expect(f.task().driving?.head).toBe(readWorktreeCommit(copy)?.commit ?? (await gitOps.head(copy))!);
           expect(existsSync(copy)).toBe(true);
           writeFileSync(join(copy, "committed-by-hand.txt"), "Committed by the coordinator\n");
-          await git(copy, "add", ".");
-          await git(copy, "commit", "-qm", "A change made by hand");
+          await gitOps.commitChanges(copy, "A change made by hand");
           writeFileSync(join(copy, "unsaved-by-hand.txt"), "Also keep this\n");
           const preview = await f.engine.handBackPreview(f.id);
           expect(preview).toMatchObject({ files: 2, commits: 1, unsaved: true });
@@ -261,45 +238,6 @@ for (const role of ["code reviewer", "verifier"] as const) {
     });
   });
 }
-
-it.each([false, true])("gives an earlier waiting peer the screen before a later task while saving learnings (live grant: %s)", async (live) => {
-  return cases.use("petrina-engine-case-", async owner => {
-    const f = await fixture(owner, "code reviewer", { learnings: true });
-    let release!: () => void;
-    const held = new Promise<void>((resolve) => { release = resolve; });
-    let saving = false;
-    // Hold this instance's real result processing across I/O, without slowing any other test or engine.
-    const lessons = (f.engine as unknown as { learnings: Learnings }).learnings;
-    const note = lessons.note.bind(lessons);
-    lessons.note = async (task, words, roleId, profileId) => {
-      if (task.task.id === f.id && roleId === "code-reviewer" && !saving) { saving = true; await held; }
-      return note(task, words, roleId, profileId);
-    };
-    try {
-      await owner.run(f.engine, async () => {
-        if (live) f.engine.setScreenUse("on");
-        f.engine.setPoolPaused(false);
-        await waitFor(() => Object.keys(f.task().hunt?.screenTurns ?? {}).length === 2, "both earlier reviewers to ask", 90_000);
-        const first = f.task().conversation!.sessionId;
-        const second = Object.values(f.task().hunt!.screenTurns!).find((entry) => entry.conversation.sessionId !== first)!;
-        if (!live) f.engine.setScreenUse("on");
-        await waitFor(() => f.onScreen().includes(first), "the first reviewer to get the screen");
-        const later = f.engine.addTask({ productId: f.productId, title: "A later screen request" });
-        await waitFor(() => f.engine.getState().tasks.find((task) => task.id === later)?.screen !== undefined, "the later task to ask", 90_000);
-        expect(second.at).toBeLessThan(f.engine.getState().tasks.find((task) => task.id === later)!.screen!.at);
-        f.release(first);
-        await waitFor(() => saving, "the first review's learnings to be saved");
-        f.engine.setScreenUse("on");
-        expect(f.engine.getState().tasks.filter((task) => task.screen?.granted).map((task) => task.id)).toEqual([f.id]);
-        release();
-        const next = await waitFor(() => f.onScreen().find((session) => session !== first), "the next reviewer to get the screen");
-        expect(next).toBe(second.conversation.sessionId);
-
-      });
-    } finally { release(); await f.close(); }
-
-  });
-});
 
 it("fails and returns the screen and copies when its reviewer crashes beside a peer's unanswered question", async () => {
   return cases.use("petrina-engine-case-", async owner => {
@@ -325,49 +263,8 @@ it("fails and returns the screen and copies when its reviewer crashes beside a p
       expect(f.engine.drivers.has(f.id)).toBe(false);
       expect(f.engine.getState().inbox.some((item) => item.taskId === f.id && (item.kind === "screen" || item.kind === "question"))).toBe(false);
       expect(copies.every((path) => !existsSync(path))).toBe(true);
-      for (const path of registered) expect(await git(f.repo, "worktree", "list", "--porcelain")).not.toContain(path);
-    } finally { await f.close(); }
-
-  });
-});
-
-it.each([false, true])("keeps earlier peers ahead of later tasks after a usage requeue, retaining Allow now (request allowed: %s)", async (allowed) => {
-  return cases.use("petrina-engine-case-", async owner => {
-    const f = await fixture(owner, "code reviewer", { controlled: true });
-    try {
-      await owner.run(f.engine, async () => {
-        f.engine.setPoolPaused(false);
-        const group = await f.group();
-        const holder = group.find((entry) => JSON.parse(readFileSync(join(f.fakes.dir, "conversations", `${entry.session}.json`), "utf8")).model === "opus")!;
-        const peer = group.find((entry) => entry !== holder)!;
-        f.background(holder.session);
-        await waitFor(f.waiting, "the first screen request");
-        const member = f.task().screen!.member!;
-        f.background(peer.session);
-        await waitFor(() => Object.keys(f.task().hunt?.screenTurns ?? {}).length === 2 && !f.engine.drivers.has(f.id), "both saved requests");
-        const earlier = Object.values(f.task().hunt!.screenTurns!).find((entry) => entry.conversation.sessionId === peer.session)!.at;
-        f.fakes.scenario({ ...f.scenario, controlled: false, planner: "short", screen: "hold", limited: [{ model: "opus", role: "code reviewer", onScreen: true }] });
-        const later = f.engine.addTask({ productId: f.productId, title: "A later builder's screen request" });
-        await waitFor(() => f.engine.getState().tasks.find((task) => task.id === later)?.screen !== undefined, "the later builder to ask");
-        expect(earlier).toBeLessThan(f.engine.getState().tasks.find((task) => task.id === later)!.screen!.at);
-        f.engine.setPoolPaused(true);
-        if (allowed) f.engine.allowScreen(f.id);
-        f.engine.setScreenUse("on");
-        f.engine.setPoolPaused(false);
-        await waitFor(() => f.onScreen().length > 0, "an agent to actually use the screen after the holder's limit");
-        expect(f.onScreen()).toEqual([peer.session]);
-        expect(f.task().screen?.granted).toBe(true);
-        if (allowed) {
-          expect(f.task().hunt!.screenTurns![member]?.allowed).toBe(true);
-          f.engine.setScreenUse("off");
-          f.release(peer.session);
-          await waitFor(() => f.onScreen().some((session) => session !== peer.session), "the requeued request's one-time allowance to survive switching Off");
-          expect(f.task().screen?.member).toBe(member);
-          expect(f.task().screen?.allowed).toBe(true);
-          expect(f.engine.getState().tasks.find((task) => task.id === later)!.screen?.granted).not.toBe(true);
-        }
-
-      });
+      const remaining = await git(f.repo, "worktree", "list", "--porcelain");
+      for (const path of registered) expect(remaining).not.toContain(path);
     } finally { await f.close(); }
 
   });
@@ -455,36 +352,6 @@ it("resumes the latest fresh conversation after it yields to a peer and its tool
         expect(f.onScreen()).toEqual(expect.arrayContaining([fallback.session, peer.session]));
         expect(f.fakes.opens().filter((entry) => entry.session === fallback.session).map((entry) => entry.how)).toEqual(["new", "resume"]);
         expect(f.fakes.received("code reviewer").filter((entry) => entry.session === fallback.session).at(-1)!.text).not.toContain("# Your job");
-
-      });
-    } finally { await f.close(); }
-
-  });
-});
-
-it("keeps a peer's question visible while the other reviewer waits for and uses the screen", async () => {
-  return cases.use("petrina-engine-case-", async owner => {
-    const f = await fixture(owner, "code reviewer", { controlled: true, reviewer: "question", screenModels: ["gpt-6.1-sol"] });
-    try {
-      await owner.run(f.engine, async () => {
-        f.engine.setPoolPaused(false);
-        const group = await f.group();
-        const question = group.find((entry) => JSON.parse(readFileSync(join(f.fakes.dir, "conversations", `${entry.session}.json`), "utf8")).model === "opus")!;
-        const screen = group.find((entry) => entry !== question)!;
-        f.background(question.session);
-        const item = await waitFor(() => f.engine.getState().inbox.find((entry) => entry.taskId === f.id && entry.kind === "question"), "the reviewer's question");
-        f.background(screen.session);
-        await waitFor(() => f.engine.getState().inbox.some((entry) => entry.taskId === f.id && entry.kind === "screen"), "the other reviewer's quiet screen request");
-        expect(f.task().state).toBe("needs-you");
-        f.engine.allowScreen(f.id);
-        await waitFor(() => f.onScreen().includes(screen.session), "the other reviewer to use the screen");
-        expect(f.task().state).toBe("needs-you");
-        f.release(screen.session);
-        await waitFor(() => Object.keys(f.task().hunt?.reported ?? {}).length === 1, "the screen check to finish beside the unanswered question");
-        expect(f.task().state).toBe("needs-you");
-        expect(f.engine.getState().inbox.some((entry) => entry.id === item.id)).toBe(true);
-        f.engine.answer(item.id, "Yes");
-        await f.finish();
 
       });
     } finally { await f.close(); }

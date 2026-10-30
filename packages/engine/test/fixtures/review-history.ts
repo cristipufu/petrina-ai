@@ -9,7 +9,7 @@ import { Context, type Section } from "../../src/context.js";
 import { executionFor, repositoryView } from "@petrina/orchestrator";
 import { prepareReviewInput, readReviewInput, type ReviewInput } from "../../src/review-context.js";
 import { buildPrompt, continuePrompt } from "../../src/prompts.js";
-import { git, makeProduct } from "../fixtures.js";
+import { createProductRepository } from "../fixtures.js";
 export function frozenHistoryFixtures() {
   const sha = (body: string) => createHash("sha256").update(body).digest("hex");
   const role = BUILT_IN_ROLES.find(role => role.id === "code-reviewer")!;
@@ -22,7 +22,7 @@ export function frozenHistoryFixtures() {
   }
   async function fixture(owner: EngineCaseOwner, count = 1) {
     const root = mkdtempSync(join(owner.root, "petrina-history-"));
-    const repo = await makeProduct(root), base = await git(repo, "rev-parse", "HEAD");
+    const { path: repo, initialSha: base } = await createProductRepository(root);
     const data = join(root, "data");
     const engine = owner.open(data, { admissionsClosed: true, agentCommand: () => undefined, terminals: () => [] });
     return setupWithCleanup(async () => {

@@ -1,21 +1,20 @@
 import { afterAll, expect, it } from "bun:test";
 import { followUpKey } from "@petrina/core";
 import { createFollowUpFixtures, older, groupByBug, taskOf, finish, cardFor } from "../../fixtures/follow-up-native.js";
-
-const { open, reopen, close, shutdown } = createFollowUpFixtures();
+const { open, reopen, close, use } = createFollowUpFixtures();
 afterAll(close);
-
 it("keeps a matching retry until the link is saved, including when saving the link is interrupted", async () => {
+  return use(async caseOwner => {
   let mode: "down" | "same" = "same";
-  const world = await open((prompt) => mode === "down" ? "unavailable" : groupByBug(prompt));
+  const world = await open(caseOwner, (prompt) => mode === "down" ? "unavailable" : groupByBug(prompt));
   const { engine } = world;
   try {
     const known = taskOf(engine, world.shop, "Known card", [older("known", "bug-retry: The footer opens a retired page.")]);
-    await finish(engine, known);
+    await finish(caseOwner, engine, known);
     const card = cardFor(engine, "retry")[0]!;
     mode = "down";
     const held = taskOf(engine, world.shop, "Held report", [older("held", "bug-retry: About in the footer is the old page.")]);
-    await finish(engine, held);
+    await finish(caseOwner, engine, held);
     expect(held.findings[0]!.tracking).toEqual({ reason: "unavailable", retry: true });
     expect(engine.s.followUpPending?.some((group) => group.retry && group.keys.includes(followUpKey(held.id, "held")))).toBe(true);
     mode = "same";
@@ -25,6 +24,7 @@ it("keeps a matching retry until the link is saved, including when saving the li
       interrupt = false;
       throw new Error("interrupted after the follow-up was saved");
     });
+    caseOwner.onStop(stop);
     interrupt = true;
     await engine["followUps"].catchUp();
     stop();
@@ -39,5 +39,6 @@ it("keeps a matching retry until the link is saved, including when saving the li
     await reopen(world);
     expect(cardFor(world.engine, "retry")).toHaveLength(1);
     expect(world.engine.task(held.id)!.findings[0]!.tracking).toEqual({ taskId: card.id });
-  } finally { await shutdown(world.engine); }
+  } finally { await caseOwner.stop(world.engine); }
+  });
 });

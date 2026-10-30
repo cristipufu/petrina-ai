@@ -1,4 +1,4 @@
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { JourneyStep } from "@petrina/core";
 import { ReopenFailed, type StartAgentSession } from "@petrina/orchestrator";
@@ -33,16 +33,20 @@ export function acceptanceAgents(effects: {
   beforeReply?(prompt: ScriptedPrompt, signal: AbortSignal): void | Promise<void>;
 } = {}) {
   let configured: AcceptanceScript = { builder: "plain" }, repairs = 0, testerRun = 0;
+  const build = (cwd: string, answers: ReturnType<typeof answersTo>, fixing: boolean, script: AcceptanceScript) => {
+    const greetingPath = join(cwd, "greeting.txt");
+    if (!existsSync(greetingPath) || readFileSync(greetingPath, "utf8") !== "Hello\n") writeFileSync(greetingPath, "Hello\n");
+    if (script.fixes === "change" && fixing) writeFileSync(join(cwd, "welcome.txt"), `Hello repair ${++repairs}\n`);
+    return { summary: script.buildReport?.summary ?? "Added the greeting.", ...(script.buildReport?.title ? { title: script.buildReport.title } : {}),
+      changes: ["People see a greeting"], tests: "Petrina runs the product checks.", answers };
+  };
   const respond = async (prompt: ScriptedPrompt, signal: AbortSignal): Promise<string> => {
     const script = configured;
     const { result, text, cwd } = prompt;
     await effects.beforeReply?.(prompt, signal);
     switch (result) {
       case "build":
-        writeFileSync(join(cwd, "greeting.txt"), "Hello\n");
-        if (script.fixes === "change" && text.includes("You are fixing the review findings")) writeFileSync(join(cwd, "welcome.txt"), `Hello repair ${++repairs}\n`);
-        return scriptedResult({ summary: script.buildReport?.summary ?? "Added the greeting.", ...(script.buildReport?.title ? { title: script.buildReport.title } : {}),
-          changes: ["People see a greeting"], tests: "Petrina runs the product checks.", answers: answersTo(text, script.buildReport?.answer) });
+        return scriptedResult(build(cwd, answersTo(text, script.buildReport?.answer), text.includes("You are fixing the review findings"), script));
       case "checks": {
         const runs = script.testerRuns;
         const run = runs?.length ? Math.min(testerRun++, runs.length - 1) : undefined;
@@ -79,6 +83,11 @@ export function acceptanceAgents(effects: {
     start,
     // Other workflow fixtures compose these same replies with their own explicit prerequisite participants.
     respond,
+    /** Same accepted reply recipe for fixtures whose subject starts after provider execution. */
+    acceptedBuild(cwd: string, findingIds: readonly string[], fixing: boolean) {
+      const script = configured;
+      return build(cwd, findingIds.map(id => ({ id, ...(script.buildReport?.answer ?? { fixed: true, text: "Fixed it." }) })), fixing, script);
+    },
     configure(next: AcceptanceScript) {
       const supported = new Set(["builder", "fixes", "testerChecks", "testerChecksFixed", "testerRuns", "testerProofAnswers", "reviewer", "affectedProducts", "reopen", "buildReport"]);
       for (const key of Object.keys(next)) if (!supported.has(key)) throw new Error(`Unsupported acceptance fixture option: ${key}`);

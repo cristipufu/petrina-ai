@@ -5,9 +5,15 @@ import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import type { Engine, EngineOptions } from "../engine.js";
 import { Fakes, makeWorld, tempDir, type World } from "../support.js";
 import { closeDirectDrivers, directDrivers } from "./direct-drivers.js";
+import { sourcePrepared } from "./source-prepared.js";
+import { sharedChecksPrepared } from "./shared-checks-prepared.js";
 import { sharedAgents } from "./shared-agents.js";
+import { scriptedGitHub } from "../scripted-github.js";
 import { scriptedToolProbe } from "../scripted-probes.js";
 import { acmeDemoProduct, installPreparedProduct } from "./prepared-product.js";
+import { installSharedSourceCandidates } from "./shared-source-candidate.js";
+import { installSharedWorkflowFastPaths } from "./shared-preparation.js";
+import { fakeEngineSettings } from "./fake-agent-sessions.js";
 
 type SharedWorld = Omit<World, "start"> & {
   /** Explicit known fixture metadata; the workflow still performs every native source/check/delivery operation. */
@@ -22,6 +28,9 @@ interface SharedProducts {
 }
 export interface SharedFixture extends SharedProducts {
   fakes: ReturnType<typeof sharedAgents>;
+  planned(engine: Engine, input: Parameters<Engine["addTask"]>[0]): Promise<string>;
+  sourceCandidate(engine: Engine, input: Parameters<Engine["addTask"]>[0], options?: { checks: "none" }): Promise<string>;
+  builtChecks(engine: Engine, input: Parameters<Engine["addTask"]>[0]): Promise<string>;
   engine<T>(body: (engine: Engine) => Promise<T>, options?: SharedOptions): Promise<T>;
 }
 export interface NativeSharedFixture extends SharedProducts {
@@ -102,22 +111,59 @@ export function sharedWorldFixtures() {
   const scripted = (prepared: Prepared, entry: Entry): SharedFixture => {
     const { shop, common } = prepared;
     const fakes = sharedAgents(join(shop.dir, "scripted-replies"));
+    const candidates = new Map<string, "version" | "none">();
     const start = (options: SharedOptions) => {
+      const customCheck = options.runCheckCommand;
       const engine = shop.start({ ...common,
+        github: scriptedGitHub({ "acme/demo": { state: join(prepared.shop.dir, "github.json"), remote: prepared.shop.remote }, "acme/api": { state: join(prepared.api.dir, "github.json"), remote: prepared.api.remote } }),
         agentCommand: () => undefined,
         toolProbe: scriptedToolProbe({ "claude-code": { status: "ready" }, codex: { status: "ready" }, grok: { status: "ready" }, antigravity: { status: "ready" }, gh: { status: "ready" }, git: { status: "ready" }, node: { status: "ready" } }),
-        startAgentSession: (launch, role) => { fakes.roles(engine.s.roles); return fakes.start(launch, role); }, ...options });
+        startAgentSession: (launch, role) => { fakes.roles(engine.s.roles); return fakes.start(launch, role); },
+        ...options,
+        runCheckCommand: async (req) => {
+          const handled = await customCheck?.(req);
+          if (handled !== undefined) return handled;
+          if (req.argv.length === 2 && req.argv[0] === "git" && req.argv[1] === "--version") {
+            return { code: 0, stdout: "git version 2.45.0\n" };
+          }
+          return undefined;
+        },
+      });
       fakes.roles(engine.s.roles);
+      installSharedSourceCandidates(engine, candidates, () => available(entry));
+      installSharedWorkflowFastPaths(engine, { skipUpToDate: true, fastCheckCapture: true });
       return engine;
     };
-    return { ...visible(prepared), fakes, engine: generation(entry, start) };
+    const planned: SharedFixture["planned"] = (engine, input) => entry.lifetime.run(engine,
+      () => sourcePrepared(engine, input, fakes.plan(), { kind: "plan" }, () => available(entry)));
+    const builtChecks: SharedFixture["builtChecks"] = (engine, input) => entry.lifetime.run(engine,
+      () => sharedChecksPrepared(engine, input, fakes.plan(), () => available(entry)));
+    const sourceCandidate: SharedFixture["sourceCandidate"] = (engine, input, options) => entry.lifetime.run(engine, async () => {
+      const id = await planned(engine, input);
+      available(entry); engine.stopRequested.signal.throwIfAborted();
+      const task = engine.task(id)!;
+      if (task.stageIndex !== -1 || !task.confirmWork || task.repositories?.some(work => work.worktree))
+        throw new Error("The source candidate must still be awaiting real shared plan approval");
+      candidates.set(id, options?.checks ?? "version");
+      return id;
+    });
+    return { ...visible(prepared), fakes, engine: generation(entry, start), planned, builtChecks, sourceCandidate };
   };
   const native = (prepared: Prepared, entry: Entry): NativeSharedFixture => {
     const { shop, common } = prepared;
     const fakes = new Fakes(join(shop.dir, "agents"));
     fakes.scenario({ planner: "short", builder: "plain", reopen: "resume" });
-    const start = (options: SharedOptions) => shop.start({ ...common, ...options,
-      agentCommand: () => [process.execPath, join(import.meta.dir, "..", "fake-agent.ts"), fakes.dir, `--script=${join(shop.dir, "agents.json")}`] });
+    const start = (options: SharedOptions) => {
+      const engine = shop.start({
+        ...common,
+        github: scriptedGitHub({ "acme/demo": { state: join(prepared.shop.dir, "github.json"), remote: prepared.shop.remote }, "acme/api": { state: join(prepared.api.dir, "github.json"), remote: prepared.api.remote } }),
+        ...fakeEngineSettings(fakes, { scriptPath: join(shop.dir, "agents.json") }),
+        usageCommands: { codex: null, grok: null, antigravity: null },
+        ...options,
+      });
+      installSharedWorkflowFastPaths(engine);
+      return engine;
+    };
     return { ...visible(prepared), fakes, engine: generation(entry, start) };
   };
   async function use<T, Fixture>(name: string, body: (fixture: Fixture) => Promise<T>, prepare: (products: Prepared, entry: Entry) => Fixture): Promise<T> {

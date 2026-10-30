@@ -1,9 +1,11 @@
 import { fixtureFiles } from "@petrina/test-support/fixture-files";
-import { cpSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmdirSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmdirSync, writeFileSync, type BigIntStats } from "node:fs";
 import { isBuiltin } from "node:module";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { git, testGitEnv } from "../fixtures.js";
+import { deflateSync } from "node:zlib";
+import { testGitEnv } from "../fixtures.js";
 import { sourceFacts } from "../quality/source.js";
 import { TEST_WORKSPACES } from "../quality/workspaces.js";
 
@@ -27,6 +29,105 @@ export const EXAMPLE = "test/contracts/testing/example.test.ts";
 export type BrowserStandIn = "ready" | "missing" | "directory" | "resolver-error" | "changed-command";
 export type ObservationStandIn = "unchanged" | "changed-command-after-observation";
 export type RunFailure = "error" | "undefined" | "none" | "unconfirmed";
+
+function writeSuiteGitObject(gitDir: string, type: "blob" | "tree" | "commit", payload: Buffer): { hex: string; raw: Buffer } {
+  const full = Buffer.concat([Buffer.from(`${type} ${payload.length}\0`, "utf8"), payload]);
+  const raw = createHash("sha1").update(full).digest();
+  const hex = raw.toString("hex");
+  const dir = join(gitDir, "objects", hex.slice(0, 2));
+  const file = join(dir, hex.slice(2));
+  if (!existsSync(file)) {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(file, deflateSync(full));
+  }
+  return { hex, raw };
+}
+
+function isIgnoredSuiteEntry(relPath: string, name: string, isDir: boolean): boolean {
+  return name === ".git"
+    || name === "node_modules"
+    || name === ".test-results"
+    || name === "runs.log"
+    || name === "environments.log"
+    || name.startsWith("started")
+    || name === "browser-environment.json"
+    || name === "command-observation.json"
+    || name === "fixture-scenario.json"
+    || (isDir && (relPath === "caller-home" || relPath === "caller-temporary"));
+}
+
+/** Initialize or advance the synthetic runner checkout on `main` without spawning `git`. */
+export function commitSuiteDirectory(root: string, message: string): void {
+  const gitDir = join(root, ".git");
+  const mainRef = join(gitDir, "refs", "heads", "main");
+  if (!existsSync(join(gitDir, "HEAD"))) {
+    mkdirSync(join(gitDir, "objects"), { recursive: true });
+    mkdirSync(join(gitDir, "refs", "heads"), { recursive: true });
+    writeFileSync(join(gitDir, "HEAD"), "ref: refs/heads/main\n");
+    writeFileSync(
+      join(gitDir, "config"),
+      `[core]\n\trepositoryformatversion = 0\n\tfilemode = ${process.platform === "win32" ? "false" : "true"}\n\tbare = false\n\tlogallrefupdates = true\n\tautocrlf = false\n\teol = lf\n[user]\n\tname = Test\n\temail = t@example.com\n`,
+    );
+  }
+  const indexEntries: Array<{ pathBytes: Buffer; st: BigIntStats; mode: number; size: number; raw: Buffer }> = [];
+  const buildTree = (dir: string, relPrefix: string): { hex: string; raw: Buffer; hasFiles: boolean } => {
+    const items: Array<{ name: string; sortKey: string; modeStr: string; raw: Buffer }> = [];
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const relPath = relPrefix ? `${relPrefix}/${entry.name}` : entry.name;
+      const fullPath = join(dir, entry.name);
+      const st = lstatSync(fullPath, { bigint: true });
+      const isDir = st.isDirectory();
+      if (isIgnoredSuiteEntry(relPath, entry.name, isDir)) continue;
+      if (isDir) {
+        const sub = buildTree(fullPath, relPath);
+        if (sub.hasFiles) items.push({ name: entry.name, sortKey: `${entry.name}/`, modeStr: "40000", raw: sub.raw });
+      } else if (st.isFile()) {
+        const data = readFileSync(fullPath);
+        const exec = process.platform !== "win32" && (Number(st.mode) & 0o111) !== 0;
+        const blob = writeSuiteGitObject(gitDir, "blob", data);
+        items.push({ name: entry.name, sortKey: entry.name, modeStr: exec ? "100755" : "100644", raw: blob.raw });
+        indexEntries.push({ pathBytes: Buffer.from(relPath, "utf8"), st, mode: exec ? 0o100755 : 0o100644, size: data.length, raw: blob.raw });
+      }
+    }
+    items.sort((a, b) => Buffer.compare(Buffer.from(a.sortKey, "utf8"), Buffer.from(b.sortKey, "utf8")));
+    const payload = Buffer.concat(items.map((item) => Buffer.concat([Buffer.from(`${item.modeStr} ${item.name}\0`, "utf8"), item.raw])));
+    const tree = writeSuiteGitObject(gitDir, "tree", payload);
+    return { hex: tree.hex, raw: tree.raw, hasFiles: items.length > 0 };
+  };
+  const rootTree = buildTree(root, "");
+  indexEntries.sort((a, b) => Buffer.compare(a.pathBytes, b.pathBytes));
+  const header = Buffer.alloc(12);
+  header.write("DIRC", 0, "ascii");
+  header.writeUInt32BE(2, 4);
+  header.writeUInt32BE(indexEntries.length, 8);
+  const entryBuffers = indexEntries.map((entry) => {
+    const buf = Buffer.alloc((62 + entry.pathBytes.length + 8) & ~7);
+    buf.writeUInt32BE(Number(entry.st.ctimeNs / 1_000_000_000n) >>> 0, 0);
+    buf.writeUInt32BE(Number(entry.st.ctimeNs % 1_000_000_000n) >>> 0, 4);
+    buf.writeUInt32BE(Number(entry.st.mtimeNs / 1_000_000_000n) >>> 0, 8);
+    buf.writeUInt32BE(Number(entry.st.mtimeNs % 1_000_000_000n) >>> 0, 12);
+    buf.writeUInt32BE(Number(entry.st.dev & 0xffffffffn) >>> 0, 16);
+    buf.writeUInt32BE(Number(entry.st.ino & 0xffffffffn) >>> 0, 20);
+    buf.writeUInt32BE(entry.mode >>> 0, 24);
+    buf.writeUInt32BE(Number(entry.st.uid & 0xffffffffn) >>> 0, 28);
+    buf.writeUInt32BE(Number(entry.st.gid & 0xffffffffn) >>> 0, 32);
+    buf.writeUInt32BE(entry.size >>> 0, 36);
+    entry.raw.copy(buf, 40);
+    buf.writeUInt16BE(Math.min(entry.pathBytes.length, 0x0fff), 60);
+    entry.pathBytes.copy(buf, 62);
+    return buf;
+  });
+  const indexBody = Buffer.concat([header, ...entryBuffers]);
+  writeFileSync(join(gitDir, "index"), Buffer.concat([indexBody, createHash("sha1").update(indexBody).digest()]));
+  const parent = existsSync(mainRef) ? readFileSync(mainRef, "utf8").trim() : undefined;
+  const nowSec = Math.floor(Date.now() / 1000);
+  const commitPayload = Buffer.from(
+    `tree ${rootTree.hex}\n${parent ? `parent ${parent}\n` : ""}author Test <t@example.com> ${nowSec} +0000\ncommitter Test <t@example.com> ${nowSec} +0000\n\n${message}\n`,
+    "utf8",
+  );
+  const commitObj = writeSuiteGitObject(gitDir, "commit", commitPayload);
+  writeFileSync(mainRef, `${commitObj.hex}\n`);
+}
 
 /** An explicitly private caller environment keeps a controlled retained run inside this case's root. */
 export function isolatedRunnerEnvironment(root: string): NodeJS.ProcessEnv {
@@ -64,13 +165,16 @@ export function installRunFailure(root: string, failure: RunFailure, entry: "sui
   source = source.replace(marker, 'from "./fixture-run-process.js"');
   const reason = failure === "undefined" ? "undefined" : failure === "error" ? 'new Error("controlled unknown runner rejection")'
     : `new CommandFailure("controlled runner cleanup ${failure}", ${JSON.stringify(failure === "none" ? "start" : "unreadable")}, "", "", ${JSON.stringify(failure)})`;
-  writeFileSync(join(dirname(target), "fixture-run-process.ts"), `import { runProcess as actualRunProcess, SUITE_RUN_TIMEOUT_MS } from ${JSON.stringify(actual)};
+  const rootExpr = entry === "suite" ? 'resolve(import.meta.dir, "../../../..")' : "import.meta.dir";
+  writeFileSync(join(dirname(target), "fixture-run-process.ts"), `import { join, resolve } from "node:path";
+import { runProcess as actualRunProcess, SUITE_RUN_TIMEOUT_MS } from ${JSON.stringify(actual)};
 import { CommandFailure } from ${JSON.stringify(import.meta.resolve("@petrina/test-support/commands"))};
 import { writeFixtureJson } from ${JSON.stringify(import.meta.resolve("@petrina/test-support/fixture-json"))};
 export { SUITE_RUN_TIMEOUT_MS };
+const fixtureRoot = ${rootExpr};
 export const runProcess: typeof actualRunProcess = async (argv, options) => {
-  if (${entry === "focused" ? "true" : `options.cwd === ${JSON.stringify(join(root, "packages/core"))}`}) {
-    writeFixtureJson(${JSON.stringify(join(root, "command-observation.json"))}, { folder: options.env?.TMPDIR, home: options.env?.HOME, browsers: options.env?.PETRINA_TEST_BROWSERS, argv });
+  if (${entry === "focused" ? "true" : 'options.cwd === join(fixtureRoot, "packages/core")'}) {
+    writeFixtureJson(join(fixtureRoot, "command-observation.json"), { folder: options.env?.TMPDIR, home: options.env?.HOME, browsers: options.env?.PETRINA_TEST_BROWSERS, argv });
     throw ${reason};
   }
   return actualRunProcess(argv, options);
@@ -89,12 +193,14 @@ export function entryFixture(root: string, browser: BrowserStandIn = "ready", ob
   if (browser === "ready" || browser === "changed-command") writeFileSync(executable, "Fixture file availability only; never launched.\n", { mode: 0o700 });
   if (browser === "directory") mkdirSync(executable);
   // Only this unrelated native path boundary is substituted. The actual gate and filesystem checks stay real.
-  writeFileSync(join(quality, "bundled-browser.ts"), `import { writeFixtureJson } from "@petrina/test-support/fixture-json";
+  writeFileSync(join(quality, "bundled-browser.ts"), `import { join, resolve } from "node:path";
+import { writeFixtureJson } from "@petrina/test-support/fixture-json";
+const fixtureRoot = resolve(import.meta.dir, "../../../..");
 export function bundledChromiumExecutablePath() {
-  writeFixtureJson(${JSON.stringify(join(root, "browser-environment.json"))}, { home: process.env.HOME, gitConfig: process.env.GIT_CONFIG_GLOBAL,
+  writeFixtureJson(join(fixtureRoot, "browser-environment.json"), { home: process.env.HOME, gitConfig: process.env.GIT_CONFIG_GLOBAL,
     token: process.env.GH_TOKEN, toolConfig: process.env.CODEX_HOME, browserOverride: process.env.PLAYWRIGHT_BROWSERS_PATH });
-  ${browser === "changed-command" ? `writeFixtureJson(${JSON.stringify(join(root, "packages", "storage", "package.json"))}, { scripts: { test: "bun unrelated-preparation.ts" } });` : ""}
-  ${browser === "resolver-error" ? 'throw new Error("controlled bundled-browser resolver failure");' : `return ${JSON.stringify(executable)};`}
+  ${browser === "changed-command" ? 'writeFixtureJson(join(fixtureRoot, "packages", "storage", "package.json"), { scripts: { test: "bun unrelated-preparation.ts" } });' : ""}
+  ${browser === "resolver-error" ? 'throw new Error("controlled bundled-browser resolver failure");' : 'return join(fixtureRoot, "fixture-bundled-browser");'}
 }`);
   if (observation === "changed-command-after-observation") {
     // Forward the copied actual observation, then model a concurrent edit after its own input snapshot.
@@ -104,7 +210,7 @@ export function bundledChromiumExecutablePath() {
     writeFileSync(repository, `import { writeFixtureJson } from "@petrina/test-support/fixture-json";\n${actual.replace(declaration, "async function fixtureActualObserve(")}\n
 export async function observe(...args: Parameters<typeof fixtureActualObserve>): ReturnType<typeof fixtureActualObserve> {
   const plan = await fixtureActualObserve(...args);
-  writeFixtureJson(${JSON.stringify(join(root, "packages", "storage", "package.json"))}, { scripts: { test: "bun unrelated-after-observation.ts" } });
+  writeFixtureJson(join(ROOT, "packages", "storage", "package.json"), { scripts: { test: "bun unrelated-after-observation.ts" } });
   return plan;
 }\n`);
   }
@@ -118,15 +224,15 @@ export async function observe(...args: Parameters<typeof fixtureActualObserve>):
 }
 
 export async function prepareSuite(root: string, scenario: Partial<Record<Suite, StandIn>> = {}) {
-  const log = join(root, "runs.log"), environments = join(root, "environments.log");
-  writeFileSync(join(root, ".gitignore"), "node_modules\n.test-results\nruns.log\nenvironments.log\nstarted*\nbrowser-environment.json\ncommand-observation.json\n/caller-home/\n/caller-temporary/\n");
+  writeFileSync(join(root, ".gitignore"), "node_modules\n.test-results\nruns.log\nenvironments.log\nstarted*\nbrowser-environment.json\ncommand-observation.json\nfixture-scenario.json\n/caller-home/\n/caller-temporary/\n");
+  writeFileSync(join(root, "fixture-scenario.json"), JSON.stringify(scenario));
   const runner = join(root, "vitest-report.ts");
-  writeFileSync(runner, `import { appendFileSync, renameSync, writeFileSync } from "node:fs";
+  writeFileSync(runner, `import { appendFileSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-const workspace = process.argv[2], stand = (${JSON.stringify(scenario)})[workspace] ?? {};
-const log = line => appendFileSync(${JSON.stringify(log)}, line + "\\n");
+const workspace = process.argv[2], stand = JSON.parse(readFileSync(resolve(import.meta.dir, "fixture-scenario.json"), "utf8"))[workspace] ?? {};
+const log = line => appendFileSync(resolve(import.meta.dir, "runs.log"), line + "\\n");
 log(workspace);
-appendFileSync(${JSON.stringify(environments)}, JSON.stringify({ workspace, home: process.env.HOME, gitConfig: process.env.GIT_CONFIG_GLOBAL, token: process.env.GH_TOKEN, toolConfig: process.env.CODEX_HOME }) + "\\n");
+appendFileSync(resolve(import.meta.dir, "environments.log"), JSON.stringify({ workspace, home: process.env.HOME, gitConfig: process.env.GIT_CONFIG_GLOBAL, token: process.env.GH_TOKEN, toolConfig: process.env.CODEX_HOME }) + "\\n");
 if (stand.print) process.stdout.write(stand.print);
 const failed = stand.report === "fail", skipped = stand.report === "skipped";
 const status = failed ? "failed" : skipped ? "skipped" : stand.report === "running" ? "pending" : "passed";
@@ -143,32 +249,38 @@ if (stand.moveHead) {
 }
 if (stand.hold) {
  for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => { log(workspace + " received " + signal); process.exit(signal === "SIGINT" ? 130 : 143); });
- const mark = ${JSON.stringify(join(root, "started"))}; writeFileSync(mark + ".tmp", String(process.pid)); renameSync(mark + ".tmp", mark);
+ const mark = resolve(import.meta.dir, "started"); writeFileSync(mark + ".tmp", String(process.pid)); renameSync(mark + ".tmp", mark);
  setTimeout(() => process.exit(1), 20_000);
 } else process.exit(stand.code ?? 0);`);
   for (const { path: workspace, runner: kind } of TEST_WORKSPACES) {
     const name = workspace.split("/").at(-1)! as Suite, stand = scenario[name] ?? {}, folder = join(root, workspace);
+    const relToRoot = [...workspace.split("/"), "test", "contracts", "testing"].map(() => "..").join("/");
+    const runnerFromWorkspace = `${workspace.split("/").map(() => "..").join("/")}/vitest-report.ts`;
     mkdirSync(join(folder, "test", "contracts", "testing"), { recursive: true });
     writeFileSync(join(folder, ".env"), "GH_TOKEN=fixture-dotenv-account\nCODEX_HOME=fixture-dotenv-config\n");
     const file = join(folder, EXAMPLE);
     writeFileSync(file, kind === "vitest" ? "// Controlled Vitest result.\n" : `import { expect, it } from "bun:test";
-import { appendFileSync, renameSync, writeFileSync } from "node:fs";
-const log = line => appendFileSync(${JSON.stringify(log)}, line + "\\n");
-it${stand.report === "skipped" ? ".skip" : ""}(${JSON.stringify(name)}, async () => {
+import { appendFileSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
+const fixtureRoot = resolve(import.meta.dir, ${JSON.stringify(relToRoot)});
+const stand = JSON.parse(readFileSync(join(fixtureRoot, "fixture-scenario.json"), "utf8"))[${JSON.stringify(name)}] ?? {};
+const log = line => appendFileSync(join(fixtureRoot, "runs.log"), line + "\\n");
+(stand.report === "skipped" ? it.skip : it)(${JSON.stringify(name)}, async () => {
  log(${JSON.stringify(name)});
- appendFileSync(${JSON.stringify(environments)}, JSON.stringify({ workspace: ${JSON.stringify(name)}, home: process.env.HOME, gitConfig: process.env.GIT_CONFIG_GLOBAL, token: process.env.GH_TOKEN, toolConfig: process.env.CODEX_HOME }) + "\\n");
- expect(process.cwd()).toBe(${JSON.stringify(join(root, "packages", "engine"))});
- ${stand.hold ? `const mark = ${JSON.stringify(join(root, "started"))}; writeFileSync(mark + ".tmp", String(process.pid)); renameSync(mark + ".tmp", mark);
- await new Promise((resolve, reject) => { const timer = setTimeout(() => reject(new Error("Unreleased fixture")), 20_000);
- for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => { clearTimeout(timer); resolve(); }); });` : ""}
- expect(${JSON.stringify(stand.report !== "fail")}).toBe(true);
+ appendFileSync(join(fixtureRoot, "environments.log"), JSON.stringify({ workspace: ${JSON.stringify(name)}, home: process.env.HOME, gitConfig: process.env.GIT_CONFIG_GLOBAL, token: process.env.GH_TOKEN, toolConfig: process.env.CODEX_HOME }) + "\\n");
+ expect(process.cwd()).toBe(join(fixtureRoot, "packages", "engine"));
+ if (stand.hold) {
+  const mark = join(fixtureRoot, "started"); writeFileSync(mark + ".tmp", String(process.pid)); renameSync(mark + ".tmp", mark);
+  await new Promise((resolve, reject) => { const timer = setTimeout(() => reject(new Error("Unreleased fixture")), 20_000);
+  for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => { clearTimeout(timer); resolve(); }); });
+ }
+ expect(stand.report !== "fail").toBe(true);
 });`);
     if (stand.report === "omitted") writeFileSync(join(folder, "test", "contracts", "testing", "omitted.test.ts"), "// No test outcome can be reported.\n");
     const nativeCommand = name === "test-support" ? "bun src/run.ts" : "bun ../test-support/src/run.ts";
     // The scripted Vitest producer is itself a Bun program; keep its own dotenv loading explicit too.
-    writeFileSync(join(folder, "package.json"), JSON.stringify({ name: workspace, scripts: { test: kind === "bun" ? nativeCommand : `${JSON.stringify(process.execPath)} --no-env-file ${JSON.stringify(runner)} ${name}` } }));
+    writeFileSync(join(folder, "package.json"), JSON.stringify({ name: workspace, scripts: { test: kind === "bun" ? nativeCommand : `${JSON.stringify(process.execPath)} --no-env-file ${JSON.stringify(runnerFromWorkspace)} ${name}` } }));
   }
-  await git(root, "init", "-q", "-b", "main"); await git(root, "add", ".");
-  await git(root, "-c", "user.email=t@example.com", "-c", "user.name=Test", "commit", "-q", "-m", "Fixture");
+  commitSuiteDirectory(root, "Fixture");
   return root;
 }

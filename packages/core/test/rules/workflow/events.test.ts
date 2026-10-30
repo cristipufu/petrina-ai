@@ -137,8 +137,71 @@ describe("compact facts become ordered events", () => {
   });
 
   it("orders node, seat, check, decision and review events within one change, with causal references", () => {
-    const builder: JourneyStep = { id: "j1", kind: "agent", roleId: "builder", profileId: "sol-xhigh", round: 1, sub: 0, startedAt: 100, trigger: { reason: "Task started" }, agentInputs: [{ at: 101, roleId: "builder", profileId: "sol-xhigh", requestedProfileId: "sol-xhigh", taskTitle: "T", sections: [{ title: "Design brief", body: "x" }], mode: "fresh", exact: { file: "/f", digest: "d".repeat(64), size: 1200 }, manifest: [{ name: "Role instructions", size: 10, digest: "a", kind: "instructions" }, { name: "Design brief", size: 1, digest: "b", kind: "text" }] }], agentResults: [{ roleId: "builder", profileId: "sol-xhigh", at: 200, value: { summary: "Built it", changes: ["A change"] } }], endedAt: 200, end: "done", outcome: "Change ready", reason: "ready for review" };
-    const checks: JourneyStep = { id: "j2", kind: "petrina", work: "checks", round: 1, sub: 0, startedAt: 201, trigger: { after: "j1", reason: "ready for review" }, productChecks: [{ id: "check-0", attemptId: "run-0", productId: "shop", name: "Tests", result: "fail", queuedAt: 201, startedAt: 202, endedAt: 250, run: { name: "Tests", command: "bun test", ok: false, execution: completeCheckExecution(7), ms: 48, output: "1 failed", logPath: "/log", logComplete: true }, detail: "(fail) a case" }], checkAttempts: [{ id: "run-0", productId: "shop", commands: ["bun test"], sha: "abc", tree: "tree", definition: "def", passed: false }], endedAt: 250, end: "done", outcome: "1 of 1 check failed", reason: "1 check failed", tone: "back" };
+    const builder: JourneyStep = {
+      id: "j1",
+      kind: "agent",
+      roleId: "builder",
+      profileId: "sol-xhigh",
+      round: 1,
+      sub: 0,
+      startedAt: 100,
+      trigger: { reason: "Task started" },
+      agentInputs: [{
+        at: 101,
+        roleId: "builder",
+        profileId: "sol-xhigh",
+        requestedProfileId: "sol-xhigh",
+        taskTitle: "T",
+        sections: [{ title: "Design brief", body: "x" }],
+        mode: "fresh",
+        exact: { file: "/f", digest: "d".repeat(64), size: 1200 },
+        manifest: [
+          { name: "Role instructions", size: 10, digest: "a", kind: "instructions" },
+          { name: "Design brief", size: 1, digest: "b", kind: "text" },
+        ],
+      }],
+      agentResults: [{ roleId: "builder", profileId: "sol-xhigh", at: 200, value: { summary: "Built it", changes: ["A change"] } }],
+      endedAt: 200,
+      end: "done",
+      outcome: "Change ready",
+      reason: "ready for review",
+    };
+    const checks: JourneyStep = {
+      id: "j2",
+      kind: "petrina",
+      work: "checks",
+      round: 1,
+      sub: 0,
+      startedAt: 201,
+      trigger: { after: "j1", reason: "ready for review" },
+      productChecks: [{
+        id: "check-0",
+        attemptId: "run-0",
+        productId: "shop",
+        name: "Tests",
+        result: "fail",
+        queuedAt: 201,
+        startedAt: 202,
+        endedAt: 250,
+        run: {
+          name: "Tests",
+          command: "bun test",
+          ok: false,
+          execution: completeCheckExecution(7),
+          ms: 48,
+          output: "1 failed",
+          logPath: "/log",
+          logComplete: true,
+        },
+        detail: "(fail) a case",
+      }],
+      checkAttempts: [{ id: "run-0", productId: "shop", commands: ["bun test"], sha: "abc", tree: "tree", definition: "def", passed: false }],
+      endedAt: 250,
+      end: "done",
+      outcome: "1 of 1 check failed",
+      reason: "1 check failed",
+      tone: "back",
+    };
     const before = task({ state: "running", journey: [] });
     const after = task({ state: "running", fixing: true, journey: [builder, checks] }, { checkReturns: 1 });
     const events = diff(before, after);
@@ -156,7 +219,28 @@ describe("compact facts become ordered events", () => {
     const checks: JourneyStep = { id: "j2", kind: "petrina", work: "checks", round: 1, sub: 0, startedAt: 10, endedAt: 20, end: "done", outcome: "1 of 1 check failed", reason: "1 check failed", tone: "back", productChecks: [failed], checkAttempts: [{ id: "run-0", productId: "shop", commands: ["bun test"], sha: "abc", tree: "tree", definition: "def", passed: false }] };
     const fix: JourneyStep = { id: "j3", kind: "agent", roleId: "builder", profileId: "opus-high", round: 1, sub: 0, fixing: true, startedAt: 21, endedAt: 30, end: "done", outcome: "No code changes; checks still failing", reason: "ready for review", builderReturn: { productId: "shop", changed: false, claimedFixes: 1, outcome: "No code changes; checks still failing" } };
     // The handoff of an unchanged tree's saved failure: copies of the original entry, nothing executed.
-    const reuse = (result: "fail" | "pass"): JourneyStep => ({ id: "j4", kind: "petrina", work: "check-reuse", round: 1, sub: 0, startedAt: 31, endedAt: 31, end: "done", outcome: `Previous checks reused — 1 ${result === "fail" ? "still failing" : "passing"}`, reason: `Previous checks reused — 1 ${result === "fail" ? "still failing" : "passing"}`, ...(result === "fail" ? { tone: "back" as const } : {}), productChecks: [{ ...failed, result, run: { ...failed.run, ok: result === "pass", execution: completeCheckExecution(result === "pass" ? 0 : 7) }, reusedAt: 31 }] });
+    const reuse = (result: "fail" | "pass"): JourneyStep => {
+      const words = `Previous checks reused — 1 ${result === "fail" ? "still failing" : "passing"}`;
+      return {
+        id: "j4",
+        kind: "petrina",
+        work: "check-reuse",
+        round: 1,
+        sub: 0,
+        startedAt: 31,
+        endedAt: 31,
+        end: "done",
+        outcome: words,
+        reason: words,
+        ...(result === "fail" ? { tone: "back" as const } : {}),
+        productChecks: [{
+          ...failed,
+          result,
+          run: { ...failed.run, ok: result === "pass", execution: completeCheckExecution(result === "pass" ? 0 : 7) },
+          reusedAt: 31,
+        }],
+      };
+    };
     const reviewed: JourneyStep = { ...checks, reuses: [{ at: 31, purpose: "review", productId: "shop", attemptId: "run-0", basis: "same-tree", originalAt: 20, sha: "abc", tree: "tree", definition: "def", passed: false }] };
     const returned = (journey: JourneyStep[], work: Partial<TaskRepository>, changes: Partial<TaskState> = {}) =>
       diff(task({ state: "running", journey: journey.slice(0, -1) }, work), task({ state: "running", fixing: true, journey, ...changes }, work));
@@ -436,23 +520,68 @@ describe("compact facts become ordered events", () => {
   });
 
   it("reconciles findings when a review node finishes and names the check basis when a reviewer starts", () => {
-    const checks: JourneyStep = { id: "j2", kind: "petrina", work: "checks", round: 1, sub: 0, startedAt: 10, endedAt: 20, end: "done", outcome: "All checks pass", reason: "checks passed", productChecks: [{ name: "Tests", result: "pass", startedAt: 11, endedAt: 20, run: { name: "Tests", command: "bun test", ok: true, execution: completeCheckExecution(0), ms: 9, output: "" } }], checkAttempts: [{ id: "run-0", productId: "shop", commands: ["bun test"], sha: "abc", definition: "def", passed: true }], reuses: [{ at: 25, purpose: "review", basis: "same-tree", originalAt: 20, tree: "tree", definition: "def", passed: true }] };
-    const review = seated({ id: "j3", kind: "agent", roleId: "code-reviewer", profileId: "opus-high", team: ["opus-high", "sol-high"], round: 1, sub: 0, startedAt: 30, trigger: { after: "j2", reason: "checks passed" } }, [["0", "opus-high"], ["1", "sol-high"]]);
-    const started = task({ state: "running", journey: [checks, review], findings: [{ id: "f1", text: "Old", severity: "blocking", raisedBy: "sol-high", confirmedBy: [], status: "open", answer: { fixed: true, text: "Fixed it", at: 5 } }] });
+    const checks: JourneyStep = {
+      id: "j2",
+      kind: "petrina",
+      work: "checks",
+      round: 1,
+      sub: 0,
+      startedAt: 10,
+      endedAt: 20,
+      end: "done",
+      outcome: "All checks pass",
+      reason: "checks passed",
+      productChecks: [{
+        name: "Tests",
+        result: "pass",
+        startedAt: 11,
+        endedAt: 20,
+        run: { name: "Tests", command: "bun test", ok: true, execution: completeCheckExecution(0), ms: 9, output: "" },
+      }],
+      checkAttempts: [{ id: "run-0", productId: "shop", commands: ["bun test"], sha: "abc", definition: "def", passed: true }],
+      reuses: [{ at: 25, purpose: "review", basis: "same-tree", originalAt: 20, tree: "tree", definition: "def", passed: true }],
+    };
+    const review = seated(
+      { id: "j3", kind: "agent", roleId: "code-reviewer", profileId: "opus-high", team: ["opus-high", "sol-high"], round: 1, sub: 0, startedAt: 30, trigger: { after: "j2", reason: "checks passed" } },
+      [["0", "opus-high"], ["1", "sol-high"]],
+    );
+    const started = task({
+      state: "running",
+      journey: [checks, review],
+      findings: [{ id: "f1", text: "Old", severity: "blocking", raisedBy: "sol-high", confirmedBy: [], status: "open", answer: { fixed: true, text: "Fixed it", at: 5 } }],
+    });
     const baselines = new Map();
     const context = ctx();
     const firstEvents = workflowEvents(workflowFacts(task({ state: "running", journey: [{ ...checks, reuses: undefined }] }), context), workflowFacts(started, context), context, baselines);
     expect(kinds(firstEvents)).toEqual(["check.reused", "node.started", "seat.started", "seat.started"]);
     expect(firstEvents[1]).toMatchObject({ checks: { basis: "reused", passed: true, purpose: "review" } });
-    const finished = task({ state: "running", journey: [checks, handedBack({ ...review, endedAt: 60, end: "done", outcome: "2 findings", reason: "review passed", result: { findings: [] } })], findings: [
-      { id: "f1", text: "Old", severity: "blocking", raisedBy: "sol-high", confirmedBy: ["opus-high"], status: "open", answer: { fixed: true, text: "Fixed it", at: 5 }, reopenedAt: 50, evidence: "Still fails" },
-      { id: "f2", text: "New", severity: "suggestion", raisedBy: "opus-high", confirmedBy: [], status: "open" },
-      { id: "f3", text: "Disputed", severity: "blocking", raisedBy: "opus-high", confirmedBy: [], status: "dismissed" },
-    ] });
+    const finished = task({
+      state: "running",
+      journey: [checks, handedBack({ ...review, endedAt: 60, end: "done", outcome: "2 findings", reason: "review passed", result: { findings: [] } })],
+      findings: [
+        { id: "f1", text: "Old", severity: "blocking", raisedBy: "sol-high", confirmedBy: ["opus-high"], status: "open", answer: { fixed: true, text: "Fixed it", at: 5 }, reopenedAt: 50, evidence: "Still fails" },
+        { id: "f2", text: "New", severity: "suggestion", raisedBy: "opus-high", confirmedBy: [], status: "open" },
+        { id: "f3", text: "Disputed", severity: "blocking", raisedBy: "opus-high", confirmedBy: [], status: "dismissed" },
+      ],
+    });
     const events = workflowEvents(workflowFacts(started, context), workflowFacts(finished, context), context, baselines);
     expect(kinds(events)).toEqual(["seat.finished", "seat.finished", "node.finished", "review.finished"]);
     // The Builder's claim on f1 was under test; the review reproduced it, so it is reopened and not fixed.
-    expect(events[3]).toMatchObject({ opening: 1, closing: 3, since: "node-start", raised: ["f2", "f3"], reopened: [{ id: "f1", evidence: true }], dismissed: ["f3"], stillOpen: ["f1"], openImportant: ["f1"], openNits: ["f2"], openPreExisting: [], reportCounts: { closing: { total: 3, open: { total: 2, important: 1, nits: 1, preExisting: 0 }, dismissed: 1 } }, claimedFixed: ["f1"], fixed: [] });
+    expect(events[3]).toMatchObject({
+      opening: 1,
+      closing: 3,
+      since: "node-start",
+      raised: ["f2", "f3"],
+      reopened: [{ id: "f1", evidence: true }],
+      dismissed: ["f3"],
+      stillOpen: ["f1"],
+      openImportant: ["f1"],
+      openNits: ["f2"],
+      openPreExisting: [],
+      reportCounts: { closing: { total: 3, open: { total: 2, important: 1, nits: 1, preExisting: 0 }, dismissed: 1 } },
+      claimedFixed: ["f1"],
+      fixed: [],
+    });
   });
 
   it("lists a repair claim the Builder already marked fixed as claimed and, when the review leaves it standing, as fixed", () => {
@@ -550,13 +679,49 @@ describe("compact facts become ordered events", () => {
   });
 
   it("records coordinator requests and decisions, including questions settled on the journey and replaced profiles", () => {
-    const step: JourneyStep = { id: "j1", kind: "agent", roleId: "code-reviewer", profileId: "opus-high", round: 1, sub: 0, startedAt: 1, asks: [{ id: "q1", kind: "question", title: "Which colour?", at: 2 }], agentInputs: [{ at: 1, roleId: "code-reviewer", profileId: "opus-high", reviewerKey: "0", requestedProfileId: "opus-high", taskTitle: "T", sections: [], mode: "fresh" }] };
+    const step: JourneyStep = {
+      id: "j1",
+      kind: "agent",
+      roleId: "code-reviewer",
+      profileId: "opus-high",
+      round: 1,
+      sub: 0,
+      startedAt: 1,
+      asks: [{ id: "q1", kind: "question", title: "Which colour?", at: 2 }],
+      agentInputs: [{
+        at: 1,
+        roleId: "code-reviewer",
+        profileId: "opus-high",
+        reviewerKey: "0",
+        requestedProfileId: "opus-high",
+        taskTitle: "T",
+        sections: [],
+        mode: "fresh",
+      }],
+    };
     const asked = task({ state: "needs-you", journey: [step] });
     const inbox: InboxItem[] = [{ id: "q1", taskId: asked.id, kind: "question", title: "Which colour?", at: 2, blocking: true }];
     const requested = diff(task({ state: "running", journey: [{ ...step, asks: [] }] }), asked, inbox);
     expect(kinds(requested)).toEqual(["coordinator.request", "task.state"]);
     expect(requested[0]).toMatchObject({ requestKind: "question", itemId: "q1", nodeId: "j1", blocking: true });
-    const replaced = { ...step, asks: [{ id: "q1", kind: "question" as const, title: "Which colour?", at: 2, endedAt: 3, how: "answered" as const, answer: "Blue" }], agentInputs: [...step.agentInputs!, { at: 4, roleId: "code-reviewer", profileId: "sol-high", reviewerKey: "0", requestedProfileId: "opus-high", selectionReason: "Opus is out of usage", taskTitle: "T", sections: [], mode: "fresh" as const }] };
+    const replaced = {
+      ...step,
+      asks: [{ id: "q1", kind: "question" as const, title: "Which colour?", at: 2, endedAt: 3, how: "answered" as const, answer: "Blue" }],
+      agentInputs: [
+        ...step.agentInputs!,
+        {
+          at: 4,
+          roleId: "code-reviewer",
+          profileId: "sol-high",
+          reviewerKey: "0",
+          requestedProfileId: "opus-high",
+          selectionReason: "Opus is out of usage",
+          taskTitle: "T",
+          sections: [],
+          mode: "fresh" as const,
+        },
+      ],
+    };
     const context = { ...ctx(), limited: [{ toolId: "claude-code", model: "opus", until: 9, reason: "Claude Code's weekly Opus limit" }] };
     const events = workflowEvents(workflowFacts(asked, ctx(inbox)), workflowFacts(task({ state: "running", journey: [replaced] }), context), context, new Map());
     expect(kinds(events)).toEqual(["coordinator.decision", "seat.started", "profile.replaced", "task.state"]);

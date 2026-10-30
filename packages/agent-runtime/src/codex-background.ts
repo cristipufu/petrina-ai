@@ -7,7 +7,7 @@ import { createRequire } from "node:module";
 import { createInterface } from "node:readline";
 import { realpath } from "node:fs/promises";
 import { resolve } from "node:path";
-import { adapterEntry, ADAPTERS } from "./tools.js";
+import { CODEX_AGENT_ENTRY, resolveAdapterEntry } from "./tool-entry.js";
 
 export const BACKGROUND_FEATURES = ["apps", "plugins", "computer_use", "browser_use", "browser_use_external", "browser_use_full_cdp_access", "in_app_browser"];
 
@@ -38,7 +38,7 @@ export async function backgroundCommand(executable: string | undefined): Promise
   if (executable && await realpath(resolve(executable)).catch(() => resolve(executable)) === await realpath(import.meta.path)) {
     throw new Error("Codex could not start because its launcher points back to itself. Restart Petrina before trying again.");
   }
-  const require = createRequire(adapterEntry(ADAPTERS.codex!));
+  const require = createRequire(resolveAdapterEntry(CODEX_AGENT_ENTRY));
   return executable ? [executable] : [process.execPath, require.resolve("@openai/codex/bin/codex.js")];
 }
 

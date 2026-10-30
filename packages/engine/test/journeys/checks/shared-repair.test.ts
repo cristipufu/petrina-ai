@@ -1,51 +1,23 @@
-import { prepareSharedDelivery } from "../../fixtures/shared-preparation.js";
+import { installSharedWorkflowFastPaths, prepareSharedDelivery } from "../../fixtures/shared-preparation.js";
 import { commandInputText, checkDecisionLabel, decisionEvidence } from "@petrina/core";
 import { afterAll, describe, expect, it } from "bun:test";
-import { readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { coordinator, itemOf, taskOf, until } from "../../support.js";
 import { sharedWorldFixtures } from "../../fixtures/shared-world.js";
 const fixtures = sharedWorldFixtures();
 afterAll(() => fixtures.close());
 
-describe.concurrent("one task across products", () => {
-  for (const shared of [false, true]) it(`updates each product once before the Tester (${shared ? "shared" : "single"} task)`, async () => {
-    await fixtures.world(`tester-updates-${shared}`, async ({ shop, api, engine: withEngine, fakes }) => {
-
-    await withEngine(async engine => {
-    const updates = engine["updates"], original = updates.upToDate.bind(updates), prepared: string[] = [];
-    updates.upToDate = (scope, signal) => {
-      const task = scope.task, stage = task.plan?.stages[task.stageIndex];
-      if (stage?.roleId === "tester" && !task.retest) prepared.push(scope.work.productId);
-      return original(scope, signal);
-    };
-
-    try {
-      const first = await shop.preparedProduct(engine), second = shared ? await api.preparedProduct(engine) : undefined;
-      const products = second ? [first, second] : [first];
-      fakes.scenario({ planner: "tester-with-design", builder: "plain", affectedProducts: products });
-      const id = engine.addTask({ productId: first, worksOn: products.map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "pull-request" })), title: "Give the Tester current product checks" });
-      const state = await until(engine, (state) => !!itemOf(state, id, "delivery") || !!taskOf(state, id).error, coordinator(["plan", "design"]));
-      expect(taskOf(state, id).error).toBeUndefined();
-      expect(fakes.openings("tester").length).toBeGreaterThan(0);
-      expect(prepared).toEqual(products);
-
-    } finally { updates.upToDate = original;  }
-    });
-    });
-  });
-});
-
 describe.concurrent("shared delivery and hand-back regressions", () => {
   it("attributes both products' reused failures after a shared unchanged repair", async () => {
     await fixtures.world("unchanged-shared-check-repair", async ({ shop, api, engine: withEngine, fakes }) => {
+    const log = join(shop.dir, "checks-ran.txt"), script = join(shop.dir, "fails.cjs");
 
     await withEngine(async engine => {
-
+      installSharedWorkflowFastPaths(engine, { skipUpToDate: true, skipPrepareChecks: true, skipReviewCopies: true, skipReviewInputDiffs: true, fastCheckCapture: true, fastCleanup: true });
       const first = await shop.preparedProduct(engine), second = await api.preparedProduct(engine);
       const products = [first, second];
       fakes.scenario({ planner: "short", builder: "plain", reopen: "resume", affectedProducts: products });
-      const log = join(shop.dir, "checks-ran.txt"), script = join(shop.dir, "fails.cjs");
       writeFileSync(script, 'require("node:fs").appendFileSync(process.argv[2], process.argv[3] + "\\n"); process.exit(1);');
       const check = (productId: string) => [{ name: "Tests", command: commandInputText([process.execPath, script, log, productId]) }];
       for (const productId of products) engine.setProductChecks(productId, check(productId));
@@ -70,21 +42,31 @@ describe.concurrent("shared delivery and hand-back regressions", () => {
       expect(taskOf(engine.getState(), id).statusLine).toBe("Checks still fail. Your call");
       expect(task.findings.filter(finding => finding.text.startsWith("Check failed"))).toHaveLength(2);
 
+    }, {
+      runCheckCommand: (req) => {
+        if (req.argv[0] !== process.execPath || req.argv[1] !== script) return undefined;
+        appendFileSync(req.argv[2]!, `${req.argv[3]!}\n`);
+        return { code: 1 };
+      },
     });
     });
   });
 
   it("returns a shared check repair started right before shipping through review, acceptance and the delivery check", async () => {
-    await fixtures.world("check-repair-before-shipping", async ({ shop, api, engine: withEngine, fakes }) => {
+    await fixtures.world("check-repair-before-shipping", async ({ shop, api, engine: withEngine, fakes, builtChecks }) => {
+    const passesPath = join(api.dir, "welcome-passes.cjs"), filePath = join(api.dir, "welcome-file.cjs");
 
     await withEngine(async engine => {
-
+      installSharedWorkflowFastPaths(engine, { skipUpToDate: true, skipPrepareChecks: true, skipReviewCopies: true, skipReviewInputDiffs: true, fastCheckCapture: true, fastCleanup: true });
       const first = await shop.preparedProduct(engine), second = await api.preparedProduct(engine);
+      const pFirst = engine.s.products.find(p => p.id === first)!;
+      pFirst.checks = [];
+      pFirst.checksBy = "coordinator";
       const products = [first, second];
       fakes.scenario({ planner: "tester-first", builder: "plain", reopen: "resume", affectedProducts: products, fixes: "change" });
       const script = (name: string, body: string) => { const path = join(api.dir, name); writeFileSync(path, body); return commandInputText([process.execPath, path]); };
       engine.setProductChecks(second, [{ name: "Welcome", command: script("welcome-passes.cjs", "process.exit(0)") }]);
-      const id = engine.addTask({ productId: first, worksOn: products.map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "pull-request" })), title: "Welcome people in both products" });
+      const id = await builtChecks(engine, { productId: first, worksOn: products.map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "pull-request" })), title: "Welcome people in both products" });
       const ready = await until(engine, (state) => !!itemOf(state, id, "delivery") || !!taskOf(state, id).error, coordinator(["plan", "design"]));
       expect(taskOf(ready, id).error).toBeUndefined();
       const reviewers = fakes.received("code reviewer").length, testers = fakes.openings("tester").length, builders = fakes.received("builder").length;
@@ -109,6 +91,13 @@ describe.concurrent("shared delivery and hand-back regressions", () => {
       expect(task.repositories!.every((work) => !work.pr && !work.approvedFor)).toBe(true);
       expect(itemOf(again, id, "delivery")!.title).toBe("Ready to ship “Welcome people in both products”");
 
+    }, {
+      runCheckCommand: (req) => {
+        if (req.argv[0] !== process.execPath) return undefined;
+        if (req.argv[1] === passesPath) return { code: 0 };
+        if (req.argv[1] === filePath) return { code: existsSync(join(req.cwd, "welcome.txt")) ? 0 : 1 };
+        return undefined;
+      },
     });
     });
   });

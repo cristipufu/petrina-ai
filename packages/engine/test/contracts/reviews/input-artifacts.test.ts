@@ -19,8 +19,8 @@ it("prepares only port comparisons and keeps lockfile evidence out of the inline
       mkdirSync(join(f.repo, "packages", "[new]"), { recursive: true });
       writeFileSync(join(f.repo, "packages", "[new]", "package-lock.json"), "NESTED-PORT-LOCKFILE\n");
       writeFileSync(join(f.repo, "greeting.txt"), "A-PORTED-GREETING\n");
-      await git(f.repo, "add", "."); await git(f.repo, "commit", "-qm", "Resolve the port");
-      const head = await git(f.repo, "rev-parse", "HEAD");
+      await gitOps.commitChanges(f.repo, "Resolve the port");
+      const head = await gitOps.head(f.repo);
       f.scope.work.portReview = { from: f.base, head: f.first, onto: f.first, files: ["greeting.txt", "bun.lock", "packages/[new]/package-lock.json"] };
       f.scope.work.reviewedSha = f.first;
       const run = spyOn(gitOps, "run");
@@ -90,7 +90,7 @@ it("prepares exact full and incremental comparisons with the base guide, indepen
     try {
       f.scope.work.reviewedSha = f.first;
       writeFileSync(join(f.repo, "greeting.txt"), "FIRST-CHANGE\nFIX-ONLY\n");
-      await git(f.repo, "add", "."); await git(f.repo, "commit", "-qm", "Fix the greeting");
+      await gitOps.commitChanges(f.repo, "Fix the greeting");
       const ref = await prepareReviewInput(f.engine.dataDir, f.scope, await f.context.captureReview(f.scope), new AbortController().signal);
       const snapshot = await readReviewInput(ref);
       const file = /: ("[^"\n]+\.md") \(reference/.exec(snapshot.material!.body)![1]!;
@@ -120,7 +120,7 @@ it("keeps lockfile patches separate, with paths in the statistics and the comple
       f.scope.work.reviewedSha = f.first;
       writeFileSync(join(f.repo, "bun.lock"), "LOCKFILE-ONLY-SENTINEL\n".repeat(5_000));
       writeFileSync(join(f.repo, "greeting.txt"), "FIRST-CHANGE\nFIX-ONLY\n");
-      await git(f.repo, "add", "."); await git(f.repo, "commit", "-qm", "Update a dependency and the greeting");
+      await gitOps.commitChanges(f.repo, "Update a dependency and the greeting");
       const ref = await prepareReviewInput(f.engine.dataDir, f.scope, await f.context.captureReview(f.scope), new AbortController().signal);
       const input = await readReviewInput(ref);
       const ordinary = input.artifacts!.filter((artifact) => !artifact.file.endsWith("-lockfiles.md"));

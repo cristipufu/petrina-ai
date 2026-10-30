@@ -1,12 +1,11 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { createWorkflowEventFixtures, all } from "../../fixtures/workflow-event-native.js";
-
-const { fixture, close } = createWorkflowEventFixtures();
+const { fixture, close, use } = createWorkflowEventFixtures();
 afterAll(close);
-
 describe("the bounded event log", () => {
 it("keeps results on their recorded seats when peers share a role and profile, leaving ambiguous history unavailable", async () => {
-    const { e, c, events } = fixture();
+  return use("petrina-events-", async caseOwner => {
+    const { e, c, events } = fixture(caseOwner);
     const taskId = e.addTask({ productId: "product", title: "Shared profiles" });
     const task = e.task(taskId)!;
     task.journey = [{ id: "j1", kind: "agent", roleId: "code-reviewer", profileId: "opus-high", round: 1, sub: 0, startedAt: 1,
@@ -28,4 +27,5 @@ it("keeps results on their recorded seats when peers share a role and profile, l
       expect((await c.call("journey.result", { taskId, nodeId: "j1", seat, index: 2 })).outcome).toBe("unavailable");
     }
   });
+});
 });

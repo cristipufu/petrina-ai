@@ -1,8 +1,7 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { readFileSync } from "node:fs";
+import { cpSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { credentialedDelivery } from "../../fixtures/security-delivery.js";
-import { git } from "../../support.js";
 import { securityWorlds } from "../../fixtures/security.js";
 import { quoteGitShellWord, writeGitProgram } from "@petrina/test-support/git-program";
 
@@ -14,7 +13,8 @@ for (const mode of ["pull-request", "release"] as const) {
       const saved = "git@github.com:acme/demo.git";
       await world(`saved-${mode}-controller's copy`, async ({ world: w }) => {
       const evil = join(w.dir, "evil.git");
-      await git(w.dir, "init", "-q", "--bare", "-b", "main", evil);
+      cpSync(w.remote, evil, { recursive: true });
+      rmSync(join(evil, "refs", "heads", "main"), { force: true });
       // The coordinator's own SSH setup: an ssh that serves the folder standing in for GitHub and notes what it was asked for.
       const asked = join(w.dir, "ssh result's log");
       const ssh = join(w.dir, "ssh peer's program.sh");

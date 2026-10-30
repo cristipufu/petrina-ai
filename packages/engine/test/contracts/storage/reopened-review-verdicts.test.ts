@@ -5,16 +5,34 @@ import { join } from "node:path";
 import { reviewStats } from "@petrina/core";
 import { Store } from "@petrina/storage/store";
 import { waitFor } from "../../fixtures.js";
+import { fakeAgentSessions } from "../../fixtures/fake-agent-sessions.js";
 import { reviewJourneyFixtures } from "../../fixtures/review.js";
+import { installSharedWorkflowFastPaths } from "../../fixtures/shared-preparation.js";
+import { privateAgentToolProbe } from "../../scripted-probes.js";
 const cases = engineCaseFixtures();
 closeOwnedCases(() => cases.close());
 
 
 const { untilDelivery, lines } = reviewJourneyFixtures();
+const reopenEngine = (owner: Parameters<typeof untilDelivery>[0], data: string, fakes: { dir: string } & Parameters<typeof fakeAgentSessions>[0]) =>
+  installSharedWorkflowFastPaths(owner.open(data, {
+    agentCommand: () => [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), fakes.dir],
+    startAgentSession: fakeAgentSessions(fakes),
+    toolProbe: privateAgentToolProbe(),
+  }), {
+    skipDriverPrepare: true,
+    skipUpToDate: true,
+    skipPrepareChecks: true,
+    skipReviewCopies: true,
+    skipReviewInputDiffs: true,
+    fastCheckCapture: true,
+    fastCleanup: true,
+  });
+
 describe.concurrent("reviews that converge", () => {
   it("rechecks a dismissed finding against fresh proof without counting its historical raiser as current support", async () => {
     return cases.use("petrina-engine-case-", async owner => {
-      const run = await untilDelivery(owner, { reviewer: "important", verifier: "not-a-bug", builder: "plain" });
+      const run = await untilDelivery(owner, { reviewer: "important", verifier: "not-a-bug", builder: "plain" }, undefined, false, { entry: "builder", skipDiffs: true });
       const old = run.task.findings.find((finding) => finding.severity === "blocking")!;
       expect(old.status).toBe("dismissed");
       expect(old.verification?.verdict).toBe("not-a-bug");
@@ -28,7 +46,7 @@ describe.concurrent("reviews that converge", () => {
       } finally { store.close(); }
       const evidence = "On current code, the guest greeting disappears after signing out; signed-in visitors still see it. Expected both states to retain the greeting.";
       run.fakes.scenario({ builder: "plain", reviewer: "confirm-dismissed", reopenedEvidence: evidence, verifier: "real" });
-      const engine = owner.open(data, { agentCommand: () => [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), run.fakes.dir] });
+      const engine = reopenEngine(owner, data, run.fakes);
       try {
         await owner.run(engine, async () => {
           const task = await waitFor(() => {
@@ -56,7 +74,7 @@ describe.concurrent("reviews that converge", () => {
 
         });
       } finally { await owner.stop(engine); }
-      const restored = owner.open(data, { agentCommand: () => [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), run.fakes.dir] });
+      const restored = reopenEngine(owner, data, run.fakes);
       try {
         await owner.run(restored, async () => {
           const saved = restored.task(run.task.id)!.findings.find((finding) => finding.id === old.id)!;
@@ -75,7 +93,7 @@ describe.concurrent("reviews that converge", () => {
 
   it("keeps an older saved verified fix after a new ballot rejects its reopening", async () => {
     return cases.use("petrina-engine-case-", async owner => {
-      const run = await untilDelivery(owner, { reviewer: "important" });
+      const run = await untilDelivery(owner, { reviewer: "important" }, undefined, false, { entry: "builder", skipDiffs: true });
       const data = join(run.root, "data");
       const store = new Store(join(data, "petrina.db"));
       const stageIndex = run.task.plan!.stages.findIndex((stage) => stage.kind === "review-chain");
@@ -89,7 +107,7 @@ describe.concurrent("reviews that converge", () => {
           }) });
       } finally { store.close(); }
       run.fakes.scenario({ builder: "plain", verifier: "not-a-bug" });
-      const engine = owner.open(data, { agentCommand: () => [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), run.fakes.dir] });
+      const engine = reopenEngine(owner, data, run.fakes);
       try {
         await owner.run(engine, async () => {
           const task = await waitFor(() => {

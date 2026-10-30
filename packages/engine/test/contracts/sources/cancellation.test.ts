@@ -8,15 +8,15 @@ afterAll(() => fixtures.close());
 
 describe.concurrent("review findings for a confirmed start",()=>{
 it("does not record a refused commit push as delivered when the task is cancelled", async () => {
-    await fixtures.world("cancel-unpushed", async ({ w, engine: withEngine }) => {
+    await fixtures.world("cancel-unpushed", async ({ w, engine: withEngine, candidate }) => {
     const reject = join(w.remote, "hooks", "pre-receive");
     writeFileSync(reject, "#!/bin/sh\nexit 1\n");
     chmodSync(reject, 0o755);
 
     await withEngine(async engine => {
 
-      const productId = await engine.addProduct(w.clone);
-      const id = engine.addTask({ productId, title: "A greeting", description: "[quick]", delivery: "local", approvePlan: false });
+      const productId = await w.preparedProduct(engine);
+      const id = await candidate(engine, { productId, title: "A greeting", description: "[quick]", delivery: "local", approvePlan: false }, { checks: "none" });
       const failed = taskOf(await finish(engine, id), id);
       expect(failed.localUpdate?.pushed).toBe(false);
       expect(failed.landed).toBeUndefined();
@@ -37,7 +37,7 @@ it("does not record a refused commit push as delivered when the task is cancelle
 
 describe.concurrent("review findings for a confirmed start",()=>{
 it("keeps an open pull request's link and working copy when commit delivery is cancelled before GitHub has the work", async () => {
-    await fixtures.world("cancel-pr-local", async ({ w, engine: withEngine }) => {
+    await fixtures.world("cancel-pr-local", async ({ w, engine: withEngine, candidate }) => {
     await pull(w);
     const hold = join(w.dir, "hold-pr");
     const reached = join(w.dir, "pr-push-reached");
@@ -49,8 +49,8 @@ it("keeps an open pull request's link and working copy when commit delivery is c
     await withEngine(async engine => {
 
     try {
-      const productId = await engine.addProduct(w.clone);
-      const id = engine.addTask({ productId, title: "A greeting", description: "[quick]", startFrom: { kind: "pull-request", value: "7" }, delivery: "local" });
+      const productId = await w.preparedProduct(engine);
+      const id = await candidate(engine, { productId, title: "A greeting", description: "[quick]", startFrom: { kind: "pull-request", value: "7" }, delivery: "local" }, { checks: "none" });
       const state = await deliveryGate(engine, id);
       engine.approve(itemOf(state, id, "delivery")!.id);
       await waitForFile(reached);

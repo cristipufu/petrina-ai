@@ -12,7 +12,30 @@ import { executionFor } from "@petrina/orchestrator";
 import { EngineLifecycle } from "../../../src/lifecycle.js";
 import { LifecycleStore } from "@petrina/storage/lifecycle-store";
 import { WaitingForUsage } from "../../../src/usage.js";
-import { extraFixture } from "../../extra-fixtures.js";
+import type { EngineOptions } from "../../engine.js";
+import { preparedServiceExtraFixture, type ExtraFixture } from "../../extra-fixtures.js";
+import type { EngineCaseOwner } from "../../fixtures/engine-cases.js";
+
+const runPoolPauseCheckCommand: NonNullable<EngineOptions["runCheckCommand"]> = (req) => {
+  if (req.argv.length === 3 && req.argv[0] === process.execPath && req.argv[1] === "-e") {
+    if (req.argv[2] === "console.log('ordinary check passed')") {
+      return { code: 0, stdout: "ordinary check passed\n" };
+    }
+    if (req.argv[2] === "process.exit(0)") {
+      return { code: 0 };
+    }
+  }
+  return undefined;
+};
+
+function preparedExtraFixture<T>(owner: EngineCaseOwner, body: (fixture: ExtraFixture) => Promise<T>, options: EngineOptions = {}): Promise<T> {
+  return preparedServiceExtraFixture(
+    owner,
+    body,
+    { runCheckCommand: runPoolPauseCheckCommand, ...options },
+    { fastClientStop: true, actorLease: false, commandLease: false, scriptedNonHoldRuns: true },
+  );
+}
 
 const cases = engineCaseFixtures();
 afterAll(() => cases.close());
@@ -21,7 +44,7 @@ afterAll(() => cases.close());
 describe.skipIf(process.platform === "win32")("required extra validation shares the host check queue", () => {
 for (const extra of [false, true]) for (const timing of ["before release", "during pause", "during handoff"] as const) it(`keeps product check evidence pending when pausing ${timing}${extra ? " ahead of a later extra run" : " without any extra run"}`, async () => {
   return cases.use("petrina-extra-", async owner => {
-    return await extraFixture(owner, async f => {
+    return await preparedExtraFixture(owner, async f => {
     const productTask = await f.add();
     productTask.state = "running";
     // Exercise check admission and evidence without starting unrelated agent workflows.
@@ -76,7 +99,7 @@ for (const extra of [false, true]) for (const timing of ["before release", "duri
 for (const phase of ["preparation", "another run", "handoff preparation"] as const) it(`shows a quiet paused check as waiting and lets the Mac sleep after ${phase}`, async () => {
   return cases.use("petrina-extra-", async owner => {
     const awake: boolean[] = [];
-    return await extraFixture(owner, async f => {
+    return await preparedExtraFixture(owner, async f => {
     const productTask = await f.add(); productTask.state = "running";
     f.engine.schedule = () => { f.engine.extraValidations.pump(); f.engine.checkQueue.pump(); };
     f.engine.setPoolPaused(false);
@@ -155,7 +178,7 @@ for (const phase of ["preparation", "another run", "handoff preparation"] as con
 
 it("completes a coordinator pool pause while preserving queued check work for resume", async () => {
   return cases.use("petrina-extra-", async owner => {
-    return await extraFixture(owner, async f => {
+    return await preparedExtraFixture(owner, async f => {
     const productTask = await f.add();
     productTask.state = "running";
     f.engine.schedule = () => { f.engine.extraValidations.pump(); f.engine.checkQueue.pump(); };
@@ -203,7 +226,7 @@ it("completes a coordinator pool pause while preserving queued check work for re
 
 for (const entry of ["direct drain", "coordinator restart"] as const) it(`drains a paused product waiter when capacity is already free through ${entry}`, async () => {
   return cases.use("petrina-extra-", async owner => {
-    return await extraFixture(owner, async f => {
+    return await preparedExtraFixture(owner, async f => {
     const productTask = await f.add();
     productTask.state = "running";
     f.engine.schedule = () => { f.engine.extraValidations.pump(); f.engine.checkQueue.pump(); };

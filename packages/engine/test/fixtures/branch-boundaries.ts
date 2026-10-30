@@ -1,13 +1,15 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { executionFor } from "@petrina/orchestrator";
+import * as gitOps from "@petrina/repositories/git";
 import type { ProductCheck, Task, TaskSource } from "@petrina/core";
 import { writeGitProgram } from "@petrina/test-support/git-program";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { coordinator } from "../support.js";
-import { FAKE_AGENT, Fakes, git, makeProduct, tempDir, waitFor } from "../fixtures.js";
+import { FAKE_AGENT, Fakes, createProductRepository, tempDir, waitFor } from "../fixtures.js";
 import { scriptedToolProbe } from "../scripted-probes.js";
 import { directDrivers } from "./direct-drivers.js";
+import { fakeAgentSessions } from "./fake-agent-sessions.js";
 import { updateAgents } from "./update-agents.js";
 
 type BoundaryInput = { conversation: "resume" | "unsupported" }
@@ -19,9 +21,9 @@ async function branchBoundary(input: BoundaryInput) {
   const root = tempDir("petrina-branch-boundary-"), owners = directDrivers(root);
   const close = () => owners.close();
   return setupWithCleanup(() => owners.prepare(async () => {
-    const repo = await makeProduct(root), before = await git(repo, "rev-parse", "HEAD");
+    const { path: repo, initialSha: before } = await createProductRepository(root);
     const copy = join(root, "work"), branch = "prepared-task";
-    await git(repo, "worktree", "add", "-qb", branch, copy, before);
+    await gitOps.ensureWorktree(repo, copy, branch, before);
     const fakes = "conversation" in input ? new Fakes(join(root, "native-peer")) : undefined;
     fakes?.scenario({ reviewer: "important", ...("conversation" in input && input.conversation === "resume" ? { reopen: "resume" } : {}) });
     const replies = "check" in input && input.check === "commit-message"
@@ -29,7 +31,7 @@ async function branchBoundary(input: BoundaryInput) {
     const readiness = scriptedToolProbe({ "claude-code": { status: "ready" }, codex: { status: "ready" },
       grok: { status: "ready" }, antigravity: { status: "not-installed" }, gh: { status: "ready" }, git: { status: "ready" }, node: { status: "ready" } });
     const engine = owners.open(join(root, "data"), {
-      ...(fakes ? { agentCommand: () => [process.execPath, FAKE_AGENT, fakes.dir], toolPath: () => process.execPath }
+      ...(fakes ? { agentCommand: () => [process.execPath, FAKE_AGENT, fakes.dir], startAgentSession: fakeAgentSessions(fakes), toolPath: () => process.execPath }
         : replies ? { startAgentSession: replies.startAgentSession, agentCommand: () => { throw new Error("The title boundary requires its explicit scripted Builder"); } }
         : { agentCommand: () => { throw new Error("The restoration boundary starts no agents"); } }),
       toolProbe: readiness,
@@ -64,7 +66,7 @@ async function branchBoundary(input: BoundaryInput) {
     if ("check" in input && input.check !== "commit-message") {
       // A supplied already-built input: no Builder/reviewer execution is claimed for these two check contracts.
       writeFileSync(join(copy, "greeting.txt"), "Hello (with left-pad)\n");
-      await git(copy, "add", "."); await git(copy, "commit", "-qm", "Add a greeting");
+      await gitOps.commitChanges(copy, "Add a greeting");
       scope.work.report = { summary: "Added a greeting.", title: "Add a greeting", changes: ["People see a greeting"] };
     }
     if ("check" in input) {

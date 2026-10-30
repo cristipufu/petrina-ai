@@ -1,12 +1,11 @@
 import { afterAll, expect, it } from "bun:test";
 import { saveExactMessage } from "../../../src/exact-input.js";
 import { createWorkflowEventFixtures, all } from "../../fixtures/workflow-event-native.js";
-
-const { fixture, close } = createWorkflowEventFixtures();
+const { fixture, close, use } = createWorkflowEventFixtures();
 afterAll(close);
-
 it("takes a compact review event to its matching checkpoint and original seat evidence", async () => {
-  const { e, c, home, events } = fixture();
+  return use("petrina-events-", async caseOwner => {
+  const { e, c, home, events } = fixture(caseOwner);
   const taskId = e.addTask({ productId: "product", title: "Reports stay open" });
   const task = e.task(taskId)!;
   const exact = await saveExactMessage(home, taskId, "The original review instructions");
@@ -39,4 +38,5 @@ it("takes a compact review event to its matching checkpoint and original seat ev
   expect(JSON.parse(String(historical.text)).status).toBe("open");
   const current = await c.call("task.read", { taskId, section: "findings", findingId: "old" });
   expect(JSON.parse(String(current.text)).status).toBe("fixed");
+  });
 });

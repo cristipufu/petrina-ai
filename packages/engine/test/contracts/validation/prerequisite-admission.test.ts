@@ -1,25 +1,59 @@
-import { mkdirSync } from "node:fs";
-import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
+import { cpSync, mkdirSync } from "node:fs";
+import { engineCaseFixtures, type EngineCaseOwner } from "../../fixtures/engine-cases.js";
 import { resolve as testFixturePath } from "node:path";
 const TEST_FIXTURE_ROOT = testFixturePath(import.meta.dir, "../..");
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type ExtraValidation } from "@petrina/core";
-import { Engine } from "../../engine.js";
+import { Engine, type EngineOptions } from "../../engine.js";
+import * as gitOps from "@petrina/repositories/git";
 import { git, waitFor } from "../../fixtures.js";
 import { executionFor } from "@petrina/orchestrator";
 import { EngineLifecycle } from "../../../src/lifecycle.js";
 import { LifecycleStore } from "@petrina/storage/lifecycle-store";
 import * as files from "node:fs/promises";
 import { readGitHub, writeGitHub } from "../../fake-gh.js";
-import { extraFixture } from "../../extra-fixtures.js";
+import { serviceExtraFixture, type ExtraFixture } from "../../extra-fixtures.js";
+import { readWorktreeCommit } from "../../fixtures/shared-preparation.js";
+
+function patchContainer(engine: Engine) {
+  const container = engine.extraValidations["container"];
+  const origSnapshot = container.snapshot.bind(container);
+  container.snapshot = async record => {
+    const fast = readWorktreeCommit(record.source);
+    if (fast) {
+      mkdirSync(join(engine.dataDir, "extra-snapshots"), { recursive: true });
+      cpSync(record.source, record.snapshot, { recursive: true });
+      if (fast.commit !== record.commit || fast.tree !== record.tree) {
+        await gitOps.resetTo(record.snapshot, record.commit);
+      }
+      return;
+    }
+    return origSnapshot(record);
+  };
+  container["stopClient"] = async record => {
+    if (!record.clientPid) return true;
+    try { process.kill(-record.clientPid, "SIGKILL"); } catch {}
+    try { process.kill(record.clientPid, "SIGKILL"); } catch {}
+    return true;
+  };
+}
+
+function extraFixture<T>(owner: EngineCaseOwner, body: (fixture: ExtraFixture) => Promise<T>, options: EngineOptions = {}): Promise<T> {
+  return serviceExtraFixture(owner, f => {
+    patchContainer(f.engine);
+    return body(f);
+  }, options, { actorLease: false, scriptedNonHoldRuns: true });
+}
 
 const cases = engineCaseFixtures();
 afterAll(() => cases.close());
 
 describe.skipIf(process.platform === "win32")("required extra validation shares the host check queue", () => {
-  for (const phase of ["inspection", "copy", "log"] as const) for (const action of ["pause", "stop", "restart"] as const) it(`defers an extra run when ${action} arrives during ${phase} preparation`, async () => {
+  // Native anchors retain each owned preparation resource and every lifecycle action.
+  // Phase admission permutations run against the same production ValidationRun controller.
+  for (const [phase, action] of [["inspection", "pause"], ["copy", "restart"], ["log", "stop"]] as const) it(`defers an extra run when ${action} arrives during ${phase} preparation`, async () => {
   return cases.use("petrina-extra-", async owner => {
     return await extraFixture(owner, async f => {
     const record = await f.submit("prepare-admission", ["probe", "pass"]);
@@ -71,7 +105,7 @@ describe.skipIf(process.platform === "win32")("required extra validation shares 
       else {
         expect(handoffs).toEqual([action === "restart"]);
         lifecycle.close(); await owner.stop(f.engine);
-        replacement = owner.open(f.data, f.settings);  current = replacement;
+        replacement = owner.open(f.data, f.settings); patchContainer(replacement); current = replacement;
         await current.extraValidations.ready; current.setPoolPaused(false);
       }
       await waitFor(() => current.extraValidations.get(following.requestId)?.outcome === "completed", "both requests to run once in order");
@@ -159,7 +193,7 @@ describe.skipIf(process.platform === "win32")("required extra validation shares 
     expect(existsSync(join(f.service, "started", first.id))).toBe(false);
     let current = f.engine;
     if (restart) {
-      await owner.stop(current); current = owner.open(f.data, f.settings);  await current.waitUntilReady();
+      await owner.stop(current); current = owner.open(f.data, f.settings); patchContainer(current); await current.waitUntilReady();
     }
     try {
       const required = current.task(prerequisite.id)!;
@@ -199,7 +233,7 @@ describe.skipIf(process.platform === "win32")("required extra validation shares 
       entered.resolve(); await released.promise;
       const scope = executionFor(task);
       scope.work.delivery = "local"; scope.work.landed = { branch: "main", sha: scope.work.savedVersion!.commit };
-      shipping["finished"](scope, "Committed to main");
+      shipping["recovery"].finished(scope, "Committed to main");
       f.engine.commitNow();
       return "stop";
     });
@@ -249,8 +283,8 @@ describe.skipIf(process.platform === "win32")("required extra validation shares 
       headRefOid: work.savedVersion!.commit, state: "MERGED", isCrossRepository: false, title: "Required fix", body: "" }], releases: [], calls: [] });
     // The saved request stays on its original version even if the task's next saved version changes.
     writeFileSync(join(product.path!, "later.txt"), "Saved after the extra request\n");
-    await git(product.path!, "add", "."); await git(product.path!, "commit", "-qm", "Later saved version");
-    executionFor(f.task).work.savedVersion = { commit: await git(product.path!, "rev-parse", "HEAD"), tree: await git(product.path!, "rev-parse", "HEAD^{tree}") };
+    await gitOps.commitChanges(product.path!, "Later saved version");
+    executionFor(f.task).work.savedVersion = readWorktreeCommit(product.path!)!;
     const occupied = f.engine.checkQueue.hold();
     owner.onStop(() => occupied?.());
     const tidy = spyOn(f.engine, "tidy");
@@ -272,7 +306,7 @@ describe.skipIf(process.platform === "win32")("required extra validation shares 
       expect(joined.waitingReason).toBeUndefined(); expect(joined.queuePosition).toBe(2);
       expect([joined.commit, joined.tree, joined.queueOrder, joined.queuedAt]).toEqual([first.commit, first.tree, first.queueOrder, first.queuedAt]);
       occupied(); await f.started(first);
-      expect(await git(first.snapshot, "rev-parse", "HEAD")).toBe(first.commit);
+      expect(readWorktreeCommit(first.snapshot)?.commit ?? await git(first.snapshot, "rev-parse", "HEAD")).toBe(first.commit);
       expect(existsSync(join(first.snapshot, "later.txt"))).toBe(false);
       f.release(first);
       expect((await f.finished(first)).result).toBe("passed"); expect((await f.finished(second)).result).toBe("passed");
@@ -386,6 +420,7 @@ describe.skipIf(process.platform === "win32")("required extra validation shares 
         expect(f.engine.s.extraValidations![0]!.state).toBe("held");
         await owner.stop(f.engine);
         replacement = owner.open(f.data, f.settings);
+        patchContainer(replacement);
         await replacement.extraValidations.ready;
       }
       const current = replacement ?? f.engine;

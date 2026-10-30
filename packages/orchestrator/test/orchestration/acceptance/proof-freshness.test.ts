@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { proofFreshnessFixture } from "../../fixtures/proof-freshness.js";
+import { proofFreshnessFixture, PROOF_ITEM } from "../../fixtures/proof-freshness.js";
 
 for (const brief of [false, true]) it(`requires exact-version proof after unchanged-patch main advances, with brief ${brief}, and bounds main-only reruns`, async () => {
   const f = proofFreshnessFixture(false, brief), request = f.request();
@@ -68,4 +68,47 @@ it("asks after the shared refresh limit even when only an owner outside the requ
   }
   expect(f.reports).toHaveLength(3); expect(request.status).toBe("proved"); expect(f.task.proofRefreshBlocked).toBe(true);
   expect(f.task.stageIndex).toBe(3); expect(f.task.approvedProofDecision).toBeUndefined(); expect(f.decisions).toHaveLength(1);
+});
+
+for (const requests of [undefined, []]) it(`does not read discarded versions for single-product delivery with ${requests ? "empty" : "absent"} proof requests`, async () => {
+  const f = proofFreshnessFixture(false, true);
+  await f.report(); f.task.proofRequests = requests;
+  f.effects.versions = async () => { throw new Error("No proof or shared owner needs a version observation"); };
+  f.effects.committedCode = async () => { throw new Error("No proof needs committed code"); };
+  let patches = 0;
+  const patch = f.effects.acceptanceVersion;
+  f.effects.acceptanceVersion = async (scope, versions) => {
+    expect(versions).toBeUndefined(); patches++;
+    return patch(scope, versions);
+  };
+  expect(await f.final()).toEqual({ kind: "stop" });
+  expect(patches).toBe(1);
+  expect(f.decisions).toEqual([f.task.id]);
+  expect(f.task.acceptancePassed).toBe(true);
+});
+
+it("keeps the shared acceptance invalidation's actual version observation without an extra read", async () => {
+  const f = proofFreshnessFixture(true, true);
+  await f.report({ checks: [{ text: PROOF_ITEM, result: "pass", evidence: "The supplied acceptance result covers both products", productIds: f.ids }] }); f.observe(1, true);
+  f.effects.versions = async () => { throw new Error("Shared invalidation already supplies the observed versions"); };
+  const invalidation = f.effects.invalidateAcceptance;
+  let observed: Record<string, string> | undefined;
+  f.effects.invalidateAcceptance = async (task, versions) => { observed = await invalidation(task, versions); return observed; };
+  expect(await f.final()).toEqual({ kind: "repeat" });
+  expect(observed).toEqual(f.versions);
+  expect(f.task.retest).toBe(true);
+  expect(f.decisions).toEqual([]);
+});
+
+it("still refreshes requested proof from the committed snapshot before a delivery decision", async () => {
+  const f = proofFreshnessFixture(false, true), request = f.request();
+  await f.report(); expect(request.status).toBe("proved"); f.observe();
+  const capture = f.effects.committedCode;
+  let captures = 0;
+  f.effects.committedCode = async task => { captures++; return capture(task); };
+  f.effects.versions = async () => { throw new Error("The current committed proof snapshot must be reused"); };
+  expect(await f.final()).toEqual({ kind: "repeat" });
+  expect(captures).toBe(1); expect(request.status).toBe("stale");
+  expect(f.task.proofRetestReason).toBe("main-moved");
+  expect(f.decisions).toEqual([]);
 });

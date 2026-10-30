@@ -12,7 +12,8 @@ const posix = process.platform !== "win32";
 
 describe.skipIf(!posix)("take over, copy the command, and restart Petrina", () => {
   it("keeps the observed commit when handing back unchanged work without another HEAD read", async () => {
-    const run = await start({ planner: "short", builder: "work", reopen: "resume" });
+  return fixtures.use(async caseOwner => {
+    const run = await start(caseOwner, { planner: "short", builder: "work", reopen: "resume" });
     try {
       let read: ReturnType<typeof spyOn<typeof gitOps, "head">> | undefined;
       try {
@@ -33,5 +34,7 @@ describe.skipIf(!posix)("take over, copy the command, and restart Petrina", () =
       } finally { read?.mockRestore();  }
 
     } finally { await run.close(); }
+
   });
+});
 });

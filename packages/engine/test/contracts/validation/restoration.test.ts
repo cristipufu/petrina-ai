@@ -12,7 +12,7 @@ import { LifecycleStore } from "@petrina/storage/lifecycle-store";
 import * as processTree from "@petrina/platform/process-tree";
 import { ExtraContainer } from "../../../src/extra-container.js";
 import { CheckQueue } from "../../../src/check-queue.js";
-import { extraFixture } from "../../extra-fixtures.js";
+import { preparedServiceExtraFixture as extraFixture } from "../../extra-fixtures.js";
 
 const cases = engineCaseFixtures();
 afterAll(() => cases.close());
@@ -157,7 +157,7 @@ for (const limit of [1, 2]) for (const mode of ["preparation", "passed"] as cons
       await (replacement ? owner.stop(replacement) : undefined); admission.mockRestore(); preparation.mockRestore(); cleanup.mockRestore(); timer.mockRestore();
     }
 
-  }, { checkRuns: 2, extraCleanupEveryMs: 23_457 });
+  }, { checkRuns: 2, extraCleanupEveryMs: 23_457 }, { fastClientStop: true, actorLease: false, scriptedNonHoldRuns: true });
 
   });
 });
@@ -198,7 +198,7 @@ it("holds an unverified saved process number across restart without claiming or 
       expect(replacement.checkQueue.running).toBe(0);
     } finally { unrelated.kill("SIGKILL"); await unrelated.exited; await unrelatedCapture.drained; signals.mockRestore(); await replacement?.extraValidations.retryCleanup(); await (replacement ? owner.stop(replacement) : undefined); }
 
-  });
+  }, {}, { fastClientStop: false, actorLease: true });
 
   });
 });
@@ -261,7 +261,7 @@ it("keeps extra-only tasks at a coordinator checkpoint through resume and restar
       expect(readdirSync(join(f.service, "started"))).toEqual([record.id]);
     } finally { await (replacement ? owner.stop(replacement) : undefined); await owner.stop(f.engine); }
 
-  });
+  }, {}, { fastClientStop: true, actorLease: false, commandLease: false, scriptedNonHoldRuns: true });
 
   });
 });

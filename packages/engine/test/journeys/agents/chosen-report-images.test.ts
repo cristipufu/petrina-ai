@@ -9,11 +9,15 @@ import { serve } from "../../../src/server.js";
 import { Turns } from "../../../src/turn.js";
 import { ToolChecks } from "../../../src/tool-checks.js";
 import { Sources } from "../../../src/sources.js";
+import * as gitOps from "@petrina/repositories/git";
 import { Connections } from "../../../src/connection.js";
 import { BuildResult } from "../../../src/roles.js";
-import { Fakes, git, SLOW, waitFor } from "../../support.js";
+import { Fakes, SLOW, waitFor } from "../../support.js";
 
 import { nativeWorldFixtures } from "../../fixtures/native-worlds.js";
+import { installPreparedProduct, acmeDemoProduct } from "../../fixtures/prepared-product.js";
+import { installSharedWorkflowFastPaths } from "../../fixtures/shared-preparation.js";
+import { privateAgentToolProbe } from "../../scripted-probes.js";
 
 const worlds = nativeWorldFixtures();
 afterAll(worlds.close);
@@ -30,9 +34,11 @@ it("builder and read-only reports preserve only chosen images through correction
   const fakes = new Fakes(join(root, "fake"));
   fakes.scenario({ planner: "short", builder: "plain", pictures: "repair" });
   await sharp({ create: { width: 8, height: 8, channels: 3, background: "white" } }).png().toFile(join(fakes.dir, "picture.png"));
-  const options = { agentCommand: () => [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), fakes.dir] };
+  const options = { agentCommand: () => [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), fakes.dir], toolProbe: privateAgentToolProbe() };
   const { id, reports, results, image } = await fixture.engine(async engine => {
-    const productId = await engine.addProduct(product);
+    installSharedWorkflowFastPaths(engine);
+    await engine.waitUntilReady(); engine.stopRequested.signal.throwIfAborted();
+    const productId = installPreparedProduct(engine, acmeDemoProduct(product));
     engine.setProductDelivery(productId, "local", true);
     const id = engine.addTask({ productId, title: "Check a page" });
     const task = await waitFor(() => {
@@ -46,8 +52,8 @@ it("builder and read-only reports preserve only chosen images through correction
     expect(reports.every((line) => line.profileId && line.images?.[0]?.caption)).toBe(true);
     expect(readdirSync(join(home, "captures", id))).toHaveLength(2);
     expect(readdirSync(join(home, "browser-temp"))).toEqual([]);
-    expect(await git(task.worktree!, "status", "--porcelain")).toBe("");
-    expect(await git(task.worktree!, "ls-tree", "-r", "--name-only", "HEAD")).not.toMatch(/png|browser|capture/);
+    expect(await gitOps.changes(task.worktree!, true)).toEqual([]);
+    expect(readdirSync(task.worktree!, { recursive: true }).filter((entry) => !String(entry).startsWith(".git")).join("\n")).not.toMatch(/png|browser|capture/);
     expect(fakes.prompts().filter((text) => text.includes("Your result block could not be used"))).toHaveLength(2);
     const stateText = JSON.stringify(engine.getState());
     expect(stateText).not.toContain("base64");

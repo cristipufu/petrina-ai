@@ -1,4 +1,5 @@
 import { usageWorlds } from "../../fixtures/usage-world.js";
+import { usageAttributionAgents } from "../../fixtures/usage-attribution-agents.js";
 import { afterAll, describe, expect, it } from "bun:test";
 
 
@@ -59,7 +60,7 @@ describe("analytics keeps who actually did the work", () => {
         await run.engine.shutdown();
         await restarted?.shutdown();
       }
-    }, { builder: "plain" });
+    }, { builder: "plain" }, { entry: "design", sessions: usageAttributionAgents });
     if (restart) expect(exposedCurrent).toBe(true);
   });
 
@@ -89,7 +90,7 @@ describe("analytics keeps who actually did the work", () => {
         await run.engine.shutdown();
         await restarted?.shutdown();
       }
-    }, { builder: "plain" });
+    }, { builder: "plain" }, { entry: "design", sessions: usageAttributionAgents });
   });
 
   for (const afterFirstRound of [false, true]) it(`credits replacement designers ${afterFirstRound ? "after a completed planned round" : "from the first round"}`, async () => {
@@ -124,6 +125,8 @@ describe("analytics keeps who actually did the work", () => {
         await run.engine.shutdown();
       }
     }, afterFirstRound ? {} : { limited }, {
+      entry: "design",
+      sessions: usageAttributionAgents,
       description: "[disagree]",
       before: (engine) => { engine.s.profiles = engine.s.profiles.filter((profile) => !["fable-xhigh", "astra-xhigh"].includes(profile.id)); },
     });
@@ -144,6 +147,6 @@ describe("analytics keeps who actually did the work", () => {
       } finally {
         await run.engine.shutdown();
       }
-    }, { planner: "claude-build", builder: "plain", reviewer: "confirm" }, { before: (engine) => engine.setPoolPaused(true) });
+    }, { planner: "claude-build", builder: "plain", reviewer: "confirm" }, { entry: "review", stop: "reviewed", sessions: usageAttributionAgents, before: (engine) => engine.setPoolPaused(true) });
   });
 });

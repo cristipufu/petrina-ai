@@ -46,6 +46,53 @@ it("keeps fixture import guards effective for package aliases, extensionless pat
   expect(conventions(new Map([["packages/engine/test/a.test.ts", "import { Engine } from '../../core/src/engine.ts';"]]))).toEqual([]);
 });
 
+it("limits actual Engine construction to capped ownership boundaries while respecting lexical aliases and shadows", () => {
+  const imported = `import { Engine as Native } from '../../engine.js';\n`;
+  for (const body of [
+    `new Native(home, options);`,
+    `const Alias = Native; new Alias(home, options);`,
+    `const box = { Engine: Native }; const { Engine: Alias } = box; new Alias(home, options);`,
+    `let Alias; Alias = Native; new Alias(home, options);`,
+    `class Derived extends Native {} new Derived(home, options);`,
+    `class Other {} let Creator = Native; const Saved = Creator; Creator = Other; new Saved(home, options);`,
+    `class Other {} let Creator = Native; let Saved; Saved = Creator; Creator = Other; new Saved(home, options);`,
+    `class Other {} let Creator = Native; const box = { ctor: Creator }; Creator = Other; new box.ctor(home, options);`,
+    `class Other {} let Creator = Native; const list = [Creator]; Creator = Other; new list[0](home, options);`,
+    `class Other {} let Creator = Native; const [Saved] = [Creator]; Creator = Other; new Saved(home, options);`,
+    `class Other {} let Creator = Native; class Saved extends Creator {} Creator = Other; new Saved(home, options);`,
+    `class Other {} let Creator = Native; const Saved = class extends Creator {}; Creator = Other; new Saved(home, options);`,
+    `const Alias = Native; { const Native = class {}; new Alias(home, options); }`,
+  ]) expect(found(imported + body, "packages/engine/test/contracts/testing/a.test.ts")).toContainEqual(expect.stringContaining("construct Engine through engineCaseFixtures"));
+  for (const body of [
+    `new runtime.Engine(home, options);`, `const alias = runtime; new alias['Engine'](home, options);`,
+    `const { Engine: Alias } = runtime; new Alias(home, options);`,
+    `let current = runtime; const Saved = current; current = { Engine: class {} }; new Saved.Engine(home, options);`,
+  ]) expect(found(`import * as runtime from '../../engine.js';\n` + body, "packages/engine/test/contracts/testing/a.test.ts")).toContainEqual(expect.stringContaining("construct Engine through engineCaseFixtures"));
+  for (const source of [
+    imported + `function unrelated(Native) { return new Native(); }`,
+    imported + `{ class Native {} new Native(); }`,
+    imported + `let Alias = Native; Alias = class {}; new Alias();`,
+    imported + `class Other {} let Creator = Other; const Saved = Creator; Creator = Native; new Saved();`,
+    imported + `class Other {} let Creator = Other; const box = { ctor: Creator }; Creator = Native; new box.ctor();`,
+    imported + `class Other {} let Creator = Other; const list = [Creator]; Creator = Native; new list[0]();`,
+    imported + `class Other {} let Creator = Other; class Saved extends Creator {} Creator = Native; new Saved();`,
+    `import * as runtime from '../../engine.js'; function unrelated(runtime) { return new runtime.Engine(); }`,
+    `import type { Engine } from '../../engine.js'; type Constructor = typeof Engine;`,
+    `import { Engine } from './unrelated.js'; new Engine();`,
+    `// new Engine()\nconst prose = 'new Engine()'; type Engine = { name: string };`,
+  ]) expect(found(source, "packages/engine/test/contracts/testing/a.test.ts")).toEqual([]);
+  const primitive = `import { Engine } from '../engine.js'; function directDrivers() { const open = () => { let engine; engine = new Engine(home, options); }; }`;
+  expect(found(primitive, "packages/engine/test/fixtures/direct-drivers.ts")).toEqual([]);
+  expect(found(primitive + `new Engine(home, options);`, "packages/engine/test/fixtures/direct-drivers.ts")).toEqual([expect.stringContaining("construct Engine through engineCaseFixtures")]);
+  expect(found(primitive.replace(`engine = new Engine(home, options);`, `engine = new Engine(home, options); engine = new Engine(home, options);`), "packages/engine/test/fixtures/direct-drivers.ts")).toEqual([expect.stringContaining("construct Engine through engineCaseFixtures")]);
+  const probe = `import { Engine } from '../../engine.js'; probeCases.use(root, async owners => { const engine = nativeEngine = new Engine(data, options); });`;
+  expect(found(probe, "packages/engine/test/contracts/setup/readiness.test.ts")).toEqual([]);
+  expect(found(probe + `const other = new Engine(data, options);`, "packages/engine/test/contracts/setup/readiness.test.ts")).toEqual([expect.stringContaining("construct Engine through engineCaseFixtures")]);
+  const child = `import { Engine } from './engine.js'; const engine = new Engine(data, options);`;
+  expect(found(child, "packages/engine/test/extra-crash-engine.ts")).toEqual([]);
+  expect(found(`import { Engine } from './engine.js'; (() => { const engine = new Engine(data, options); })();`, "packages/engine/test/extra-crash-engine.ts")).toEqual([expect.stringContaining("construct Engine through engineCaseFixtures")]);
+});
+
 originalDescribe("test programs and the waits on them", () => {
 it("requires callers to own the shared interruptible process result", () => {
     const imported = 'import { runProcess as execute } from "@petrina/test-support/run-process";\n';

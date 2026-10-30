@@ -1,12 +1,11 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { createWorkflowEventFixtures } from "../../fixtures/workflow-event-native.js";
-
-const { fixture, close } = createWorkflowEventFixtures();
+const { fixture, close, use } = createWorkflowEventFixtures();
 afterAll(close);
-
 describe("focused monitoring evidence regressions", () => {
 it("keeps result finding diagnostics inside their own pages rather than repeating them as metadata", async () => {
-    const { e, c } = fixture();
+  return use("petrina-events-", async caseOwner => {
+    const { e, c } = fixture(caseOwner);
     const taskId = e.addTask({ productId: "product", title: "Large diagnostic" });
     const task = e.task(taskId)!;
     const evidence = "x".repeat(160_000);
@@ -25,4 +24,5 @@ it("keeps result finding diagnostics inside their own pages rather than repeatin
     while (finding.next) { finding = await c.call("journey.finding", { taskId, nodeId: "j1", result: 0, findingId: "f1", limit: 32000, cursor: finding.next }); text += finding.text; }
     expect(JSON.parse(text).evidence).toBe(evidence);
   });
+});
 });

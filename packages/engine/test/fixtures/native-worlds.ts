@@ -21,8 +21,8 @@ interface Entry {
 }
 const unavailable = () => new Error("Native world fixture is closing; no setup, Engine or callback may start");
 
-/** Default Git/GitHub/fake-agent worlds, owned before setup and through every actual generation. */
-export function nativeWorldFixtures() {
+/** Native Git/state/agent worlds; GitHub transport contracts opt into the real CLI explicitly. */
+export function nativeWorldFixtures(services: { github?: "native"; probes?: "native" } = {}) {
   const active = new Set<Entry>(), retained = new Set<string>();
   let accepting = true, closing: Promise<void> | undefined;
   const available = (entry: Entry) => { if (!accepting || entry.shutdown.closed) throw unavailable(); };
@@ -59,7 +59,7 @@ export function nativeWorldFixtures() {
       const { allowOverlap: _overlap, ...recipe } = options;
       if (recipe.browser) { browsers = testBrowserRoot(); registerFixtureRoot(browsers); }
       available(entry);
-      const made = await makeWorld(name, { ...recipe, owner: { root, browsers, open: (data, merged) => lifetime.open(data, merged) } });
+      const made = await makeWorld(name, { nativeGitHub: services.github === "native", nativeProbes: services.probes === "native", ...recipe, owner: { root, browsers, open: (data, merged) => lifetime.open(data, merged) } });
       available(entry);
       const engine: NativeWorldFixture["engine"] = async <Value>(run: (current: Engine) => Promise<Value>, extra?: EngineOptions, mode?: { defaults: "none" }): Promise<Value> => {
         available(entry);

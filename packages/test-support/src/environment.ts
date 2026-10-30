@@ -4,13 +4,14 @@ import { dirname, join } from "node:path";
 import { shortTempParent, testTempParent, TEST_BROWSERS } from "./temp-parent.js";
 import { fixtureFiles } from "./fixture-files.js";
 import { createFixtureJournal, fixtureRetention, FIXTURE_JOURNAL, registerFixtureRoot } from "./fixture-retention.js";
+import { provisionRepositorySeeds, REPOSITORY_SEEDS } from "./repository-seed-environment.js";
 
 export const TEST_GIT_IDENTITY = { name: "Petrina Test Runner", email: "test-runner@example.com" };
 
 /** Only OS/runtime necessities and explicit test controls cross the outer runner boundary. */
 const INHERITED = new Set([
   "PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "COMSPEC", "SYSTEMDRIVE", "OS", "NUMBER_OF_PROCESSORS",
-  "LANG", "LC_ALL", "LC_CTYPE", "TZ", "TERM", "COLORTERM", "NO_COLOR", "FORCE_COLOR", "CI",
+  "LANG", "LC_ALL", "LC_CTYPE", "TZ", "TERM", "CI",
   // Bun changes its result output when running under an agent. Preserve that behavior without account settings.
   "CLAUDECODE", "AGENT", "REPL_ID", "PETRINA_FIXTURE_RUN", "PETRINA_BROWSER_CHECK", "PETRINA_CONTAINER_CHECK", "PETRINA_CONTAINER_IMAGE",
 ]);
@@ -50,13 +51,14 @@ export function testEnvironment(folder: string, browsers: string, inherited: Nod
     XDG_CONFIG_HOME: config, XDG_CACHE_HOME: cache, XDG_DATA_HOME: join(home, ".local", "share"),
     TMPDIR: folder, TMP: folder, TEMP: folder, PETRINA_HOME: home, [TEST_BROWSERS]: browsers,
     GIT_CONFIG_GLOBAL: writeTestGitConfig(folder), GIT_CONFIG_SYSTEM: empty, GIT_CONFIG_NOSYSTEM: "1",
-    GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "never",
+    GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "never", NO_COLOR: "1",
   });
   const provisioned = browserCache(inherited), isolated = browserCache(env);
   if (existsSync(provisioned)) {
     mkdirSync(dirname(isolated), { recursive: true });
     fixtureFiles.directoryLink(fixtureFiles.canonical(provisioned), isolated);
   }
+  env[REPOSITORY_SEEDS] = provisionRepositorySeeds(folder, env);
   return env;
 }
 

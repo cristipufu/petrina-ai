@@ -2,10 +2,10 @@ import { executionFor } from "@petrina/orchestrator";
 // The planner's turn, and turning its answer into a plan Petrina can run: only roles the planner was told
 // about, always a builder and a review, a security review for high risk, and the delivery stages.
 
-import { endAgentStep, JOURNEY_WORDS as W, type DeepMutable, type Task } from "@petrina/core";
+import { endAgentStep, JOURNEY_WORDS, type DeepMutable, type Task } from "@petrina/core";
 import type { z } from "zod";
 import { PlanResult } from "./roles.js";
-import { Kernel, type MTask, PLANNER_PROFILE, RISK_WORD, RELEASE_MANAGER_PROFILE } from "./kernel.js";
+import { Kernel, type RuntimeTask, PLANNER_PROFILE, RISK_WORD, RELEASE_MANAGER_PROFILE } from "./kernel.js";
 import { normalizePlan } from "./plan.js";
 import type { Sources } from "./sources.js";
 import type { Turns } from "./turn.js";
@@ -16,7 +16,7 @@ export class Planning {
   private readonly orientation = new RepoOrientation();
   constructor(private readonly k: Kernel, private readonly turns: Turns, private readonly sources: Sources) {}
 
-  async runPlanner(task: MTask, signal: AbortSignal): Promise<void> {
+  async runPlanner(task: RuntimeTask, signal: AbortSignal): Promise<void> {
     const scope = executionFor(task);
     const planner = this.k.onUsable(PLANNER_PROFILE);
     let by = planner;
@@ -37,13 +37,13 @@ export class Planning {
     const count = task.plan.stages.filter((stage) => stage.kind !== "gate").length;
     this.k.log(task, "milestone", `Plan ready: ${count} stages. ${result.rationale}`, "planner", by);
     this.k.log(task, "milestone", `${RISK_WORD[task.risk.level]} risk: ${task.risk.why}`, "planner", by);
-    endAgentStep(task, { outcome: W.planned(count), reason: W.planReady }, Date.now());
+    endAgentStep(task, { outcome: JOURNEY_WORDS.planned(count), reason: JOURNEY_WORDS.planReady }, Date.now());
     this.k.finishStep(task);
     this.k.tracking.endStage(task, "done");
     this.k.commit();
   }
 
-  private normalizePlan(task: MTask, result: z.infer<typeof PlanResult>, planner: string): DeepMutable<NonNullable<Task["plan"]>> {
+  private normalizePlan(task: RuntimeTask, result: z.infer<typeof PlanResult>, planner: string): DeepMutable<NonNullable<Task["plan"]>> {
     const scope = executionFor(task);
     return normalizePlan({ task: { ...task, ...(task.workRows ? { approveDelivery: true } : {}), source: task.proposedSource ?? scope.work.source, delivery: task.proposedSource?.destination.mode ?? task.delivery }, result: { ...result, ...(task.workRows ? { worksOn: task.workRows.map((row) => row.choice) } : {}) }, roles: this.k.s.roles, profiles: this.k.s.profiles, plannerProfileId: planner, releaseManagerProfileId: RELEASE_MANAGER_PROFILE, onUsable: (id) => this.k.onUsable(id) }) as DeepMutable<NonNullable<Task["plan"]>>;
   }

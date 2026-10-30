@@ -8,9 +8,13 @@ import { join } from "node:path";
 import { writeFileSync } from "node:fs";
 
 import { assignedCheckFailures, projectCheckEvidence, relatedCheckCandidates } from "../../../src/related-check-evidence.js";
+import * as gitOps from "@petrina/repositories/git";
 import { executionFor } from "@petrina/orchestrator";
+import { existsSync } from "node:fs";
 import { git } from "../../support.js";
 import { nativeWorldFixtures } from "../../fixtures/native-worlds.js";
+import { installSharedWorkflowFastPaths, readLooseCommit, readWorktreeCommit } from "../../fixtures/shared-preparation.js";
+import { privateAgentToolProbe } from "../../scripted-probes.js";
 
 import { failureName, failure, peer } from "../../../../core/test/fixtures/related-check-evidence.js";
 const fixtures = nativeWorldFixtures();
@@ -58,14 +62,16 @@ it("records failure ownership and the completed Builder's answer, without borrow
       expect(candidate.findingId).toBe(findingId);
       expect(candidate.failureNode).toBe(failures[0]!.nodeId);
       expect(candidate.answer.text).toBe(value.answers[0]!.text);
-      expect(candidate.tree).toBe(await git(w.clone, "rev-parse", "HEAD^{tree}"));
-      const candidateSha = await git(w.clone, "rev-parse", "HEAD");
-      writeFileSync(join(w.clone, "update.txt"), "new base contents"); await git(w.clone, "add", "."); await git(w.clone, "commit", "-qm", "Update from main");
+      const candidateVer = readWorktreeCommit(w.clone)!;
+      expect(candidate.tree).toBe(candidateVer.tree);
+      const candidateSha = candidateVer.commit;
+      writeFileSync(join(w.clone, "update.txt"), "new base contents");
+      await gitOps.commitChanges(w.clone, "Update from main");
       engine["checks"].claimPreparation(id);
       expect(nonpassingChecks(await engine["checks"].runProductChecks(scope, [check], signal))).toBe(0);
       expect(task.journey!.at(-1)!.checkAttempts![0]!.passed).toBe(true);
       expect(relatedCheckCandidates(failures, [projectCheckEvidence(task, "p")!], "p")[0]!.status).toBe("claimed");
-      await git(w.clone, "reset", "--hard", candidateSha);
+      await gitOps.resetTo(w.clone, candidateSha);
       engine["checks"].claimPreparation(id);
       expect(nonpassingChecks(await engine["checks"].runProductChecks(scope, [check], signal))).toBe(0);
       expect(relatedCheckCandidates(failures, [projectCheckEvidence(task, "p")!], "p")[0]!.status).toBe("checked");
@@ -84,13 +90,27 @@ it("records failure ownership and the completed Builder's answer, without borrow
         expect(scope.work.checkReturns).toBe(2);
       }
     } finally { turn.mockRestore(); }
-    }, { agentCommand: () => undefined, usageCommands: { codex: null, grok: null, antigravity: null }, terminals: () => [] }));
+    }, {
+      agentCommand: () => undefined,
+      runCheckCommand: (req) => {
+        if (req.argv[0] === process.execPath && req.argv[1] === "-e") {
+          return existsSync(join(req.cwd, "repair.txt"))
+            ? { code: 0 }
+            : { code: 1, stdout: `(fail) ${failureName} [5ms]\n` };
+        }
+        return undefined;
+      },
+      toolProbe: privateAgentToolProbe(),
+      usageCommands: { codex: null, grok: null, antigravity: null },
+      terminals: () => [],
+    }));
   });
 });
 
 originalDescribe("related check evidence", () => {
 it("shows at most three compact leads to added Builder roles and keeps fresh and continued review blind", async () => {
     return fixtures.world("related-context", ({ world: w, engine: withEngine }) => withEngine(async engine => {
+    installSharedWorkflowFastPaths(engine, { skipUpToDate: true, fastCheckCapture: true });
     engine.setPoolPaused(true); engine.schedule = () => {};
       engine.s.products.push({ id: "p", name: "Product", repo: "acme/p", path: w.clone, tone: "blue", checksBy: "coordinator", checks: [{ name: "Types", argv: ["bun", "run", "typecheck"] }, { name: "Tests", argv: ["bun", "run", "test"] }] });
       const ownId = engine.addTask({ productId: "p", title: "Own repair", backlog: true });
@@ -133,8 +153,9 @@ it("shows at most three compact leads to added Builder roles and keeps fresh and
       scope.work.baseSha = w.initial;
       await git(w.clone, "checkout", "-qb", "landed-lead");
       writeFileSync(join(w.clone, "landed-repair.txt"), "confirmed delivered contents");
-      await git(w.clone, "add", "."); await git(w.clone, "commit", "-qm", "Deliver the related repair");
-      const deliveredSha = await git(w.clone, "rev-parse", "HEAD"), deliveredTree = await git(w.clone, "rev-parse", "HEAD^{tree}");
+      await gitOps.commitChanges(w.clone, "Deliver the related repair");
+      const deliveredVer = readWorktreeCommit(w.clone)!;
+      const deliveredSha = deliveredVer.commit, deliveredTree = deliveredVer.tree;
       executionFor(deliveredPeer).work.confirmedDelivery = { sha: deliveredSha, tree: deliveredTree, repo: "acme/p", branch: "main", at: 10 };
       await git(w.clone, "checkout", "-q", "main");
       const missing = (await engine["context"].sectionsFor(scope, "added-builder")).find((section) => section.title === "Related check evidence")!.body;
@@ -146,7 +167,7 @@ it("shows at most three compact leads to added Builder roles and keeps fresh and
       expect(included).not.toContain(`Task ${deliveredPeer.id};`);
       expect(included).not.toContain("Separately confirmed landed contents");
       expect(scope.work.baseSha).toBe(w.initial);
-      const initialTree = await git(w.clone, "rev-parse", `${w.initial}^{tree}`);
+      const initialTree = readLooseCommit(join(w.clone, ".git"), w.initial)!.tree;
       for (let i = 0; i < 7; i++) {
         const id = engine.addTask({ productId: "p", title: "Already delivered peer", backlog: true });
         const other = engine.task(id)!; other.state = "done";
@@ -163,7 +184,8 @@ it("shows at most three compact leads to added Builder roles and keeps fresh and
       task.fixing = false;
       expect((await engine["context"].sectionsFor(scope, "added-builder")).some((section) => section.title === "Related check evidence")).toBe(false);
       task.state = "cancelled";
-      const actualSha = await git(w.clone, "rev-parse", "HEAD"), actualTree = await git(w.clone, "rev-parse", "HEAD^{tree}");
+      const actualVer = readWorktreeCommit(w.clone)!;
+      const actualSha = actualVer.commit, actualTree = actualVer.tree;
       scope.work.localUpdate = { branch: "main", sha: actualSha, pushed: false };
       await engine["shipping"]["recordLanded"](scope, "main", actualSha);
       expect(scope.work.confirmedDelivery).toBeUndefined();
@@ -171,6 +193,6 @@ it("shows at most three compact leads to added Builder roles and keeps fresh and
       await engine["shipping"]["recordLanded"](scope, "main", actualSha);
       expect(scope.work.confirmedDelivery).toEqual({ sha: actualSha, tree: actualTree, repo: "acme/p", branch: "main", at: expect.any(Number) });
       expect(scope.work.landed!.sha).toBe(actualSha.slice(0, 7));
-    }, { agentCommand: () => undefined, usageCommands: { codex: null, grok: null, antigravity: null }, terminals: () => [] }));
+    }, { agentCommand: () => undefined, toolProbe: privateAgentToolProbe(), usageCommands: { codex: null, grok: null, antigravity: null }, terminals: () => [] }));
   });
 });

@@ -36,7 +36,21 @@ export class McpPending {
   get size(): number { return this.controllers.size; }
 }
 
-export async function mcpRequest(message: Record<string, any>, client: EngineClient, pending?: McpPending): Promise<Record<string, unknown> | undefined> {
+interface McpParams {
+  readonly requestId?: unknown;
+  readonly protocolVersion?: unknown;
+  readonly name?: unknown;
+  readonly arguments?: Record<string, unknown>;
+}
+
+export interface McpMessage {
+  readonly jsonrpc?: unknown;
+  readonly id?: unknown;
+  readonly method?: unknown;
+  readonly params?: McpParams | null;
+}
+
+export async function mcpRequest(message: McpMessage, client: EngineClient, pending?: McpPending): Promise<Record<string, unknown> | undefined> {
   const id = message.id;
   if (message.method === "notifications/cancelled") {
     pending?.cancel(message.params?.requestId);
@@ -45,14 +59,18 @@ export async function mcpRequest(message: Record<string, any>, client: EngineCli
   if (id === undefined) return undefined;
   const reply = (result: unknown) => ({ jsonrpc: "2.0", id, result });
   if (message.jsonrpc !== "2.0" || typeof message.method !== "string") return { jsonrpc: "2.0", id, error: { code: -32600, message: "Invalid request" } };
-  if (message.method === "initialize")
+  if (message.method === "initialize") {
+    const version = typeof message.params?.protocolVersion === "string" && ["2025-06-18", "2025-03-26", "2024-11-05"].includes(message.params.protocolVersion)
+      ? message.params.protocolVersion
+      : "2025-06-18";
     return reply({
-      protocolVersion: ["2025-06-18", "2025-03-26", "2024-11-05"].includes(message.params?.protocolVersion) ? message.params.protocolVersion : "2025-06-18",
+      protocolVersion: version,
       capabilities: { tools: {} },
       serverInfo: { name: "petrina", version: "0.1.0" },
       instructions:
         "Coordinate the existing local Petrina engine. Inspect requests before decisions and return their revision. Save a requestId before every change and reuse it after a lost reply. Connecting does not launch an engine. Source editing, Git, development tests and product repairs belong to normal coding tools. Petrina never merges pull requests. Required extra full-suite validation uses validation.run with a request reference and a prepared local Linux image, sharing the check queue; never pause the pool or poll for room. It tests only Petrina's last saved commit/tree, excluding working edits: hand new work back first. No native, remote or detached extra execution. Focused tests and image preparation remain coding-tool work. Extra evidence never replaces configured full checks. Product removal is refused while an extra run still needs cleanup ownership; held cleanup needs the container service available or the named container stopped.",
     });
+  }
   if (message.method === "ping") return reply({});
   if (message.method === "tools/list") return reply({ tools: mcpTools() });
   if (message.method === "tools/call") {
@@ -60,7 +78,8 @@ export async function mcpRequest(message: Record<string, any>, client: EngineCli
     if (!op) return { jsonrpc: "2.0", id, error: { code: -32602, message: "Unknown Petrina tool. Use tools/list." } };
     const signal = pending?.open(id);
     let result: import("./coordination.js").Result;
-    try { result = await client.call(op.name, message.params?.arguments ?? {}, signal ? { signal } : {}); }
+    const args = message.params?.arguments && typeof message.params.arguments === "object" ? message.params.arguments : {};
+    try { result = await client.call(op.name, args, signal ? { signal } : {}); }
     finally { pending?.close(id, signal); }
     // A cancelled request gets no reply: the client stopped waiting, and the engine wait is already released.
     if (signal?.aborted) return undefined;
@@ -78,9 +97,10 @@ export async function runMcp(client = new EngineClient()): Promise<void> {
   const pending = new McpPending();
   const send = (value: unknown) => process.stdout.write(`${JSON.stringify(value)}\n`);
   for await (const line of lines) {
-    let message: Record<string, any>;
+    let message: McpMessage;
     try {
-      message = JSON.parse(line);
+      const parsed: unknown = JSON.parse(line);
+      message = parsed && typeof parsed === "object" ? (parsed as McpMessage) : {};
     } catch {
       send({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "Invalid JSON" } });
       continue;

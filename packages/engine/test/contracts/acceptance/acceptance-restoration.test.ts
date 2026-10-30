@@ -2,8 +2,10 @@ import { afterAll, expect, it } from "bun:test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ACCEPTANCE_RESTORED, acceptanceSummary, type Task } from "@petrina/core";
-import { Fakes, git, tempDir } from "../../fixtures.js";
+import * as gitOps from "@petrina/repositories/git";
+import { Fakes, tempDir } from "../../fixtures.js";
 import { acceptanceAgents } from "../../fixtures/acceptance-agents.js";
+import { readLooseCommit, readWorktreeCommit } from "../../fixtures/shared-preparation.js";
 import { versionsOf } from "../../../src/repositories.js";
 import { recordReviewProofs } from "@petrina/orchestrator";
 import { commandInputText } from "../../../src/checks.js";
@@ -16,7 +18,7 @@ afterAll(close);
 for (const [proof, committed] of [[false, false], [true, true]] as const) it(`keeps final acceptance unverified once when Petrina undoes an editing role's ${committed ? "commit" : "tracked edit"}, with requested proof ${proof}`, async () => {
   const fakes = acceptanceAgents({ beforeChecks: async ({ cwd }) => {
     writeFileSync(join(cwd, "tester-edit.txt"), committed ? "After the review\n" : "Before the review\n");
-    if (committed) { await git(cwd, "add", "tester-edit.txt"); await git(cwd, "commit", "--quiet", "-m", "Tester commits after the review"); }
+    if (committed) await gitOps.commitChanges(cwd, "Tester commits after the review");
   } });
   const f = await fixture(false, false, undefined, { startAgentSession: fakes.start });
   try {
@@ -28,11 +30,11 @@ for (const [proof, committed] of [[false, false], [true, true]] as const) it(`ke
     // A saved project file distinguishes a tracked rewrite from new output. The commit variant
     // also changes history, so both real Git restoration paths remain covered.
     writeFileSync(join(worktree, "tester-edit.txt"), committed ? "Before the review\n" : "Saved before acceptance\n");
-    await git(worktree, "add", "."); await git(worktree, "commit", "-q", "-m", "Keep the permitted earlier edit");
+    await gitOps.commitChanges(worktree, "Keep the permitted earlier edit");
     const earlier = await f.recordPass();
     earlier.roleId = role.id; earlier.agentResults![0]!.roleId = role.id;
     writeFileSync(join(worktree, "feature.txt"), "The builder's final change\n");
-    await git(worktree, "add", "."); await git(worktree, "commit", "-q", "-m", "Prepare the reviewed final change");
+    await gitOps.commitChanges(worktree, "Prepare the reviewed final change");
     const versions = await versionsOf(f.task);
     // Approval is normally skipped for this low-risk product.
     f.products[0]!.shipLowRisk = true;
@@ -51,8 +53,13 @@ for (const [proof, committed] of [[false, false], [true, true]] as const) it(`ke
     expect(f.task.acceptancePassed).toBe(false); expect(f.task.acceptanceUnverified).toBe(true); expect(f.task.acceptanceBlocked).toBe(true);
     // Restored version equality is no proof: the run's versions are recorded, and still settle nothing.
     expect(f.task.testedVersions).toEqual(versions); expect(await versionsOf(f.task)).toEqual(versions);
-    expect(await git(worktree, "log", "--format=%s")).not.toContain("Tester commits after the review");
-    expect(await git(worktree, "status", "--porcelain")).toBe("");
+    const subjects: string[] = [];
+    for (let cur = readWorktreeCommit(worktree)?.commit; cur; cur = readLooseCommit(join(f.products[0]!.path!, ".git"), cur)?.parents[0]) {
+      const c = readLooseCommit(join(f.products[0]!.path!, ".git"), cur);
+      if (c) subjects.push(c.body.trim().split("\n")[0]!);
+    }
+    expect(subjects.join("\n")).not.toContain("Tester commits after the review");
+    expect(await gitOps.isClean(worktree)).toBe(true);
     expect(readFileSync(join(worktree, "tester-edit.txt"), "utf8")).toBe(committed ? "Before the review\n" : "Saved before acceptance\n");
     expect(f.task.timeline.some(entry => entry.text === `Undid ${committed ? "commits" : "changes"} from Tester, which is read-only`)).toBe(true);
     expect(f.task.timeline.some(entry => entry.text === restoredLine(committed ? "commits" : "changes to project files", "Product 1", "tester-edit.txt"))).toBe(true);
@@ -94,7 +101,16 @@ for (const output of ["checks"] as readonly ("checks" | "tester")[]) it(`settles
   const fakes = acceptanceAgents({ beforeChecks: ({ cwd }) => {
     if (output === "tester") writeFileSync(join(cwd, "tester-edit.txt"), "Before the review\n");
   } });
-  const f = await fixture(false, false, undefined, { startAgentSession: fakes.start });
+  const f = await fixture(false, false, undefined, {
+    startAgentSession: fakes.start,
+    runCheckCommand: async req => {
+      if (req.argv[0] === process.execPath && req.argv[1] === "-e") {
+        writeFileSync(join(req.cwd, "check-output.log"), "ran\n");
+        return { code: 0 };
+      }
+      return undefined;
+    },
+  });
   try {
     await f.body(async () => {
     const request = await f.request(); const worktree = f.scope.work.worktree!;
@@ -108,7 +124,7 @@ for (const output of ["checks"] as readonly ("checks" | "tester")[]) it(`settles
     expect(testerSteps(f).at(-1)!.proofRun!.restored).toBeUndefined();
     expect(f.task.timeline.some(entry => entry.text === "Undid changes from Tester, which is read-only")).toBe(true);
     expect(f.task.timeline.some(entry => entry.text.startsWith("This acceptance run cannot verify"))).toBe(false);
-    expect(await git(worktree, "status", "--porcelain")).toBe("");
+    expect(await gitOps.isClean(worktree)).toBe(true);
     expect(f.engine.s.inbox.find(item => item.kind === "delivery")!.title).toBe("Ready to ship “Keep required Linux proof current”");
       });
   } finally { await f.close(); }
@@ -123,8 +139,8 @@ for (const committed of [true]) it(`keeps the first read-only acceptance run unv
     const worktree = f.scope.work.worktree!;
     f.task.brief = { summary: "Try it", areas: [], forUsers: [], risks: [], acceptance: [{ text: "A greeting file exists" }] };
     writeFileSync(join(worktree, "tester-edit.txt"), "Saved before acceptance\n");
-    await git(worktree, "add", "."); await git(worktree, "commit", "-q", "-m", "Save a project file");
-    const before = await git(worktree, "rev-parse", "HEAD"), versions = await versionsOf(f.task);
+    await gitOps.commitChanges(worktree, "Save a project file");
+    const before = await gitOps.head(worktree), versions = await versionsOf(f.task);
     // An older pass on the same code: the invalidated run is later, so it must not shine through.
     f.task.journey = [{ id: "older-pass", kind: "agent", stageId: f.tester.id, roleId: "tester", profileId: "opus-high", round: 1, sub: 0, startedAt: 1, endedAt: 2, end: "done", acceptanceChecks: [{ text: "A greeting file exists", result: "pass", evidence: "An earlier run saw the greeting" }], agentResults: [{ roleId: "tester", profileId: "opus-high", at: 2, value: {}, versions }] }];
     f.task.stageIndex = 1;
@@ -138,7 +154,7 @@ for (const committed of [true]) it(`keeps the first read-only acceptance run unv
     delete f.task.proofRequests; delete f.task.hunt;
     expect(fakes.openings("tester")[0]).toContain(MAY_CHANGE.readOnly);
     expect(f.task.stageIndex).toBe(2);
-    expect(await git(worktree, "rev-parse", "HEAD")).toBe(before); expect(await git(worktree, "status", "--porcelain")).toBe("");
+    expect(await gitOps.head(worktree)).toBe(before); expect(await gitOps.isClean(worktree)).toBe(true);
     expect(f.task.acceptancePassed).toBe(false); expect(f.task.acceptanceUnverified).toBe(true); expect(f.task.acceptanceBlocked).toBeUndefined();
     expect(f.task.brief.acceptance[0]).toEqual({ text: "A greeting file exists", verification: "blocked", reason: ACCEPTANCE_RESTORED });
     expect(f.task.timeline.some(entry => entry.text === restoredLine(committed ? "commits" : "changes to project files", "Product 1", "tester-edit.txt"))).toBe(true);
@@ -146,7 +162,7 @@ for (const committed of [true]) it(`keeps the first read-only acceptance run unv
     expect(testerSteps(f).at(-1)!).toMatchObject({ outcome: "1 check could not be verified", reason: "Petrina undid changes during acceptance testing" });
     expect(f.task.findings).toEqual([]); expect(f.scope.work.acceptanceReturns).toBeUndefined();
     // A later code change alone keeps today's path: the coordinator decides at delivery.
-    writeFileSync(join(worktree, "feature.txt"), "A reviewed fix\n"); await git(worktree, "add", "."); await git(worktree, "commit", "-q", "-m", "Fix after review");
+    writeFileSync(join(worktree, "feature.txt"), "A reviewed fix\n"); await gitOps.commitChanges(worktree, "Fix after review");
     f.task.stageIndex = 3;
     await f.drive();
     expect(fakes.openings("tester")).toHaveLength(1); expect(f.task.stageIndex).toBe(3);
@@ -164,12 +180,12 @@ for (const edited of [false, true]) it(`${edited ? "waits for your decision" : "
     await f.body(async () => {
     const worktree = f.scope.work.worktree!, product = f.products[0]!;
     writeFileSync(join(worktree, "tester-edit.txt"), "Saved before acceptance\n");
-    await git(worktree, "add", "."); await git(worktree, "commit", "-q", "-m", "Save a project file");
+    await gitOps.commitChanges(worktree, "Save a project file");
     // Delivery approval is off for this task and product, so its plan has no delivery check.
     f.task.approveDelivery = false; product.approveDelivery = false;
     f.task.plan!.stages = f.task.plan!.stages.filter(stage => stage.gate !== "delivery");
     f.task.stageIndex = 1;
-    const main = await git(product.path!, "rev-parse", "main");
+    const main = (await gitOps.revParse(product.path!, "main"))!;
     fakes.scenario(edited ? { testerFiles: [{ dir: worktree, file: "tester-edit.txt", text: "Edited during acceptance\n" }] } : {});
     await f.engine["work"].runDo(f.scope, f.tester, signal());
     expect(f.task.acceptanceUnverified).toBe(edited);
@@ -182,16 +198,16 @@ for (const edited of [false, true]) it(`${edited ? "waits for your decision" : "
     expect(fakes.openings("tester")).toHaveLength(1);
     if (!edited) {
       expect(delivery).toBeUndefined(); expect(f.scope.work.landed).toBeDefined();
-      expect(await git(product.path!, "rev-parse", "main")).not.toBe(main);
+      expect(await gitOps.revParse(product.path!, "main")).not.toBe(main);
       return;
     }
     expect(f.task.timeline.some(entry => entry.text === "Added your delivery check: this acceptance run cannot verify the product, so delivery waits for your decision")).toBe(true);
     expect(f.task.stageIndex).toBe(3); expect(delivery!.title).toBe("Your call on “Keep required Linux proof current”: acceptance could not be verified");
     expect(delivery!.body).toContain(ACCEPTANCE_RESTORED); expect(f.engine["driver"]["shipsUnasked"](f.task)).toBe(false);
-    expect(f.scope.work.landed).toBeUndefined(); expect(await git(product.path!, "rev-parse", "main")).toBe(main);
+    expect(f.scope.work.landed).toBeUndefined(); expect(await gitOps.revParse(product.path!, "main")).toBe(main);
     // The coordinator's explicit decision still ships it.
     f.engine.approve(delivery!.id); await f.drive();
-    expect(f.scope.work.landed).toBeDefined(); expect(await git(product.path!, "rev-parse", "main")).not.toBe(main);
+    expect(f.scope.work.landed).toBeDefined(); expect(await gitOps.revParse(product.path!, "main")).not.toBe(main);
       });
   } finally { await f.close(); }
 });
@@ -206,14 +222,14 @@ for (const [where, change] of [["companion", "commit"], ["companion", "output"]]
     // The request and the checklist item name only the product Petrina did not restore.
     const request = await f.request("Prove the untouched product", [other.id]);
     const file = change === "output" ? "new-output.txt" : "shared-edit.txt";
-    if (change !== "output") { writeFileSync(join(touched.worktree, file), "Saved before acceptance\n"); await git(touched.worktree, "add", "."); await git(touched.worktree, "commit", "-q", "-m", "Save a shared file"); }
+    if (change !== "output") { writeFileSync(join(touched.worktree, file), "Saved before acceptance\n"); await gitOps.commitChanges(touched.worktree, "Save a shared file"); }
     const before = await versionsOf(f.task);
     f.task.brief = { summary: "Try it", areas: [], forUsers: [], risks: [], acceptance: [{ text: "A greeting file exists", productIds: [other.id], versions: { [other.id]: before[other.id]! }, verification: "passed", met: true }] };
     f.task.retest = true; f.task.stageIndex = 1;
     fakes.scenario({ testerProofAnswers: passes([request.id]), testerFiles: [{ dir: touched.worktree, file, text: "Written during acceptance\n", commit: change === "commit" }] });
     await f.engine["work"].runDo(f.scope, f.tester, signal());
     expect(await versionsOf(f.task)).toEqual(before);
-    expect(await git(touched.worktree, "status", "--porcelain")).toBe("");
+    expect(await gitOps.isClean(touched.worktree)).toBe(true);
     const final = testerSteps(f).at(-1)!;
     expect(f.task.findings).toEqual([]); expect(f.task.repair).toBeUndefined(); expect(f.task.stageIndex).toBe(3);
     if (change === "output") {

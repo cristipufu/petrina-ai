@@ -4,12 +4,11 @@ import { join } from "node:path";
 import { followUpKey } from "@petrina/core";
 import { Coordination } from "../../../src/coordination.js";
 import { createFollowUpFixtures, plant, settledSource } from "../../fixtures/follow-up-native.js";
-
-const { open, reopen, close, shutdown } = createFollowUpFixtures();
+const { open, reopen, close, use } = createFollowUpFixtures();
 afterAll(close);
-
 it("links manually to a finished bug without changing it, but refuses while original pictures remain", async () => {
-  const world = await open();
+  return use(async caseOwner => {
+  const world = await open(caseOwner);
   try {
     const { engine } = world;
     const source = settledSource(engine, world.shop);
@@ -29,11 +28,12 @@ it("links manually to a finished bug without changing it, but refuses while orig
     expect(engine.task(source.id)!.findings[0]!.tracking).toEqual({ taskId: targetId });
     expect(engine.task(targetId)).toEqual(original);
     expect(world.prompts).toEqual([]);
-  } finally { await shutdown(world.engine); }
+  } finally { await caseOwner.stop(world.engine); }
+  });
 });
-
 it("copies manual-link pictures before tracking, keeps concurrent messages, and allows source cleanup", async () => {
-  const world = await open();
+  return use(async caseOwner => {
+  const world = await open(caseOwner);
   try {
     const { engine } = world;
     const source = settledSource(engine, world.shop, { tracking: { reason: "unavailable", retry: true } });
@@ -45,14 +45,17 @@ it("copies manual-link pictures before tracking, keeps concurrent messages, and 
     const originalCopy = world.files.copyFile;
     let release!: () => void;
     const held = new Promise<void>(resolve => { release = resolve; });
+    caseOwner.onStop(() => release());
     let copying!: () => void;
     const started = new Promise<void>(resolve => { copying = resolve; });
-    const copy = spyOn(world.files, "copyFile").mockImplementation(async (...args) => { copying(); await held; return originalCopy(...args); });
+    const copy = spyOn(world.files, "copyFile");
+    caseOwner.onStop(() => copy.mockRestore());
+    copy.mockImplementation(async (...args) => { copying(); await held; return originalCopy(...args); });
     const c = new Coordination(engine);
     const args = { taskId: source.id, findingId: "old", targetTaskId: targetId, requestId: "pictured-link" };
     try {
-      const linking = c.call("task.track-finding", args);
-      await started;
+      const linking = caseOwner.prepare(() => c.call("task.track-finding", args));
+      await Promise.race([started, linking.then(() => { throw new Error("The owned operation ended before copy progress"); })]);
       expect(source.findings[0]!.tracking).toEqual({ reason: "unavailable", retry: true });
       target.session.push({ id: "during-copy", from: "agent", text: "Still working", at: 1 });
       await engine["cleanup"].removeCaptures(source.id);
@@ -74,5 +77,6 @@ it("copies manual-link pictures before tracking, keeps concurrent messages, and 
     await reopen(world);
     expect(world.engine.task(source.id)!.findings[0]!.tracking).toEqual({ taskId: targetId });
     expect(world.prompts).toEqual([]);
-  } finally { await shutdown(world.engine); }
+  } finally { await caseOwner.stop(world.engine); }
+  });
 });

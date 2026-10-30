@@ -1,4 +1,4 @@
-import { coveredByDecision, endAgentStep, exhaustedAcceptanceFailure, findingCount, JOURNEY_WORDS as W, noteRoundEnd, openStep, passedOpenWords, reviewBlocking, reviewDecisionFor, reviewRoundEnd, type Id, type Stage, type Task } from "@petrina/core";
+import { coveredByDecision, endAgentStep, exhaustedAcceptanceFailure, findingCount, JOURNEY_WORDS, noteRoundEnd, openStep, passedOpenWords, reviewBlocking, reviewDecisionFor, reviewRoundEnd, type Id, type Stage } from "@petrina/core";
 import { beginRepair } from "./repair.js";
 import { executionFor, scopesFor } from "./repository-context.js";
 import type { RuntimeTask } from "./model.js";
@@ -11,12 +11,12 @@ export class ReviewRoundCompletion {
   async finish(task: RuntimeTask, stage: Stage, round: number, outcome: string, reviewedVersions?: Readonly<Record<Id, string>>): Promise<"continue" | "stop"> {
     const scope = executionFor(task);
     // Acceptance failures held for the delivery decision neither send the work back nor count toward the round.
-    const open = reviewBlocking(task as unknown as Task);
+    const open = reviewBlocking(task);
     // The coordinator's decision to continue still covers its findings only on the task's own change it was made on.
     const continued = task.reviewDecision?.accepted && task.reviewDecision.covers?.length;
     let changes = continued ? await this.host.ownChanges(task) : undefined;
-    const covered = changes ? coveredByDecision(task as unknown as Task, changes) : new Set<Id>();
-    const end = reviewRoundEnd(task as unknown as Task, stage as Stage, round, this.host.roles(), covered);
+    const covered = changes ? coveredByDecision(task, changes) : new Set<Id>();
+    const end = reviewRoundEnd(task, stage, round, this.host.roles(), covered);
     // A decision raised below records the change it is made on, read before anything else moves.
     if (end.kind === "used up" || (end.kind === "send back" && task.repositories)) changes ??= await this.host.ownChanges(task);
     noteRoundEnd(task, stage.id, open.length);
@@ -47,8 +47,8 @@ export class ReviewRoundCompletion {
     }
     this.host.reviewEnd(task, round, end.kind === "send back" ? "sent-back" : end.kind === "used up" ? "rounds-used" : "passed");
     const pendingProofs = task.proofRequests?.filter(request => request.status !== "proved" && request.status !== "already-current").length ?? 0;
-    const passed = [W.reviewPassed, ...(end.kind === "passed" && end.covered ? [W.coveredOpen(end.covered)] : []), ...(pendingProofs ? [`${pendingProofs} proof request${pendingProofs === 1 ? "" : "s"} for final acceptance testing`] : [])].join("; ");
-    const reason = end.kind === "send back" ? { reason: W.sentBack(end.open), tone: "back" as const } : end.kind === "used up" ? { reason: W.stillOpen(end.open), tone: "back" as const } : { reason: passed };
+    const passed = [JOURNEY_WORDS.reviewPassed, ...(end.kind === "passed" && end.covered ? [JOURNEY_WORDS.coveredOpen(end.covered)] : []), ...(pendingProofs ? [`${pendingProofs} proof request${pendingProofs === 1 ? "" : "s"} for final acceptance testing`] : [])].join("; ");
+    const reason = end.kind === "send back" ? { reason: JOURNEY_WORDS.sentBack(end.open), tone: "back" as const } : end.kind === "used up" ? { reason: JOURNEY_WORDS.stillOpen(end.open), tone: "back" as const } : { reason: passed };
     endAgentStep(task, { outcome, ...reason }, this.host.now());
     if (end.kind === "send back") {
       task.rounds[stage.id] = round + 1;
@@ -82,7 +82,7 @@ export class ReviewRoundCompletion {
       this.host.openDeliveryDecision(task);
       return "stop";
     } else {
-      this.host.note(task, "done", `${port ? "Port review" : "Review"} passed: ${passedOpenWords(task.findings.filter((finding) => !exhaustedAcceptanceFailure(task as unknown as Task, finding)), covered)}`);
+      this.host.note(task, "done", `${port ? "Port review" : "Review"} passed: ${passedOpenWords(task.findings.filter((finding) => !exhaustedAcceptanceFailure(task, finding)), covered)}`);
     }
     this.host.changed(task);
     return "continue";

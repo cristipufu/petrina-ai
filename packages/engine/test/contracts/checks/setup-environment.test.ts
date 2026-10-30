@@ -10,6 +10,7 @@ import { detachRepositoryState, executionFor } from "@petrina/orchestrator";
 import { repositorySeed } from "@petrina/test-support/repositories";
 import { waitFor } from "../../fixtures.js";
 import { writeFileSync } from "node:fs";
+import * as gitOps from "@petrina/repositories/git";
 import { git } from "../../fixtures.js";
 import { gitCommand, writeGitProgram } from "@petrina/test-support/git-program";
 import { expect, it, spyOn } from "bun:test";
@@ -17,6 +18,7 @@ import { join } from "node:path";
 import { checkOutcome, checkProblem, deliveryCheckProblem, checkSetupOutcome, recordedCheckBatch, sameCheckEnvironmentIdentity } from "@petrina/core";
 import * as environment from "@petrina/repositories/check-environment";
 import { checkSetupFixture } from "../../fixtures/check-setup.js";
+import { readWorktreeCommit } from "../../fixtures/shared-preparation.js";
 import { waitForFile, powerLogSleep, SLOW } from "../../fixtures.js";
 
 it("records the actual baseline for a first empty batch without taking a command place, and reads never resample it", async () => {
@@ -248,8 +250,7 @@ for (const changed of [false, true]) it(`reuses retained product rows for opaque
     f.command("compiler", { stdout: "compiler 1\n" });
     await f.native(async () => {
       writeFileSync(join(f.path, "README.md"), "The reviewed task change\n");
-      await git(f.path, "add", "README.md");
-      await git(f.path, "commit", "-qm", "Prepare the task change");
+      await gitOps.commitChanges(f.path, "Prepare the task change");
       const hooks = join(f.root, "hooks");
       writeGitProgram(join(hooks, "pre-commit"), gitCommand(f.argv("hook").map((part, index) => index === 2 ? part : { path: part })));
       await git(f.path, "config", "core.hooksPath", hooks);
@@ -292,7 +293,9 @@ it("retains actual raw product success but no pass authority or episode reset wh
   } finally { f.release(release); try { await running; } finally { await f.close(); } }
 });
 
-for (const peer of ["unmet", "confirmed-interruption", "legacy-unobserved", "process-uncertain", "output-uncertain", "setup-uncertain"] as const)
+// Unknown recorded ownership is covered with the actual portable review/evidence/repair owners.
+// Keep native setup failure and parsed machine-interruption observations here.
+for (const peer of ["unmet", "confirmed-interruption"] as const)
 it(peer === "unmet" ? "actual review routing repairs only the live failed product beside a setup-blocked sibling's old failure"
   : `actual shared review keeps the whole-task ownership barrier precise for ${peer}`, async () => {
   const f = await checkSetupFixture();
@@ -314,24 +317,15 @@ it(peer === "unmet" ? "actual review routing repairs only the live failed produc
     expect((await f.native(() => f.engine["checks"].failing(second, signal))).kind).toBe("product-failed");
     const previous = structuredClone(second.work.checks!.results);
     second.work.checkReturns = 1;
-    if (peer === "unmet" || peer === "setup-uncertain") {
+    if (peer === "unmet") {
       f.command("compiler-second", { code: 9, stdout: "second setup unavailable\n" });
       f.engine.setProductCheckSetup("second", [{ id: "compiler", name: "Compiler", argv: f.argv("compiler-second") }]);
-      if (peer === "setup-uncertain") {
-        expect((await f.native(() => f.engine["checks"].failing(second, signal))).kind).toBe("blocked");
-        // The actor really ended; this conservative recorded uncertainty must still prevent handoff.
-        second.work.checkSetup!.results[0]!.run.execution!.outputCleanup = "unconfirmed";
-      }
-    } else if (peer === "confirmed-interruption") {
+    } else {
       const run = second.work.checks!.results[0]!, start = run.startedAt!, end = run.endedAt!;
       const sleep = powerLogSleep(start - 1000, Math.ceil((end - start + 2000) / 1000));
       f.engine.options.machineRecords = async () => f.task.activeProductId === "second" ? sleep : "";
-    } else if (peer === "legacy-unobserved") {
-      delete second.work.checks!.results[0]!.execution;
-      delete second.work.checks!.results[0]!.cleanupIncomplete;
-    } else second.work.checks!.results[0]!.execution![peer === "process-uncertain" ? "cleanup" : "outputCleanup"] = "unconfirmed";
-    const nativeUncertain = peer === "process-uncertain" || peer === "output-uncertain" || peer === "setup-uncertain";
-    const preserved = structuredClone(second.work.checks!.results), setup = structuredClone(second.work.checkSetup), invocations = f.invocations();
+    }
+    const invocations = f.invocations();
     const result = await f.native(() => f.engine["reviews"].runReview(f.task, f.task.plan!.stages[1]!, signal));
     if (peer === "unmet") {
       expect(result).toBe("continue");
@@ -340,17 +334,6 @@ it(peer === "unmet" ? "actual review routing repairs only the live failed produc
       expect(second.work.checkReturns).toBe(1);
       expect(second.work.checks!.results).toEqual(previous);
       expect(f.task.findings.filter(finding => finding.status === "open").map(finding => finding.productIds)).toEqual([["product"], ["second"]]);
-    } else if (nativeUncertain) {
-      expect(result).toBe("stop");
-      expect(f.task.repair).toBeUndefined();
-      expect(f.task.stageIndex).toBe(1);
-      expect(f.task.fixing).not.toBe(true);
-      expect(executionFor(f.task, "product").work.checkReturns).toBeUndefined();
-      expect(second.work.checkReturns).toBe(1);
-      expect(second.work.checks!.results).toEqual(preserved);
-      if (peer === "setup-uncertain") expect(second.work.checkSetup).toEqual(setup);
-      expect(f.invocations()).toEqual(invocations);
-      expect(f.receipts().every(record => record.state === "ended")).toBe(true);
     } else {
       expect(result).toBe("continue");
       expect(f.task.repair!.products).toEqual(["product"]);
@@ -358,30 +341,26 @@ it(peer === "unmet" ? "actual review routing repairs only the live failed produc
       expect(second.work.checkReturns).toBe(1);
       expect(recordedCheckBatch(second.work).kind).toBe("blocked");
       expect(f.invocations()).toEqual(invocations);
-      if (peer === "legacy-unobserved") {
-        expect(second.work.checks!.results).toEqual(preserved);
-        expect(second.work.checks!.results[0]!.execution).toBeUndefined();
-      } else {
-        expect(checkOutcome(second.work.checks!.results[0]!).kind).toBe("incomplete");
-        expect(second.work.checks!.results[0]!.interruption).toMatchObject({ source: "macOS power log" });
-      }
+      expect(checkOutcome(second.work.checks!.results[0]!).kind).toBe("incomplete");
+      expect(second.work.checks!.results[0]!.interruption).toMatchObject({ source: "macOS power log" });
     }
+    expect(f.receipts().every(record => record.state === "ended")).toBe(true);
   } finally { await f.close(); }
 });
 
 it("actual release preparation restores its version and asks on setup failure without manufacturing a Builder finding", async () => {
-  const f = await checkSetupFixture();
+  const f = await checkSetupFixture({ nativeGitCapture: true });
   let restore: (() => void) | undefined;
   try {
     f.setChecks(["product"]); f.setSetup(["compiler"]);
     f.command("compiler", { stdout: "compiler 1\n" });
     await f.native(async () => {
       writeFileSync(join(f.path, "package.json"), JSON.stringify({ name: "fixture", version: "0.1.0" }));
-      await git(f.path, "add", "package.json"); await git(f.path, "commit", "-qm", "Declare the version");
+      await gitOps.commitChanges(f.path, "Declare the version");
     });
     expect((await f.check()).kind).toBe("passed");
     f.scope.work.checkReturns = 1;
-    const before = await f.native(() => git(f.path, "rev-parse", "HEAD"));
+    const before = readWorktreeCommit(f.path)!.commit;
     f.scope.work.delivery = "release";
     const stage = { id: "publish", title: "Publish", kind: "do" as const, roleId: "release-manager", profileIds: ["sol-high"] };
     f.task.plan!.stages.push(stage); f.task.stageIndex = 3;
@@ -394,7 +373,7 @@ it("actual release preparation restores its version and asks on setup failure wi
     });
     f.command("compiler", { code: 7, stdout: "compiler unavailable\n" });
     expect(await f.native(() => f.engine["shipping"]["prepare"](f.scope, stage, f.engine.stopRequested.signal))).toBe("stop");
-    expect(await f.native(() => git(f.path, "rev-parse", "HEAD"))).toBe(before);
+    expect(readWorktreeCommit(f.path)!.commit).toBe(before);
     expect(f.scope.work.shipping).toBeUndefined();
     expect(f.scope.work.checkReturns).toBe(1);
     expect(f.task.findings).toEqual([]);
@@ -465,7 +444,7 @@ it("reads only the selected actual setup log and scopes same-content cursors to 
 });
 
 it("restores a real probe's tracked write even when post-probe input observation rejects, retaining strict failed-owner evidence", async () => {
-  const f = await checkSetupFixture();
+  const f = await checkSetupFixture({ nativeGitCapture: true });
   const cause = new Error("Post-probe inputs unavailable");
   const checks = f.engine["checks"], capture = checks["captureState"];
   let restored = false, confirmed = false;

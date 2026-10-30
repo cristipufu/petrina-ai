@@ -7,6 +7,8 @@ import type { ExtraValidation } from "@petrina/core";
 import type { Kernel } from "./kernel.js";
 import * as git from "@petrina/repositories/git";
 import { readProcessGroupMembers } from "@petrina/platform/process-group-read";
+import { containerContextEndpoint, containerImageInfo, containerServiceInfo, type ContainerInspection } from "./container-inspection.js";
+import { containerNames, type ContainerControl, type ContainerTarget } from "./container-control.js";
 
 export const OWNER_LABEL = "app.petrina.validation-owner";
 export const RUN_LABEL = "app.petrina.validation-run";
@@ -33,6 +35,27 @@ export function containerCommand(argv: readonly string[], timeout: number, disco
   });
 }
 
+/** The default transport keeps its bounded CLI commands and discovery environment. */
+export function nativeContainerInspection(tool: readonly string[], config: string, timeout: number): ContainerInspection {
+  const prefix = (endpoint: string) => [...tool, "--config", config, "--host", endpoint];
+  return {
+    contextEndpoint: async () => containerContextEndpoint(await containerCommand([...tool, "context", "inspect"], timeout, true)),
+    service: async endpoint => containerServiceInfo(await containerCommand([...prefix(endpoint), "info", "--format", "{{json .}}"], timeout)),
+    image: async (endpoint, image) => containerImageInfo(await containerCommand([...prefix(endpoint), "image", "inspect", "--", image], timeout)),
+  };
+}
+
+/** Each native control retains its own bounded command and the approved service endpoint. */
+export function nativeContainerControl(tool: readonly string[], config: string): ContainerControl {
+  const prefix = (target: ContainerTarget) => [...tool, "--config", config, "--host", target.endpoint];
+  return {
+    list: async (target, timeout) => containerNames(await containerCommand([...prefix(target), "ps", "--all", "--filter", `label=${OWNER_LABEL}=${target.owner}`,
+      "--filter", `label=${RUN_LABEL}=${target.runId}`, "--format", "{{.Names}}"], timeout)),
+    stop: async (target, timeout) => { await containerCommand([...prefix(target), "stop", "--timeout", "2", target.name], timeout); },
+    remove: async (target, timeout) => { await containerCommand([...prefix(target), "rm", "--force", target.name], timeout); },
+  };
+}
+
 export class ExtraContainer {
   private readonly clients = new ValidationClientCleanup({
     groups: process.platform !== "win32",
@@ -53,21 +76,20 @@ export class ExtraContainer {
   }
   async prepare(record: ExtraValidation): Promise<NonNullable<ExtraValidation["container"]>> {
     const tool = this.tool();
+    const inspection = this.k.options.containerInspection ?? nativeContainerInspection(tool, join(this.k.dataDir, "extra-container-config"), this.timeout);
     // Pin a local endpoint; a context pointing at SSH/TCP is unsupported, even if it answers.
-    const context = await containerCommand([...tool, "context", "inspect"], this.timeout, true);
+    const endpoint = await inspection.contextEndpoint();
     await mkdir(join(this.k.dataDir, "extra-container-config"), { recursive: true, mode: 0o700 });
-    const endpoint = JSON.parse(context)[0]?.Endpoints?.docker?.Host as string | undefined;
     const override = process.env.DOCKER_CONTEXT ? undefined : process.env.DOCKER_HOST;
     const host = override ?? endpoint;
     if (!host || !/^(unix:\/\/\/|npipe:\/\/)/.test(host)) throw new Error("Only a local Linux container service is supported; remote execution is refused.");
-    const prefix = [...tool, "--config", join(this.k.dataDir, "extra-container-config"), "--host", host];
-    const info = JSON.parse(await containerCommand([...prefix, "info", "--format", "{{json .}}"], this.timeout));
-    if (info.OSType !== "linux") throw new Error("The container service must run Linux containers.");
-    const image = JSON.parse(await containerCommand([...prefix, "image", "inspect", "--", record.image], this.timeout))[0];
-    if (image?.Os !== "linux" || !/^sha256:[a-f0-9]{64}$/.test(image?.Id ?? "") || !image.Architecture)
+    const info = await inspection.service(host);
+    if (info.os !== "linux") throw new Error("The container service must run Linux containers.");
+    const image = await inspection.image(host, record.image);
+    if (image?.os !== "linux" || !/^sha256:[a-f0-9]{64}$/.test(image?.id ?? "") || !image.architecture)
       throw new Error("That local Linux image is unavailable. Prepare it first; Petrina never downloads images.");
-    return { tool: JSON.stringify(tool), endpoint: host, service: `${info.Name ?? "Local container service"} (${info.ServerVersion ?? "version unreported"})`,
-      imageId: image.Id, os: image.Os, arch: image.Architecture };
+    return { tool: JSON.stringify(tool), endpoint: host, service: `${info.name ?? "Local container service"} (${info.version ?? "version unreported"})`,
+      imageId: image.id!, os: image.os, arch: image.architecture };
   }
 
   async snapshot(record: ExtraValidation): Promise<void> {
@@ -93,10 +115,18 @@ export class ExtraContainer {
       "--entrypoint", record.argv[0]!, record.container!.imageId, ...record.argv.slice(1)]);
   }
 
-  private async labelled(record: ExtraValidation, timeout = this.timeout): Promise<string[]> {
-    const output = await containerCommand(this.command(record, ["ps", "--all", "--filter", `label=${OWNER_LABEL}=${record.owner}`,
-      "--filter", `label=${RUN_LABEL}=${record.id}`, "--format", "{{.Names}}"]), timeout);
-    const names = output.split(/\s+/).filter(Boolean);
+  private control(record: ExtraValidation): ContainerControl {
+    return this.k.options.containerControl ?? nativeContainerControl(record.container?.tool ? JSON.parse(record.container.tool) as string[] : this.tool(),
+      join(this.k.dataDir, "extra-container-config"));
+  }
+
+  private target(record: ExtraValidation): ContainerTarget {
+    if (!record.container) throw new Error("The owned container service has not been prepared.");
+    return { endpoint: record.container.endpoint, name: record.containerName, owner: record.owner, runId: record.id };
+  }
+
+  private async labelled(record: ExtraValidation, timeout = this.timeout): Promise<readonly string[]> {
+    const names = await this.control(record).list(this.target(record), timeout);
     if (names.some(name => name !== record.containerName)) throw new Error("An unexpected owned container needs cleanup confirmation.");
     return names;
   }
@@ -119,9 +149,9 @@ export class ExtraContainer {
     if (record.container && record.startedAt !== undefined) {
       try {
         if ((await this.labelled(record)).length) {
-          await containerCommand(this.command(record, ["stop", "--timeout", "2", record.containerName]), this.timeout).catch(() => undefined);
+          await this.control(record).stop(this.target(record), this.timeout).catch(() => undefined);
           if ((await this.labelled(record)).length)
-            await containerCommand(this.command(record, ["rm", "--force", record.containerName]), this.timeout).catch(() => undefined);
+            await this.control(record).remove(this.target(record), this.timeout).catch(() => undefined);
           containerClean = await this.removed(record);
           removalPending = !containerClean;
         }

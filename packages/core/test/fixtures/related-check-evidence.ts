@@ -16,21 +16,82 @@ export function failure(nodeId = "j5", duration = "22.91ms"): DeepMutable<CheckF
 }
 export function peer(id = "task-58913"): DeepMutable<CheckEvidenceTask> {
   const f = failure();
-  return { id, state: "running", held: false, journey: [
-    { id: "j5", kind: "petrina", startedAt: 1, endedAt: 2, end: "done", productChecks: [f.check], checkAttempts: [f.attempt] },
-    { id: "j6", kind: "agent", startedAt: 3, endedAt: 4, end: "done", buildVersions: { p: sha("d") }, checkRepairs: [{ productId: "p", failureNode: "j5", checkId: "check-1", attemptId: "run-0", findingId: "f1", sha: sha("c"), tree: sha("d"), definition: "candidate-hooks", commands: [...commands], answer: { fixed: true, text: "Waited for replacement-owned progress before checking the summary." } }] },
-  ] };
+  return {
+    id,
+    state: "running",
+    held: false,
+    journey: [
+      { id: "j5", kind: "petrina", startedAt: 1, endedAt: 2, end: "done", productChecks: [f.check], checkAttempts: [f.attempt] },
+      {
+        id: "j6",
+        kind: "agent",
+        startedAt: 3,
+        endedAt: 4,
+        end: "done",
+        buildVersions: { p: sha("d") },
+        checkRepairs: [{
+          productId: "p",
+          failureNode: "j5",
+          checkId: "check-1",
+          attemptId: "run-0",
+          findingId: "f1",
+          sha: sha("c"),
+          tree: sha("d"),
+          definition: "candidate-hooks",
+          commands: [...commands],
+          answer: { fixed: true, text: "Waited for replacement-owned progress before checking the summary." },
+        }],
+      },
+    ],
+  };
 }
 export const matches = (p: CheckEvidenceTask, own = failure("j3", "1099.27ms")) => relatedCheckCandidates([own], [p], "p");
 export function bunSummary(lastFile: string, duration: string) {
-  return [`test/first.test.ts:`, `(pass) another suite > first passing test [1ms]`,
-    `${lastFile}:`, `(pass) another suite > last passing test [1ms]`,
-    "1 tests failed:", `(fail) ${failureName} [${duration}]`, "2 pass", "1 fail",
+  return [
+    `test/first.test.ts:`,
+    `(pass) another suite > first passing test [1ms]`,
+    `${lastFile}:`,
+    `(pass) another suite > last passing test [1ms]`,
+    "1 tests failed:",
+    `(fail) ${failureName} [${duration}]`,
+    "2 pass",
+    "1 fail",
   ].map((line) => `@petrina/engine:test  | ${line}`).join("\n");
 }
 export function archived(p: CheckEvidenceTask): Task {
-  return { ...copyEvidence(immutableTask), id: p.id, productId: "p", state: "done", held: false, finishedAt: 10, repositories: undefined,
+  return {
+    ...copyEvidence(immutableTask),
+    id: p.id,
+    productId: "p",
+    state: "done",
+    held: false,
+    finishedAt: 10,
+    repositories: undefined,
     repository: { productId: "p", delivery: "local", confirmedDelivery: p.delivery },
-    description: "PRIVATE REQUEST", session: [{ id: "line", at: 1, from: "agent", text: "PRIVATE CONVERSATION" }],
-    journey: p.journey.map((step) => ({ ...step, round: 1, sub: 0, agentInputs: [{ roleId: "builder", profileId: "profile", mode: "fresh", taskTitle: "PRIVATE TITLE", sections: [{ title: "PRIVATE PROMPT", body: "PRIVATE PLAN" }] }], agentResults: [{ roleId: "builder", profileId: "profile", at: 4, value: { summary: "PRIVATE FULL REPORT" } }], result: { findings: [{ id: "secret", raisedBy: "reviewer", confirmedBy: [], status: "open", severity: "blocking", text: "PRIVATE REVIEW" }] } })) };
+    description: "PRIVATE REQUEST",
+    session: [{ id: "line", at: 1, from: "agent", text: "PRIVATE CONVERSATION" }],
+    journey: p.journey.map((step) => ({
+      ...step,
+      round: 1,
+      sub: 0,
+      agentInputs: [{
+        roleId: "builder",
+        profileId: "profile",
+        mode: "fresh",
+        taskTitle: "PRIVATE TITLE",
+        sections: [{ title: "PRIVATE PROMPT", body: "PRIVATE PLAN" }],
+      }],
+      agentResults: [{ roleId: "builder", profileId: "profile", at: 4, value: { summary: "PRIVATE FULL REPORT" } }],
+      result: {
+        findings: [{
+          id: "secret",
+          raisedBy: "reviewer",
+          confirmedBy: [],
+          status: "open",
+          severity: "blocking",
+          text: "PRIVATE REVIEW",
+        }],
+      },
+    })),
+  };
 }

@@ -1,20 +1,30 @@
 
 import { afterAll, describe, expect, it } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 
-import { checkWorkflowFixtures, type CheckWorkflow } from "../../fixtures/check-workflow.js";
-import { git, itemOf, taskOf, until } from "../../support.js";
+import { checkWorkflowFixtures, readWorktreeCommit, type CheckWorkflow } from "../../fixtures/check-workflow.js";
+import { itemOf, taskOf, until } from "../../support.js";
+
+function setLocalHooksPath(repo: string, folder: string): void {
+  const cfgPath = join(repo, ".git", "config");
+  const stripped = readFileSync(cfgPath, "utf8").replace(/^\s*hooksPath\s*=.*(?:\r?\n|$)/gim, "");
+  const next = /^\[core\]\r?\n/im.test(stripped)
+    ? stripped.replace(/^\[core\]\r?\n/im, (header) => `${header}\thooksPath = ${folder}\n`)
+    : `${stripped}\n[core]\n\thooksPath = ${folder}\n`;
+  writeFileSync(cfgPath, next);
+}
 
 const workflows = checkWorkflowFixtures();
 afterAll(() => workflows.close());
-const fixture = workflows.use;
+const fixture = <T>(entry: Parameters<typeof workflows.use>[0], body: (fixture: CheckWorkflow) => Promise<T>) =>
+  workflows.use(entry, body, true, { planner: "short" }, { acceptedBuilds: true, acceptedReviews: true });
 
 
 describe.concurrent("failed checks are evidence until something changes", () => {
 it.skipIf(process.platform === "win32")("checks a corrected commit title and changed local hook even when the code stays the same", async () => {
-    await fixture("built", async f => {
+    await fixture("exhausted-repairs", async f => {
       try {
         f.setCheck("--pass");
         const hook = join(f.repo, ".git", "hooks", "commit-msg");
@@ -36,7 +46,7 @@ it.skipIf(process.platform === "win32")("checks a corrected commit title and cha
         const state = await until(f.engine, (state) => taskOf(state, f.taskId).state === "done");
         expect(taskOf(state, f.taskId).checks!.results.find((run) => run.name === "Commit message hook")?.output).toContain("The changed hook ran");
         expect(f.runs()).toEqual(["passed", "passed", "passed"]);
-        expect(await f.run(() => git(f.repo, "log", "-1", "--format=%s"))).toBe("Fix: Add a greeting");
+        expect(readWorktreeCommit(f.repo).message.split("\n")[0]).toBe("Fix: Add a greeting");
       } finally {
         await f.engine.shutdown();
       }
@@ -50,7 +60,7 @@ for (const hookName of ["pre-commit", "commit-msg"] as const) {
       const launcher = join(folder, hookName);
       writeFileSync(launcher, '#!/bin/sh\nexec sh "$(dirname "$0")/implementation"\n');
       chmodSync(launcher, 0o755);
-      await f.run(() => git(f.repo, "config", "core.hooksPath", folder));
+      setLocalHooksPath(f.repo, folder);
       const set = (ok: boolean) => writeFileSync(join(folder, "implementation"), `dir=$(dirname "$0")\nprintf 'run\\n' >> "$dir/runs"\necho "External implementation: ${ok ? "passed" : "failed (captured hook failure)"}"\nexit ${ok ? 0 : 1}\n`);
       set(pass);
       return { launcher, set, runs: () => existsSync(join(folder, "runs")) ? readFileSync(join(folder, "runs"), "utf8").trim().split("\n").length : 0 };
@@ -102,34 +112,10 @@ for (const hookName of ["pre-commit", "commit-msg"] as const) {
       });
     });
 
-    it.skipIf(process.platform === "win32")(`explicit Retry refreshes a saved pass as well as the opaque ${hookName}`, async () => {
-      await fixture("built", async f => {
-        try {
-          f.setCheck("--pass");
-          const hook = await externalHook(f, true);
-          const passed = (await f.delivery()).checks!;
-          const initialRuns = hook.runs();
-          f.engine.takeItem(itemOf(f.engine.getState(), f.taskId, "delivery")!.id);
-          f.engine.fail(f.taskId, new Error("Delivery could not start"));
-          hook.set(false);
-          f.engine.setPoolPaused(true);
-          await f.engine.retry(itemOf(f.engine.getState(), f.taskId, "stuck")!.id);
-          const waiting = taskOf(f.engine.getState(), f.taskId).checks!;
-          expect(waiting.results).toEqual(passed.results);
-          expect(waiting.sha).toBeUndefined();
-          expect(waiting.tree).toBeUndefined();
-          f.engine.setPoolPaused(false);
-          const failed = (await f.delivery()).checks!;
-          expect(failed.results.at(-1)!.ok).toBe(false);
-          expect(failed.results.at(-1)!.output).toContain("captured hook failure");
-          expect(hook.runs()).toBe(initialRuns + 1);
-          expect(f.runs()).toEqual(["passed", "passed"]);
-        } finally { await f.engine.shutdown(); }
-      });
-    });
+    // Explicit Retry of a saved pass is exercised directly in contracts/checks/hook-retry.
 
     it.skipIf(process.platform === "win32")(`notices identical ${hookName} launchers in different folders, before review and delivery`, async () => {
-      await fixture("built", async f => {
+      await fixture("exhausted-repairs", async f => {
         try {
           f.setCheck("--pass");
           const bad = join(f.root, "bad-hooks");
@@ -141,12 +127,12 @@ for (const hookName of ["pre-commit", "commit-msg"] as const) {
             writeFileSync(join(folder, "check"), `echo "Hook beside the launcher: ${exit === 0 ? "passed" : "failed"}"\nexit ${exit}\n`);
           }
           expect(readFileSync(join(bad, hookName), "utf8")).toBe(readFileSync(join(good, hookName), "utf8"));
-          await f.run(() => git(f.repo, "config", "core.hooksPath", bad));
+          setLocalHooksPath(f.repo, bad);
           const failed = (await f.delivery()).checks!;
           expect(failed.results.at(-1)!.ok).toBe(false);
           expect(f.runs()).toEqual(["passed"]);
 
-          await f.run(() => git(f.repo, "config", "core.hooksPath", good));
+          setLocalHooksPath(f.repo, good);
           f.engine.requestChanges(itemOf(f.engine.getState(), f.taskId, "delivery")!.id, "Use the corrected hook folder");
           const passed = (await f.delivery()).checks!;
           expect(passed.tree).toBe(failed.tree);
@@ -156,77 +142,22 @@ for (const hookName of ["pre-commit", "commit-msg"] as const) {
           expect(f.runs()).toEqual(["passed", "passed"]);
 
           // Moving back after review must invalidate the pass at final delivery preparation too.
-          await f.run(() => git(f.repo, "config", "core.hooksPath", bad));
+          setLocalHooksPath(f.repo, bad);
           f.engine.approve(itemOf(f.engine.getState(), f.taskId, "delivery")!.id);
           const task = await f.delivery();
           expect(task.checks!.results.at(-1)!.output).toContain("Hook beside the launcher: failed");
           expect(f.runs()).toEqual(["passed", "passed", "passed"]);
-          expect(await f.run(() => git(f.repo, "rev-parse", "HEAD"))).not.toBe(await f.run(() => git(task.worktree!, "rev-parse", "HEAD")));
+          expect(readWorktreeCommit(f.repo).sha).not.toBe(readWorktreeCommit(task.worktree!).sha);
         } finally {
           await f.engine.shutdown();
         }
       });
     });
 
-    for (const originallyPassed of [false, true]) {
-      it.skipIf(process.platform === "win32")(`reruns product checks before refreshing a saved ${hookName} ${originallyPassed ? "pass" : "failure"} with no recorded definition`, async () => {
-        await fixture("built", async f => {
-          try {
-            f.setCheck("--pass");
-            const hook = join(f.repo, ".git", "hooks", hookName);
-            writeFileSync(hook, `#!/bin/sh\necho "Original hook"\nexit ${originallyPassed ? 0 : 1}\n`);
-            chmodSync(hook, 0o755);
-            const original = (await f.delivery()).checks!;
-            expect(original.results.at(-1)!.ok).toBe(originallyPassed);
-            writeFileSync(hook, `#!/bin/sh\necho "Changed hook"\nexit ${originallyPassed ? 1 : 0}\n`);
-            await f.restart((state) => { delete state.tasks.find((task) => task.id === f.taskId)!.checks!.definition; });
-            expect(taskOf(f.engine.getState(), f.taskId).checks!.definition).toBeUndefined();
-            const item = itemOf(f.engine.getState(), f.taskId, "delivery")!;
-            if (originallyPassed) {
-              const missing = structuredClone(taskOf(f.engine.getState(), f.taskId).checks);
-              expect(() => f.engine.approve(item.id)).toThrow("delivery has not been approved");
-              expect(itemOf(f.engine.getState(), f.taskId, "delivery")!.id).toBe(item.id);
-              expect(taskOf(f.engine.getState(), f.taskId).checks).toEqual(missing);
-              f.engine.rerunChecks(item.id);
-            } else f.engine.requestChanges(item.id, "The hook has been corrected");
-            const refreshed = (await f.delivery()).checks!;
-            expect(refreshed.tree).toBe(original.tree);
-            expect(refreshed.results.at(-1)!.ok).toBe(!originallyPassed);
-            expect(refreshed.results.at(-1)!.output).toContain("Changed hook");
-            expect(refreshed.definition).toMatch(/^[a-f0-9]{64}$/);
-            expect(f.runs()).toEqual(["passed", "passed"]);
-
-            // A failure remains evidence; a pass must revalidate the hook's opaque implementation.
-            await f.restart();
-            f.engine.requestChanges(itemOf(f.engine.getState(), f.taskId, "delivery")!.id, "Check the saved result");
-            const again = (await f.delivery()).checks!;
-            if (originallyPassed) expect(again).toEqual(refreshed);
-            else {
-              expect(again.at).toBeGreaterThan(refreshed.at);
-              expect(again.results[0]).toEqual(refreshed.results[0]);
-              // A rerun keeps the outcome but creates a new diagnostic file with its own identity.
-              expect(again.results.map(({ ms, logPath, logFileIdentity, startedAt, endedAt, source, ...run }) => run)).toEqual(refreshed.results.map(({ ms, logPath, logFileIdentity, startedAt, endedAt, source, ...run }) => run));
-              expect(again.results.at(-1)!.logPath).not.toBe(refreshed.results.at(-1)!.logPath);
-              expect(again.results.at(-1)!.logFileIdentity).not.toEqual(refreshed.results.at(-1)!.logFileIdentity);
-              for (const run of [refreshed.results.at(-1)!, again.results.at(-1)!]) {
-                const info = statSync(run.logPath!, { bigint: true });
-                expect(run.logFileIdentity).toEqual({ device: info.dev.toString(), inode: info.ino.toString() });
-              }
-              expect(readFileSync(again.results.at(-1)!.logPath!, "utf8")).toBe(readFileSync(refreshed.results.at(-1)!.logPath!, "utf8"));
-              expect(again.definition).toBe(refreshed.definition);
-              expect(again.tree).toBe(refreshed.tree);
-            }
-            // The fresh definition now binds the product pass: later hook validation reuses it.
-            expect(f.runs()).toEqual(["passed", "passed"]);
-          } finally {
-            await f.engine.shutdown();
-          }
-        }, true, { planner: "short" }, originallyPassed ? undefined : `Legacy ${hookName} failure`);
-      });
-    }
+    // Persisted missing-definition cases exercise ProductChecks directly in contracts/checks/legacy-hook-evidence.
 
     it.skipIf(process.platform === "win32")(`keeps an older failed suite while refreshing ${hookName}, until a real fix`, async () => {
-      await fixture("built", async f => {
+      await fixture("exhausted-repairs", async f => {
         try {
           const hook = join(f.repo, ".git", "hooks", hookName);
           writeFileSync(hook, '#!/bin/sh\necho "Old hook failed"\nexit 1\n');

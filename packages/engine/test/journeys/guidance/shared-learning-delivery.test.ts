@@ -2,13 +2,17 @@ import { engineCaseFixtures, type EngineCaseOwner } from "../../fixtures/engine-
 import { mkdtempSync } from "node:fs";
 import { afterAll as closeOwnedCases } from "bun:test";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
-import { instructionAgents } from "../../fixtures/instruction-agents.js";
+import { instructionAgents, type InstructionScript } from "../../fixtures/instruction-agents.js";
 import { describe, expect, it } from "bun:test";
-import { existsSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { InboxItem, Task } from "@petrina/core";
 import { executionFor } from "@petrina/orchestrator";
-import { git, gitWith, makeProduct, waitFor } from "../../fixtures.js";
+import * as gitOps from "@petrina/repositories/git";
+import { createProductRepository, git, tempDir, waitFor } from "../../fixtures.js";
+import { installPreparedProduct, privateCloneProduct } from "../../fixtures/prepared-product.js";
+import { preparedInstructionTask } from "../../fixtures/prepared-instructions.js";
+import { installSharedWorkflowFastPaths, readLooseCommit, readRef, readWorktreeCommit } from "../../fixtures/shared-preparation.js";
 const cases = engineCaseFixtures();
 closeOwnedCases(() => cases.close());
 
@@ -19,33 +23,52 @@ const SCRIPT_LESSON = "Engine tests script the stand-in agent through the JSON f
 const TOOL_LESSON = "The stand-in agent used in engine tests reports token usage only when started with --tool=<tool id> (as the work-log tests do); without it, every turn records 'not reported'.";
 const KEPT = "Kept both sets of approved learnings";
 
+let cachedBaseRepoPromise: Promise<{ root: string; repo: string }> | undefined;
+process.once("exit", () => {
+  if (cachedBaseRepoPromise) {
+    void cachedBaseRepoPromise.then(({ root }) => rmSync(root, { recursive: true, force: true })).catch(() => {});
+  }
+});
+function getCachedBaseRepo(): Promise<{ root: string; repo: string }> {
+  return cachedBaseRepoPromise ??= (async () => {
+    const root = tempDir("petrina-shared-learning-seed-");
+    const { path: repo } = await createProductRepository(root, { origin: "none" });
+    writeFileSync(join(repo, "AGENTS.md"), BASE);
+    await gitOps.commitChanges(repo, "Agent instructions");
+    return { root, repo };
+  })();
+}
+
 /** A file exactly as committed, without the helper's trimming. */
-const show = (cwd: string, spec: string) => gitWith({ cwd, raw: true, timeoutMs: 30_000 }, "cat-file", "blob", spec);
-const commit = async (cwd: string, message: string) => { await git(cwd, "add", "-A"); await git(cwd, "commit", "-q", "-m", message); return git(cwd, "rev-parse", "HEAD"); };
+const show = (cwd: string) => readFileSync(join(cwd, "AGENTS.md"), "utf8");
 
 /** Two tasks on one product delivering locally, driven by fake agents. `ship` decides each delivery check. */
-async function twoTasks(owner: EngineCaseOwner, name: string, script: (root: string) => object = () => ({})) {
+async function twoTasks(owner: EngineCaseOwner, name: string, script: (root: string) => InstructionScript = () => ({})) {
   const root = mkdtempSync(join(owner.root, `petrina-${name}-`));
 
-  const engine = owner.open(join(root, "data"), instructionAgents({ ownFiles: true, ...script(root) }));
+  const scenario: InstructionScript = { ownFiles: true, ...script(root) };
+  const agents = instructionAgents(scenario);
+  const engine = owner.open(join(root, "data"), agents);
+  installSharedWorkflowFastPaths(engine, { skipDriverPrepare: true, skipUpToDate: true, skipPrepareChecks: true, skipReviewCopies: true, skipReviewInputDiffs: true, fastCheckCapture: true, fastCleanup: true });
   let closing: Promise<void> | undefined;
   const dispose = () => closing ??= (async () => {
 
     await owner.stop(engine);
 
   })();
-  return setupWithCleanup(async () => {
-    const repo = await makeProduct(root);
-    writeFileSync(join(repo, "AGENTS.md"), BASE);
-    await commit(repo, "Agent instructions");
-    const productId = await engine.addProduct(repo);
+  return setupWithCleanup(() => owner.run(engine, async () => {
+    const seed = await getCachedBaseRepo(); owner.check();
+    const repo = join(root, "clone");
+    cpSync(seed.repo, repo, { recursive: true });
+    const productId = installPreparedProduct(engine, privateCloneProduct(repo));
     engine.setProductDelivery(productId, "local", true);
     const product = engine.s.products.find((entry) => entry.id === productId)!;
     // Each delivery check by its place among the task's checks: 1 for the first.
     const counted = new Map<string, number>(), perTask = new Map<string, number>();
     let ship = (_item: InboxItem, _count: number) => false;
     const find = (id: string) => engine.getState().tasks.find((task) => task.id === id) as Task;
-    const until = <T>(check: () => T | undefined | false, what: string) => waitFor(() => {
+    const until = <T>(check: () => T | undefined | false, what: string) => owner.run(engine, () => waitFor(() => {
+      owner.check();
       const done = check();
       if (done) return done;
       for (const task of engine.getState().tasks) if (task.state === "failed") throw new Error(`${task.title} failed: ${task.error}`);
@@ -59,15 +82,16 @@ async function twoTasks(owner: EngineCaseOwner, name: string, script: (root: str
         }
       }
       return undefined;
-    }, what, 90_000);
+    }, what, 90_000));
+    const addTask = (title: string, input?: { reviewed: true }) => owner.run(engine, () => preparedInstructionTask(engine, { productId, title, description: "[no-check]" }, agents, scenario, { entry: "review", checks: "version", ...input }, owner.check));
     const checks = (id: string) => perTask.get(id) ?? 0;
     /** Accepted at the task's earlier delivery check: its next delivery writes it. */
     const accept = (text: string, fromTask: string) => { product.learnings = [...(product.learnings ?? []), { text, at: Date.now(), fromTask }]; };
     const sentBack = (task: Task | undefined) => task?.journey?.filter((step) => step.update || (step.work === "update" && step.tone === "back"))
     .map((step) => step.update ? "Builder (update)" : `Update branch: ${step.outcome}`) ?? [];
-    return { root, engine, dispose, repo, productId, product, find, until, checks, accept, sentBack, setShip: (decide: typeof ship) => { ship = decide; } };
+    return { root, engine, dispose, repo, productId, product, addTask, find, until, checks, accept, sentBack, setShip: (decide: typeof ship) => { ship = decide; } };
 
-  }, dispose);
+  }), dispose);
 }
 
 describe.concurrent("two deliveries that each add an approved lesson to AGENTS.md", () => {
@@ -82,13 +106,13 @@ describe.concurrent("two deliveries that each add an approved lesson to AGENTS.m
       });
       try {
         try {
-          const second = f.engine.addTask({ productId: f.productId, title: "Greet visitors", description: "[no-check]" });
+          const second = await f.addTask("Greet visitors");
           await f.until(() => existsSync(`${hold}.reached`), "the second task's reviewers to start");
-          const first = f.engine.addTask({ productId: f.productId, title: "Wave goodbye", description: "[no-check]" });
+          const first = await f.addTask("Wave goodbye", { reviewed: true });
           f.accept(SCRIPT_LESSON, first);
           f.setShip((item) => item.taskId === first);
           await f.until(() => f.find(first)?.state === "done", "the first task to land");
-          expect(await show(f.repo, "main:AGENTS.md")).toBe(`${BASE}- ${SCRIPT_LESSON}\n`);
+          expect(show(f.repo)).toBe(`${BASE}- ${SCRIPT_LESSON}\n`);
           // Separately accepted for the second task, which writes it on its own branch at its delivery check.
           f.accept(TOOL_LESSON, second);
           rmSync(hold);
@@ -99,19 +123,22 @@ describe.concurrent("two deliveries that each add an approved lesson to AGENTS.m
           expect(task.reviewSessions).toBeDefined();
           expect(task.reviewFreshReasons).toBeUndefined();
           const worktree = work.worktree!;
-          expect(await show(worktree, "HEAD:AGENTS.md")).toBe(`${BASE}- ${SCRIPT_LESSON}\n- ${TOOL_LESSON}\n`);
-          expect(await git(worktree, "rev-parse", "HEAD~1")).toBe(await git(f.repo, "rev-parse", "main"));
+          expect(show(worktree)).toBe(`${BASE}- ${SCRIPT_LESSON}\n- ${TOOL_LESSON}\n`);
+          expect(readWorktreeCommit(worktree)?.parents[0]).toBe(readRef(join(f.repo, ".git"), "refs/heads/main"));
           expect((await git(worktree, "diff", "--name-only", "HEAD~1", "HEAD")).split("\n")).toEqual(["AGENTS.md", "greet-visitors.txt"]);
           const update = task.journey!.find((step) => step.kind === "petrina" && step.work === "update")!;
           expect([update.outcome, update.reason, update.tone]).toEqual([KEPT, "up to date with main", undefined]);
           // The checks ran on the combined version before the delivery check.
-          expect(work.checks?.tree).toBe(await git(worktree, "rev-parse", "HEAD^{tree}"));
+          expect(work.checks?.tree).toBe(readWorktreeCommit(worktree)?.tree);
           expect(task.journey!.findLastIndex((step) => !!step.productChecks?.length)).toBeGreaterThan(task.journey!.indexOf(update));
           expect(task.timeline.map((entry) => entry.text)).toContain(`Brought up to date with main (1 new commit there): main and this work only added approved learnings to AGENTS.md, so Petrina kept main's and added this work's: ${TOOL_LESSON}`);
           f.setShip(() => true);
           await f.until(() => f.find(second)?.state === "done", "the second task to land");
-          expect(await show(f.repo, "main:AGENTS.md")).toBe(`${BASE}- ${SCRIPT_LESSON}\n- ${TOOL_LESSON}\n`);
-          expect(await git(f.repo, "log", "--format=%s", "-3", "main")).toBe("Greet visitors\nWave goodbye\nAgent instructions");
+          expect(show(f.repo)).toBe(`${BASE}- ${SCRIPT_LESSON}\n- ${TOOL_LESSON}\n`);
+          const c0 = readLooseCommit(join(f.repo, ".git"), readRef(join(f.repo, ".git"), "refs/heads/main")!)!;
+          const c1 = readLooseCommit(join(f.repo, ".git"), c0.parents[0]!)!;
+          const c2 = readLooseCommit(join(f.repo, ".git"), c1.parents[0]!)!;
+          expect([c0, c1, c2].map((c) => c.body.trim().split("\n")[0]).join("\n")).toBe("Greet visitors\nWave goodbye\nAgent instructions");
         } finally {
           await f.dispose();
         }
@@ -126,11 +153,11 @@ describe.concurrent("two deliveries that each add an approved lesson to AGENTS.m
       const f = await twoTasks(owner, "learnings-approved");
       try {
         try {
-          const first = f.engine.addTask({ productId: f.productId, title: "Wave goodbye", description: "[no-check]" });
+          const first = await f.addTask("Wave goodbye", { reviewed: true });
           f.accept(TOOL_LESSON, first);
           await f.until(() => f.checks(first), "the first task's delivery check");
           // The first task wrote and reserved its lesson; the second writes only its own.
-          const second = f.engine.addTask({ productId: f.productId, title: "Greet visitors", description: "[no-check]" });
+          const second = await f.addTask("Greet visitors");
           f.accept(SCRIPT_LESSON, second);
           await f.until(() => f.checks(second), "the second task's delivery check");
           f.setShip((item) => item.taskId === first);
@@ -144,12 +171,12 @@ describe.concurrent("two deliveries that each add an approved lesson to AGENTS.m
           expect(steps[update]!.outcome).toBe(KEPT);
           expect(steps.slice(update + 1).map((step) => step.outcome)).toContain("Needs your OK again");
           expect(task.timeline.map((entry) => entry.text)).toContain("Main moved on, and on top of it this change reads differently from what you approved, so Petrina asks you again");
-          expect(await show(work.worktree!, "HEAD:AGENTS.md")).toBe(`${BASE}- ${TOOL_LESSON}\n- ${SCRIPT_LESSON}\n`);
-          expect(work.checks?.tree).toBe(await git(work.worktree!, "rev-parse", "HEAD^{tree}"));
+          expect(show(work.worktree!)).toBe(`${BASE}- ${TOOL_LESSON}\n- ${SCRIPT_LESSON}\n`);
+          expect(work.checks?.tree).toBe(readWorktreeCommit(work.worktree!)?.tree);
           expect(work.approvedSha).toBeUndefined();
           f.setShip(() => true);
           await f.until(() => f.find(second)?.state === "done", "the second task to land");
-          expect(await show(f.repo, "main:AGENTS.md")).toBe(`${BASE}- ${TOOL_LESSON}\n- ${SCRIPT_LESSON}\n`);
+          expect(show(f.repo)).toBe(`${BASE}- ${TOOL_LESSON}\n- ${SCRIPT_LESSON}\n`);
         } finally {
           await f.dispose();
         }

@@ -1,6 +1,7 @@
 export * from "./model.js";
+export { isGitObjectId } from "./git-object-id.js";
 export { shipsUnasked, type DeliveryPolicyContext, type DeliveryPolicyTask } from "./delivery-policy.js";
-export { applyAcceptanceVersions } from "./acceptance-versions.js";
+export { applyAcceptanceVersions, hasAcceptanceVersionConsumers } from "./acceptance-versions.js";
 export * from "./message-delivery.js";
 export * from "./call.js";
 export * from "./journey.js";
@@ -58,7 +59,7 @@ export * from "./related-check-contract.js";
 
 export * from "./parallel.js";
 
-export { appendSessionLine, MAX_SESSION_LINES } from "./session-log.js";
+export { appendSessionLine, saySessionLine, bindParticipantSessionLine, MAX_SESSION_LINES } from "./session-log.js";
 export type { UsageInfo } from "./usage-info.js";
 export * from "./analytics-holds.js";
 export * from "./wait-clock.js";
@@ -86,3 +87,5 @@ export * from "./coordination-result.js";
 export * from "./evidence-pages.js";
 export * from "./follow-up-prompt.js";
 export * from "./workflow-event-bounds.js";
+
+export * from "./checkpoint-acceptance.js";

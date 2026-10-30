@@ -1,10 +1,12 @@
+import { engineCaseFixtures } from "./engine-cases.js";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { State } from "@petrina/core";
 import { executionFor } from "@petrina/orchestrator";
-import { Engine } from "../engine.js";
+import * as gitOps from "@petrina/repositories/git";
 import { EngineClient } from "../client.js";
-import { CLI, Fakes, makeProduct, tempDir, SLOW, git } from "../support.js";
+import { CLI, Fakes, makeProduct, tempDir, SLOW } from "../support.js";
+import { privateAgentToolProbe } from "../scripted-probes.js";
 import { coordinatorLifetimes } from "./coordinator-lifetime.js";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import type { LifecycleStore } from "@petrina/storage/lifecycle-store";
@@ -19,16 +21,22 @@ export async function coordinatorStoreAfterSeed(signal: AbortSignal, shutdown: (
 /** Actual native review/restart composition, starting at the review rather than replaying unrelated agents. */
 export async function lifecycleFixture(lifetimes: ReturnType<typeof coordinatorLifetimes>, options: { title?: string; limit?: number; reviewer?: "important" } = {}) {
   const root = tempDir("petrina-coordination-lifecycle-");
-  let seed: Engine | undefined;
-  const lifetime = await lifetimes.open(root, { async stopPeers() { await seed?.shutdown(); seed = undefined; } });
+  const seedCases = engineCaseFixtures();
+  const lifetime = await lifetimes.open(root, { stopPeers: () => seedCases.close() });
   return setupWithCleanup(() => lifetime.prepare(async () => {
     await lifetime.ready;
+    if (lifetime.signal.aborted) throw new Error("Coordinator fixture closed before its seed opened");
     const home = join(root, "home"), fakes = new Fakes(join(root, "fakes"));
-    seed = new Engine(home, { agentCommand: () => undefined });
+    const { productId, taskId } = await seedCases.use("petrina-coordination-seed-", async caseOwner => {
+    const check = () => { caseOwner.check(); if (lifetime.signal.aborted) throw new Error("Coordinator seed closed before setup finished"); };
+    check();
+    const seed = caseOwner.open(home, { agentCommand: () => undefined, toolProbe: privateAgentToolProbe() });
+    const prepared = await caseOwner.run(seed, async () => {
     seed.setPoolPaused(true);
-    await seed.waitUntilReady(); await Promise.all([...seed.backgroundWork]);
+    await seed.waitUntilReady(); check(); await Promise.all([...seed.backgroundWork]); check();
     fakes.scenario({ controlled: true, ...(options.reviewer ? { reviewer: options.reviewer } : {}) });
-    const path = await makeProduct(root), productId = "product";
+    const path = await makeProduct(root, { origin: "none" }); check();
+    const productId = "product";
     seed.s.products.push({ id: productId, name: "Example", path, repo: "local/product", defaultBranch: "main", tone: "blue", delivery: "local", checks: [], checksBy: "coordinator" });
     const taskId = seed.addTask({ productId, title: options.title ?? "Review work", description: "[no-check]", approveDelivery: true, backlog: true });
     const task = seed.task(taskId)!, scope = executionFor(task);
@@ -39,11 +47,11 @@ export async function lifecycleFixture(lifetimes: ReturnType<typeof coordinatorL
       { id: "publish", kind: "do", title: "Publish", roleId: "release-manager", profileIds: ["opus-high"] },
     ] };
     task.stageIndex = 1;
-    scope.work.source = { ...await seed["sources"].resolve(task, { productId, startFrom: { kind: "default" }, delivery: "local" }), confirmed: true };
-    await seed["driver"]["prepare"](scope, new AbortController().signal);
+    const source = await seed["sources"].resolve(task, { productId, startFrom: { kind: "default" }, delivery: "local" }); check();
+    scope.work.source = { ...source, confirmed: true };
+    await seed["driver"]["prepare"](scope, caseOwner.signal); check();
     writeFileSync(join(scope.work.worktree!, "greeting.txt"), "Hello\n");
-    await git(scope.work.worktree!, "add", ".");
-    await git(scope.work.worktree!, "commit", "-qm", "Prepare the completed greeting for review");
+    await gitOps.commitChanges(scope.work.worktree!, "Prepare the completed greeting for review"); check();
     scope.work.builderSession = { stageId: "build", profileId: "sol-xhigh", toolId: "codex", model: seed.profile("sol-xhigh")!.model, sessionId: "e26dcf46-357e-44bd-b9ec-20d0d63c7391" };
     scope.work.report = { summary: "Added the greeting", title: task.title, changes: ["People see a greeting"], description: "The already completed fixture build" };
     task.brief = { summary: "A greeting file.", forUsers: ["People see a greeting"], areas: ["Greeting"], acceptance: [{ text: "A greeting file exists" }], risks: [] };
@@ -51,7 +59,13 @@ export async function lifecycleFixture(lifetimes: ReturnType<typeof coordinatorL
     seed.setPoolLimit(options.limit ?? 3);
     seed.s.pool.paused = false;
     seed.commitNow(task);
-    await seed.shutdown(); seed = undefined;
+
+    return { productId, taskId };
+    });
+    await caseOwner.stop(seed);
+    return prepared;
+    });
+    if (lifetime.signal.aborted) throw new Error("Coordinator setup closed before the app opened");
     const engine = await lifetime.harness(home, fakes.dir), client = new EngineClient(home);
     const release = (id: string) => writeFileSync(join(fakes.dir, `release-${id}`), "go");
     const settle = (s: State) => lifetime.prepare(async () => {

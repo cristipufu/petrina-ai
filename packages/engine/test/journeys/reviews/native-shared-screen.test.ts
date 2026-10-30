@@ -1,11 +1,15 @@
 import { completeAll } from "@petrina/core";
 import { beginRepair } from "@petrina/orchestrator";
+import * as gitOps from "@petrina/repositories/git";
 import { afterAll, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { type Scenario } from "../../fake-agent.js";
 import { coordinator, git, itemOf, taskOf, until } from "../../support.js";
 import { sharedWorldFixtures } from "../../fixtures/shared-world.js";
+import { preparedSharedReview } from "../../fixtures/prepared-shared-review.js";
+import { installSharedWorkflowFastPaths, readWorktreeCommit } from "../../fixtures/shared-preparation.js";
+import { privateWorldToolProbe } from "../../fixtures/world-tool-probe.js";
 const fixtures = sharedWorldFixtures();
 afterAll(() => fixtures.close());
 
@@ -14,10 +18,10 @@ describe.concurrent("one task across products", () => {
     await fixtures.nativeWorld(`screen-copy-${decision}`, async ({ shop, api, engine: withEngine, fakes }) => {
 
     const { copies, id } = await withEngine(async engine => {
-
+      installSharedWorkflowFastPaths(engine, { skipUpToDate: true, skipPrepareChecks: true, skipReviewInputDiffs: true, fastCheckCapture: true, fastCleanup: true, fastCheckpoints: true });
       const first = await shop.preparedProduct(engine), second = await api.preparedProduct(engine);
       fakes.scenario({ planner: "parallel", builder: "plain", screenRoles: ["code reviewer"], screenRoleHold: true, reopen: "resume" });
-      const id = engine.addTask({ productId: first, worksOn: [first, second].map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "pull-request" })), title: "Keep each review copy with its product" });
+      const id = await preparedSharedReview(engine, [first, second], "Keep each review copy with its product", true, { checks: "none" });
       await until(engine, (state) => !!taskOf(state, id).screen && !engine.drivers.has(id), coordinator(["plan", "design"]));
       engine.setPoolPaused(true);
       const saved = Object.values(engine.task(id)!.hunt!.screenTurns!);
@@ -30,9 +34,10 @@ describe.concurrent("one task across products", () => {
 
       return { copies, id };
 
-    });
+    }, { toolProbe: privateWorldToolProbe(shop) });
 
     await withEngine(async engine => {
+      installSharedWorkflowFastPaths(engine, { fastCleanup: true, fastCheckpoints: true });
       expect(Object.values(engine.task(id)!.hunt!.screenTurns!).flatMap((entry) => Object.entries(entry.copies!))).toEqual(copies);
       engine[decision](id);
       await completeAll([...engine.copyCleanups.values()]);
@@ -40,22 +45,24 @@ describe.concurrent("one task across products", () => {
       for (const world of [shop, api]) expect(await git(world.clone, "worktree", "list", "--porcelain")).not.toContain(`${id}.copies`);
       expect(engine.task(id)!.hunt?.screenTurns).toBeUndefined();
 
-    });
+    }, { toolProbe: privateWorldToolProbe(shop) });
 
     });
   });
 
   it("gives a third answer its own portable copy in every product and resumes it there after a screen wait and restart", async () => {
     await fixtures.nativeWorld("third-answer-copies", async ({ shop, api, engine: withEngine, fakes }) => {
+    const options = { toolProbe: privateWorldToolProbe(shop) };
 
     const { id, member, copies, kept, resumed, session, scenario, second } = await withEngine(async engine => {
-
-      await engine.checkTools();
+      installSharedWorkflowFastPaths(engine, { skipUpToDate: true, skipPrepareChecks: true, skipReviewInputDiffs: true, fastCheckCapture: true, fastCleanup: true, fastCheckpoints: true });
+      await engine.waitUntilReady(); engine.stopRequested.signal.throwIfAborted();
+      await engine.checkTools(); engine.stopRequested.signal.throwIfAborted();
       const first = await shop.preparedProduct(engine), second = await api.preparedProduct(engine);
       // Both initial verifiers say the Important finding does not block, so Antigravity gives the third answer, on the screen.
       const scenario: Scenario = { planner: "parallel", builder: "plain", reviewer: "important", verifier: "not-a-bug", screenRoles: ["verifier"], screenModels: ["gemini-4-argon"], screenRoleHold: true, reopen: "resume", affectedProducts: [first, second] };
       fakes.scenario(scenario);
-      const id = engine.addTask({ productId: first, worksOn: [first, second].map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "pull-request" })), title: "Check the shared greeting three ways" });
+      const id = await preparedSharedReview(engine, [first, second], "Check the shared greeting three ways", true, { checks: "none" });
       await until(engine, (state) => !!taskOf(state, id).screen && !engine.drivers.has(id), coordinator(["plan", "design"]));
       const member = "vote-third:argon-high";
       const copies = (name: string) => ({ [first]: join(shop.data, "worktrees", first, `${id}.copies`, name), [second]: join(shop.data, "worktrees", second, `${id}.copies`, name) });
@@ -85,9 +92,10 @@ describe.concurrent("one task across products", () => {
 
       return { id, member, copies, kept, resumed, session, scenario, second };
 
-    });
+    }, options);
 
     await withEngine(async engine => {
+      installSharedWorkflowFastPaths(engine, { skipUpToDate: true, skipPrepareChecks: true, skipReviewInputDiffs: true, fastCheckCapture: true, fastCleanup: true, fastCheckpoints: true });
       expect(engine.task(id)!.hunt!.screenTurns![member]!.copies).toEqual(resumed);
       engine.allowScreen(id);
       await until(engine, () => existsSync(join(fakes.dir, `on-screen-${session}`)), coordinator([]));
@@ -111,7 +119,7 @@ describe.concurrent("one task across products", () => {
       for (const map of [resumed, kept, copies("vote-sol-high"), copies("vote-grok-high")]) for (const copy of Object.values(map)) expect(existsSync(copy)).toBe(false);
       for (const world of [shop, api]) expect(await git(world.clone, "worktree", "list", "--porcelain")).not.toContain(`${id}.copies`);
 
-    });
+    }, options);
 
     });
   });
@@ -123,15 +131,20 @@ describe.concurrent("shared delivery and hand-back regressions", () => {
     for (const world of [shop, api]) {
       mkdirSync(join(world.clone, "test"));
       writeFileSync(join(world.clone, "test", "greeting.test.ts"), 'import { test, expect } from "bun:test"; test("greeting", () => expect(true).toBe(true));\n');
-      await git(world.clone, "add", "."); await git(world.clone, "commit", "-qm", "Keep the greeting test"); await git(world.clone, "push", "-q", world.remote, "main");
+      await gitOps.commitChanges(world.clone, "Keep the greeting test");
+      await git(world.clone, "push", "-q", world.remote, "main");
     }
     // Copying the launch command never starts a terminal or app.
 
     await withEngine(async engine => {
-
+      installSharedWorkflowFastPaths(engine, { skipUpToDate: true, skipPrepareChecks: true, skipReviewInputDiffs: true, fastCheckCapture: true, fastCleanup: true, fastCheckpoints: true });
       const first = await shop.preparedProduct(engine), second = await api.preparedProduct(engine);
       fakes.scenario({ planner: "short", builder: "plain", screenRoles: ["code reviewer"], screenRoleHold: true, reopen: "resume" });
-      const id = engine.addTask({ productId: first, worksOn: [first, second].map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "pull-request" })), title: "Preserve hand-back ownership" });
+      const id = await preparedSharedReview(engine, [first, second], "Preserve hand-back ownership", false, { checks: "none" });
+      for (const work of engine.task(id)!.repositories!) {
+        const saved = readWorktreeCommit(work.worktree!);
+        work.checks = { at: Date.now(), sha: saved?.commit, tree: saved?.tree, current: true, definition: "none", results: [] };
+      }
       // Screen requests are scripted stand-ins: this exercises saved review conversations without a window.
       await until(engine, (state) => !!taskOf(state, id).screen && !engine.drivers.has(id), coordinator(["plan", "design"]));
       const session = engine.taskDetails(id)!.conversation!.sessionId;
@@ -142,11 +155,11 @@ describe.concurrent("shared delivery and hand-back regressions", () => {
       const active = task.productId;
       const changed = peerOnly ? [first, second].filter((id) => id !== active) : [first, second];
       const untouched = task.repositories!.find((work) => !changed.includes(work.productId));
-      const original = untouched && await git(untouched.worktree!, "rev-parse", "HEAD");
+      const original = untouched && readWorktreeCommit(untouched.worktree!)?.commit;
       for (const productId of changed) {
         const snapshot = task.driving!.repositoryCopies![productId]!.path;
-        await git(snapshot, "rm", "test/greeting.test.ts");
-        await git(snapshot, "commit", "-qm", "Coordinator removes a test");
+        rmSync(join(snapshot, "test/greeting.test.ts"));
+        await gitOps.commitChanges(snapshot, "Coordinator removes a test");
       }
       engine.setPoolPaused(true);
       // Inspect the saved hand-back before the resumed review can move the active product again.
@@ -161,13 +174,13 @@ describe.concurrent("shared delivery and hand-back regressions", () => {
           expect(work.tamper?.problems.length).toBe(1);
           expect(existsSync(join(work.worktree!, "test/greeting.test.ts"))).toBe(false);
           expect(work.checks?.current).toBe(false);
-        } else expect(await git(work.worktree!, "rev-parse", "HEAD")).toBe(original!);
+        } else expect(readWorktreeCommit(work.worktree!)?.commit).toBe(original!);
       }
       // Routing selects exactly the affected saved builders, even when the driven product was untouched.
       expect(beginRepair(engine, task, "review", task.stageIndex)).toBe(true);
       expect(task.repair!.products).toEqual(peerOnly ? changed : [first, second]);
 
-    }, { toolPath: () => process.execPath });
+    }, { toolPath: () => process.execPath, toolProbe: privateWorldToolProbe(shop) });
     });
   });
 });

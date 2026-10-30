@@ -1,7 +1,6 @@
 import { completeAll } from "@petrina/core";
 import { describe, expect, it, spyOn } from "bun:test";
 import * as steps from "@petrina/repositories/git";
-import { git } from "../../support.js";
 import { withReviewSettlement } from "../../fixtures/review-settlement.js";
 
 describe("shared review settlement interleavings", () => {
@@ -10,8 +9,8 @@ describe("shared review settlement interleavings", () => {
       task.activeProductId = active;
       stage.roleId = security ? "security-reviewer" : "code-reviewer";
       const readVersion = steps.commitVersion, readTree = steps.treeOf;
-      const heads = await completeAll([first, second].map((world) => git(world.clone, "rev-parse", "HEAD")));
-      const trees = await completeAll([first, second].map((world) => git(world.clone, "rev-parse", "HEAD^{tree}")));
+      const heads = await completeAll([first, second].map(async (world) => (await steps.head(world.clone))!));
+      const trees = await completeAll([first, second].map(async (world) => (await steps.treeOf(world.clone))!));
       expect(heads[0]).not.toBe(heads[1]);
       expect(trees[0]).not.toBe(trees[1]);
       const version = spyOn(steps, "commitVersion");

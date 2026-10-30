@@ -9,6 +9,7 @@ import { executionFor } from "@petrina/orchestrator";
 import { serve } from "../../../src/server.js";
 import { Store } from "@petrina/storage/store";
 import { makeProduct } from "../../fixtures.js";
+import { privateAgentToolProbe } from "../../scripted-probes.js";
 const cases = engineCaseFixtures();
 afterAll(() => cases.close());
 
@@ -24,7 +25,8 @@ describe("product settings in the engine", () => {
     mkdirSync(secondRoot);
     const second = await makeProduct(secondRoot);
     const data = join(root, "data");
-    let engine = owner.open(data, {});
+    const probe = { toolProbe: privateAgentToolProbe() };
+    let engine = owner.open(data, probe);
     owner.check();
     const server = serve(engine, { port: 0, token: "product-settings-test-key" });
     owner.onStop(() => server.stop(true));
@@ -62,7 +64,7 @@ describe("product settings in the engine", () => {
       expect((await act("removeProduct", id)).error).toBe("2 tasks must finish or be cancelled before this product can be removed.");
       server.stop(true);
       await owner.stop(engine);
-      engine = owner.open(data, {});
+      engine = owner.open(data, probe);
       expect(engine.getState().products[0]!.name).toBe("Petrina HQ");
     } finally { server.stop(true); await owner.stop(engine); }
 
@@ -73,7 +75,8 @@ describe("product settings in the engine", () => {
   return cases.use("petrina-remove-", async owner => {
     const root = owner.root;
     const data = join(root, "data");
-    let engine = owner.open(data, {});
+    const probe = { toolProbe: privateAgentToolProbe() };
+    let engine = owner.open(data, probe);
     engine.setPoolPaused(true);
     const id = "product"; engine.s.products.push({ id, name: "Product", repo: "local/product", tone: "blue" });
     const first = engine.addTask({ productId: id, title: "Finished" });
@@ -90,7 +93,7 @@ describe("product settings in the engine", () => {
     try {
       for (const state of ["queued", "waiting", "running", "needs-you", "paused", "failed", "pr-open"] as const) {
         write({ ...seed, tasks: [{ ...seed.tasks[0]!, state }] });
-        engine = owner.open(data, {});
+        engine = owner.open(data, probe);
         expect(() => engine.removeProduct(id)).toThrow("1 task must finish or be cancelled");
         await owner.stop(engine);
       }
@@ -98,13 +101,13 @@ describe("product settings in the engine", () => {
         { ...seed.tasks[0]!, state: "done", column: "done" },
         { ...seed.tasks[0]!, id: "cancelled", state: "cancelled", column: "done" },
       ], inbox: [{ id: "old-question", taskId: first, title: "Old question", kind: "question", blocking: false, at: 0 }] });
-      engine = owner.open(data, {});
+      engine = owner.open(data, probe);
       engine.removeProduct(id);
       expect(engine.getState().products).toEqual([]);
       expect(engine.getState().tasks).toEqual([]);
       expect(engine.getState().inbox).toEqual([]);
       await owner.stop(engine);
-      engine = owner.open(data, {});
+      engine = owner.open(data, probe);
       expect(engine.getState().tasks).toEqual([]);
       expect(engine.getState().products).toEqual([]);
     } finally { await owner.stop(engine); }
@@ -120,7 +123,7 @@ it("saves literal check input through the real API and restart without executing
   const root = owner.root, data = join(root, "data");
   let server: ReturnType<typeof serve> | undefined;
   owner.onStop(async () => { await server?.stop(true); server = undefined; });
-    const options = { agentCommand: () => undefined, terminals: () => [] };
+    const options = { agentCommand: () => undefined, terminals: () => [], toolProbe: privateAgentToolProbe() };
     const engine = owner.open(data, options); await engine.waitUntilReady(); engine.setPoolPaused(true);
     engine.s.products.push({ id: "product", name: "Product", repo: "local/product", tone: "blue" });
     const taskId = engine.addTask({ productId: "product", title: "Preserve the saved record", backlog: true });

@@ -2,7 +2,7 @@ import { afterAll, expect, it } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { executionFor } from "@petrina/orchestrator";
-import { git } from "../../fixtures.js";
+import * as gitOps from "@petrina/repositories/git";
 import { continuedReviewFixtures } from "../../fixtures/continued-review.js";
 const { signal, important, rounds, passedCovered, close } = continuedReviewFixtures();
 afterAll(close);
@@ -17,7 +17,7 @@ it("judges cover by the task's own change: main moving alone keeps it, a change 
       if (what === "main") {
         await f.run(async () => {
           writeFileSync(join(f.owners[0]!.repo, "incoming.txt"), "main moved\n");
-          await git(f.owners[0]!.repo, "add", "."); await git(f.owners[0]!.repo, "commit", "-q", "-m", "Main advances");
+          await gitOps.commitChanges(f.owners[0]!.repo, "Main advances");
         });
         expect(await f.run(() => f.engine["updates"].upToDate(scope, signal()))).toBe("moved");
       } else if (what === "edit") await f.commit();

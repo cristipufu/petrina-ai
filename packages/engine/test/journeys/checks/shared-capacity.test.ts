@@ -1,30 +1,37 @@
+import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
+import { fakeAgentSessions } from "../../fixtures/fake-agent-sessions.js";
+import { installPreparedProduct, privateCloneProduct } from "../../fixtures/prepared-product.js";
+import { installSharedWorkflowFastPaths } from "../../fixtures/shared-preparation.js";
+import { privateAgentToolProbe } from "../../scripted-probes.js";
 import { describe as originalDescribe } from "bun:test";
 import { resolve as testFixturePath } from "node:path";
 const TEST_FIXTURE_ROOT = testFixturePath(import.meta.dir, "../..");
 
 import { afterAll, expect, it } from "bun:test";
-import { existsSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { journeyProblems, slotUses, type Task } from "@petrina/core";
-import { Engine } from "../../engine.js";
 
 
-import { Fakes, makeProduct, removeDir, tempDir, waitFor } from "../../fixtures.js";
+import { createProductRepository, Fakes, waitFor } from "../../fixtures.js";
+const engineCases = engineCaseFixtures();
+afterAll(() => engineCases.close());
 
-const roots: string[] = [];
-afterAll(() => roots.forEach(removeDir));
+
 
 
 originalDescribe("tasks' checks take turns on one machine", () => {
 it("runs one task's checks while the other waits its turn, and both get through", async () => {
-    const root = tempDir("petrina-check-turns-");
-    roots.push(root);
+  return engineCases.use("petrina-check-turns-", async caseOwner => {
+    const root = caseOwner.root;
+
     const fakes = new Fakes(join(root, "fake"));
     fakes.scenario({ checks: "slow" });
     const hold = join(root, "hold-check");
     const runs = join(root, "check-runs");
     const check = join(root, "check.ts");
     const script = join(fakes.dir, "agents.json");
+    caseOwner.onStop(() => rmSync(hold, { force: true }));
     writeFileSync(hold, "");
     // Hold the first check until another task really waits, however far apart their agents finish.
     // The shared lock also makes an overlapping run fail instead of silently passing the fixture.
@@ -37,11 +44,31 @@ try {
 } finally { rmSync(lock, { recursive: true }); }
 `);
     writeFileSync(script, JSON.stringify({ checks: [{ name: "Held check", argv: [process.execPath, check], why: "Waits until the other task is in line" }] }));
-    const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, join(TEST_FIXTURE_ROOT, "fake-agent.ts"), fakes.dir, `--script=${script}`] });
+    const engine = installSharedWorkflowFastPaths(
+      caseOwner.open(join(root, "data"), {
+        agentCommand: () => [process.execPath, join(TEST_FIXTURE_ROOT, "fake-agent.ts"), fakes.dir, `--script=${script}`],
+        startAgentSession: fakeAgentSessions(fakes, { scriptPath: script }),
+        toolProbe: privateAgentToolProbe(),
+        runCheckCommand: async (req) => {
+          if (req.argv[0] !== process.execPath || req.argv[1] !== check) return undefined;
+          const lock = join(root, "checking");
+          mkdirSync(lock);
+          try {
+            appendFileSync(runs, `${req.cwd}\n`);
+            while (existsSync(hold) && !req.signal?.aborted) await Bun.sleep(20);
+            return { code: req.signal?.aborted ? 130 : 0 };
+          } finally {
+            rmSync(lock, { recursive: true });
+          }
+        },
+      }),
+      { skipDriverPrepare: true, skipUpToDate: true, skipPrepareChecks: true, skipReviewCopies: true, skipReviewInputDiffs: true, fastCheckCapture: true, fastCleanup: true },
+    );
     // Admission reserves the slot before Git/environment preparation starts the actual command.
     // Exercise that gap deliberately instead of relying on how quickly this machine starts checks.
     let startFirst!: () => void;
     const firstStart = new Promise<void>((resolve) => { startFirst = resolve; });
+    caseOwner.onStop(() => startFirst());
     const runAll = engine["checks"]["runAll"].bind(engine["checks"]);
     let first = true;
     engine["checks"]["runAll"] = async (...args) => {
@@ -69,8 +96,13 @@ try {
       occupiedDuringChecks = slotUses(state).length;
       waitingStep = { taskId: task.id, stepId: step.id, startedAt: step.startedAt, evidence: JSON.parse(JSON.stringify(step)) as typeof step, running: { ...running } };
     });
+    caseOwner.onStop(unsubscribe);
     try {
-      const productId = await engine.addProduct(await makeProduct(root));
+      const productId = await caseOwner.run(engine, async () => {
+        const { path: clone } = await createProductRepository(root, { origin: "none" });
+        await engine.waitUntilReady(); caseOwner.check();
+        return installPreparedProduct(engine, privateCloneProduct(clone));
+      });
       const ids = [engine.addTask({ productId, title: "Add a greeting", description: "[no-check]" }), engine.addTask({ productId, title: "Add a farewell", description: "[no-check]" })];
       await waitFor(() => {
         const state = engine.getState();
@@ -104,7 +136,9 @@ try {
       unsubscribe();
       startFirst();
       rmSync(hold, { force: true });
-      await engine.shutdown();
+      await caseOwner.stop(engine);
     }
+
   });
+});
 });

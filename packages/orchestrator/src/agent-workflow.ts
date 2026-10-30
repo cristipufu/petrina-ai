@@ -1,8 +1,8 @@
-import { runtimeWaitHolds, syncRuntimeWait, AFTER_WORDS, balanced, lastIndexWhere, pickStarts, queueOf, screenReady, slotWait, slotUses, syncWait, stepKey, type AgentProfile, type Candidate, type Id, type Task } from "@petrina/core";
+import { runtimeWaitHolds, syncRuntimeWait, AFTER_WORDS, balanced, lastIndexWhere, pickStarts, queueOf, screenReady, slotWait, slotUses, syncWait, stepKey, type AgentProfile, type Candidate, type Id } from "@petrina/core";
 import { executionFor } from "./repository-context.js";
 import { testerCheckKey } from "./tester-preparation.js";
 import { waitForAgentUsage } from "./agent-step-state.js";
-import type { RuntimeTask as MTask } from "./model.js";
+import type { RuntimeTask } from "./model.js";
 import type { SelectionReadiness as ReadinessNeed } from "./profile-selection.js";
 import type { AgentWorkflowHost, AgentWorkflowDependencies, SelectedParticipant } from "./ports/agent-workflow.js";
 
@@ -26,27 +26,27 @@ export class AgentWorkflow {
     this.checks = dependencies.checkPreparation;
   }
 
-  private testerCheckKey(task: MTask): string {
+  private testerCheckKey(task: RuntimeTask): string {
     return testerCheckKey(task, this.host.state().products);
   }
 
-  private testerNeedsChecks(task: MTask): boolean {
+  private testerNeedsChecks(task: RuntimeTask): boolean {
     const scope = executionFor(task);
     const stage = task.plan?.stages[task.stageIndex];
     return stage?.kind === "do" && this.catalog.role(stage.roleId, task)?.result === "checks" && !task.retest && scope.work.conversation?.roleId !== stage.roleId
       && this.preparedTesters.get(task.id) !== this.testerCheckKey(task);
   }
 
-  private pendingAgent(task: MTask) {
+  private pendingAgent(task: RuntimeTask) {
     const scope = executionFor(task);
     const pending = this.ownership.pendingAdmissions.get(task.id);
     if (pending?.step === stepKey(task)) return pending;
     const conversation = scope.work.conversation;
-    return conversation?.step === stepKey(task) && ["check-finder", "guide-keeper"].includes(conversation.roleId)
+    return conversation?.step === stepKey(task) && ["check-discovery", "guide"].includes(this.catalog.role(conversation.roleId, task)?.result ?? "")
       ? { roleId: conversation.roleId, profileId: conversation.profileId } : undefined;
   }
 
-  private needsCheckPreparation(task: MTask): boolean {
+  private needsCheckPreparation(task: RuntimeTask): boolean {
     if (this.pendingAgent(task) || task.screen) return false;
     const stage = task.plan?.stages[task.stageIndex];
     return this.testerNeedsChecks(task) || stage?.gate === "delivery"
@@ -83,7 +83,7 @@ export class AgentWorkflow {
       // Settings and permission answers still update the app while admissions are closed.
       this.host.syncScreen();
       for (const task of this.host.state().tasks) {
-        if (task.state === "waiting" && !runtimeWaitHolds(task) && screenReady(task as Task, this.host.activeState(), this.host.now())) {
+        if (task.state === "waiting" && !runtimeWaitHolds(task) && screenReady(task, this.host.activeState(), this.host.now())) {
           task.statusLine = this.host.draining() ? this.host.drainLine() : "Waiting for the pool to resume";
         }
       }
@@ -96,7 +96,7 @@ export class AgentWorkflow {
     const now = this.host.now();
     const continuing: Candidate[] = [];
     // A task waiting for others to land stays out of the running and says what it waits for.
-    const blocked = (task: MTask): boolean => {
+    const blocked = (task: RuntimeTask): boolean => {
       const waitingFor = this.host.blockers(task);
       syncWait(task, waitingFor, (id) => this.host.task(id), this.host.now());
       if (!waitingFor.length) return false;
@@ -106,7 +106,7 @@ export class AgentWorkflow {
     };
     // A granted screen member who is not in the group right now still needs a seat, even while a peer
     // works (the task stays "running") or a peer's question is open (the task stays "needs-you").
-    const grantedResume = (entry: MTask): boolean => {
+    const grantedResume = (entry: RuntimeTask): boolean => {
       const member = entry.screen?.granted ? entry.screen.member : undefined;
       if (!member) return false;
       const group = this.ownership.groups.get(entry.id);
@@ -119,7 +119,7 @@ export class AgentWorkflow {
       if ((this.ownership.settling.has(task.id) || this.ownership.drivers.has(task.id)) && !liveScreen) continue;
       if (runtimeWaitHolds(task) || blocked(task)) continue;
       // A screen request also has to be allowed and first in line.
-      if (!screenReady(task as Task, this.host.activeState(), now)) continue;
+      if (!screenReady(task, this.host.activeState(), now)) continue;
       if (!grantedResume(task) && (task.statusLine.startsWith("Waiting for “") || task.statusLine.startsWith(USAGE_WAIT))) task.statusLine = "Waiting for a free slot";
       const seat = this.seatFor(task);
       // Everyone who could work this step is out of usage: it waits for a limit to end, and takes no slot.
@@ -149,16 +149,16 @@ export class AgentWorkflow {
     }
     // Work in progress first, the tool with more of its limit left ahead; then the queue in its order.
     const candidates = balanced(continuing, this.host.state().pool, now);
-    for (const task of queueOf(this.host.state().tasks as Task[])) {
+    for (const task of queueOf(this.host.state().tasks)) {
       if (this.ownership.drivers.has(task.id) || this.ownership.settling.has(task.id)) continue;
       // On hold too, a task stops waiting the moment the tasks it waits for land; it just does not start.
-      if (runtimeWaitHolds(task) || blocked(task as MTask)) continue;
+      if (runtimeWaitHolds(task) || blocked(task)) continue;
       // What it waited for landed or was cancelled: back to plain queue words.
-      if (task.statusLine.startsWith("Waiting for “") || task.statusLine.startsWith(USAGE_WAIT)) (task as MTask).statusLine = "In the queue";
+      if (task.statusLine.startsWith("Waiting for “") || task.statusLine.startsWith(USAGE_WAIT)) task.statusLine = "In the queue";
       if (task.held) continue;
-      const seat = this.seatFor(task as MTask);
+      const seat = this.seatFor(task);
       if (seat.waiting) {
-        (task as MTask).statusLine = seat.waiting;
+        task.statusLine = seat.waiting;
         this.resolveReadiness(seat.readiness);
         continue;
       }
@@ -201,11 +201,11 @@ export class AgentWorkflow {
    * Who would work this task's next step: its planned agent, or a stand-in while the planned tool or model is
    * out of usage. `waiting` says why nobody can; `toolId` is the tool the slot is for.
    */
-  private seatFor(task: MTask) {
+  private seatFor(task: RuntimeTask) {
     return this.seatOf(this.nextAgent(task), task);
   }
 
-  private seatOf(next: { roleId: Id; profileId: Id; reviewerKey?: string; requiredToolId?: Id } | undefined, task?: MTask): { agent?: { roleId: Id; profileId: Id }; toolId: Id; waiting?: string; readiness?: ReadinessNeed } {
+  private seatOf(next: { roleId: Id; profileId: Id; reviewerKey?: string; requiredToolId?: Id } | undefined, task?: RuntimeTask): { agent?: { roleId: Id; profileId: Id }; toolId: Id; waiting?: string; readiness?: ReadinessNeed } {
     if (!next) return { toolId: "none" };
     // This task's own slot does not count: it is the seat being filled. A stand-in whose tool is full yields.
     const room = task ? (toolId: Id, profile: AgentProfile) => !slotWait(this.host.activeState(), { ...profile, taskId: task.id, toolId }) : undefined;
@@ -226,7 +226,7 @@ export class AgentWorkflow {
    * participant's tool, while that participant's bounded readiness decision settles, then qualifies again from there.
    * Retention ends with the decision's limit or a task hold: the step then waits without a place, as any other.
    */
-  private async admitNext(task: MTask, signal: AbortSignal): Promise<boolean | "refresh"> {
+  private async admitNext(task: RuntimeTask, signal: AbortSignal): Promise<boolean | "refresh"> {
     for (;;) {
       if (this.host.admissionsClosed(task)) return this.reserveAgent(task);
       if (this.host.sourceRefreshDue(task)) return "refresh";
@@ -239,7 +239,7 @@ export class AgentWorkflow {
   }
 
   /** Take the slot and name its agent together, or start work needing no agent, before any I/O. */
-  private reserveAgent(task: MTask): boolean {
+  private reserveAgent(task: RuntimeTask): boolean {
     const deliveryWait = !this.host.admissionsClosed(task) ? this.host.waitingForDelivery(task) : undefined;
     const { agent: next, toolId, waiting: noOne, readiness } = this.seatFor(task);
     const preparing = this.needsCheckPreparation(task);
@@ -270,7 +270,7 @@ export class AgentWorkflow {
     return true;
   }
 
-  private nextAgent(task: MTask): { roleId: Id; profileId: Id; reviewerKey?: string; requiredToolId?: Id } | undefined {
+  private nextAgent(task: RuntimeTask): { roleId: Id; profileId: Id; reviewerKey?: string; requiredToolId?: Id } | undefined {
     const scope = executionFor(task);
     if (task.screen) {
       const reviewerKey = task.screen.member?.startsWith("review-") ? task.screen.member.slice(7) : task.plan?.stages[task.stageIndex]?.profileIds.length === 1 ? "0" : undefined;
@@ -279,7 +279,10 @@ export class AgentWorkflow {
     const pending = this.pendingAgent(task);
     if (pending) return pending;
     if (this.needsCheckPreparation(task)) return undefined;
-    if (task.stageIndex < 0) return { roleId: "planner", profileId: this.catalog.onUsable(this.dependencies.plannerProfileId) };
+    if (task.stageIndex < 0) {
+      const plannerRoleId = this.host.state().roles.find((role) => !role.removed && role.result === "plan")?.id ?? "planner";
+      return { roleId: plannerRoleId, profileId: this.catalog.onUsable(this.dependencies.plannerProfileId) };
+    }
     const stage = task.plan?.stages[task.stageIndex];
     if (!stage) return undefined;
     switch (stage.kind) {
@@ -290,7 +293,7 @@ export class AgentWorkflow {
       case "converge":
         return task.sub === 0
           ? { roleId: stage.roleId, profileId: stage.profileIds[0] ?? this.dependencies.plannerProfileId }
-          : { roleId: stage.reviewerRoleId ?? "design-reviewer", profileId: stage.reviewerProfileIds?.[0] ?? "sol-xhigh" };
+          : { roleId: stage.reviewerRoleId ?? (this.host.state().roles.find((role) => !role.removed && role.result === "objections")?.id ?? "design-reviewer"), profileId: stage.reviewerProfileIds?.[0] ?? "sol-xhigh" };
       case "review-chain":
         return this.phases.nextReviewer(task, stage);
       case "gate":
@@ -492,7 +495,7 @@ export class AgentWorkflow {
   }
 
 
-  waitForUsage(task: MTask, words: string): void {
+  waitForUsage(task: RuntimeTask, words: string): void {
     waitForAgentUsage(task, words, this.host.now(), () => this.host.column(task));
     this.host.checkpoint();
   }

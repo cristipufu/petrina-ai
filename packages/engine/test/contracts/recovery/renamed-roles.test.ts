@@ -1,10 +1,11 @@
+import { installPreparedProduct, privateCloneProduct } from "../../fixtures/prepared-product.js";
 import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
 import { afterAll } from "bun:test";
 import { restoreRepositoryState } from "@petrina/orchestrator";
 import { describe, expect, it } from "bun:test";
 import { join } from "node:path";
 import { type State } from "@petrina/core";
-import { type MState, renameRoles } from "../../../src/kernel.js";
+import { type RuntimeState, renameRoles } from "../../../src/kernel.js";
 
 
 import { Store } from "@petrina/storage/store";
@@ -21,7 +22,9 @@ describe("a role renamed after the state was saved", () => {
     let engine = owner.open(data, {});
     try {
       engine.setPoolPaused(true);
-      const productId = await engine.addProduct(await makeProduct(root));
+      const repo = await makeProduct(root);
+      await engine.waitUntilReady(); owner.check(); engine.stopRequested.signal.throwIfAborted();
+      const productId = installPreparedProduct(engine, privateCloneProduct(repo));
       const taskId = engine.addTask({ productId, title: "Old work" });
       const saved = JSON.parse(JSON.stringify(engine.getState())) as State;
       await owner.stop(engine);
@@ -63,8 +66,8 @@ describe("a role renamed after the state was saved", () => {
       expect(engine.getState().inbox.find((item) => item.id === "old-question")?.roleId).toBe("release-manager");
       // The working agents and the conversation note, as far as Petrina keeps them on a paused task, and as they were saved.
       for (const kept of [task.agent, ...(task.helpers ?? []), task.conversation]) if (kept) expect(kept.roleId).toBe("release-manager");
-      restoreRepositoryState(saved.tasks[0]! as import("../../../src/kernel.js").MTask);
-      renameRoles(saved as unknown as MState);
+      restoreRepositoryState(saved.tasks[0]! as import("../../../src/kernel.js").RuntimeTask);
+      renameRoles(saved as RuntimeState);
       const moved = saved.tasks[0]!;
       expect([moved.agent?.roleId, moved.helpers?.[0]?.roleId, moved.repository?.conversation?.roleId]).toEqual(["release-manager", "release-manager", "release-manager"]);
       expect(JSON.stringify(engine.getState())).not.toContain('"shipper"');

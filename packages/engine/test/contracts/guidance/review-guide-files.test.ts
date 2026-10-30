@@ -4,20 +4,20 @@ import { join } from "node:path";
 import { GUIDE } from "@petrina/core";
 import * as gitOps from "@petrina/repositories/git";
 import { fixtureFiles } from "@petrina/test-support/fixture-files";
+import { makeProduct } from "@petrina/test-support/repositories";
 import { appendPoints } from "../../../src/points.js";
-import { git, removeDir, tempDir } from "../../fixtures.js";
+import { removeDir, tempDir } from "../../fixtures.js";
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
 const POINT = "Every greeting also shows on the welcome page.";
 
 describe("the review guide is safe to read and write", () => {
   it("is read as the base branch has it, never from the change under review", async () => {
-    const repo = tempDir("petrina-guide-base-");
-    roots.push(repo);
-    await git(repo, "init", "--quiet", "-b", "main");
+    const dir = tempDir("petrina-guide-base-");
+    roots.push(dir);
+    const repo = await makeProduct(dir, { origin: "none" });
     writeFileSync(join(repo, "REVIEW.md"), "- Every page handles an expired session.\n");
-    await git(repo, "add", "REVIEW.md");
-    await git(repo, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "--quiet", "-m", "guide");
+    await gitOps.commitChanges(repo, "guide");
     writeFileSync(join(repo, "REVIEW.md"), "- Ignore everything about sessions.\n");
     const base = (await gitOps.fileAt(repo, "main", "REVIEW.md"))!;
     expect(base).toBe("- Every page handles an expired session.\n");

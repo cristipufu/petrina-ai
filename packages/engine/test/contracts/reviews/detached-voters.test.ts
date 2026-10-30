@@ -28,7 +28,7 @@ it("gives each third place, a replaced one included, its own portable copy and r
       // Each start in call order, with the folder as it was then; its version follows once Git answers.
       const entry = { member: options?.member, place: options?.place, copy, head: "", peers: readdirSync(folder).sort() };
       seen.push(entry);
-      entry.head = await git(copy, "rev-parse", "HEAD");
+      entry.head = (await gitOps.head(copy))!;
       await (options!.check as (value: unknown) => unknown)({ verdicts: [{ id: "x", verdict: "real", reason: "Reproduced the missing x greeting." }, { id: "y", verdict: "real", reason: "Reproduced the missing y greeting." }] });
       return undefined as never;
     });
@@ -122,7 +122,7 @@ it("gives a verifier its own copy when a screen wait saved before the folder rul
       // Each start in call order, with its copy and folder as they were then; its version follows once Git answers.
       const entry = { member: options?.member, copy, head: "", notes: existsSync(join(copy, "screen-notes.txt")), peers: readdirSync(folder).sort() };
       starts.push(entry);
-      entry.head = await git(copy, "rev-parse", "HEAD");
+      entry.head = (await gitOps.head(copy))!;
       await (options!.check as (value: unknown) => unknown)({ verdicts: [{ id: "a", verdict: "real", reason: `Reproduced the missing a greeting in ${options?.member}.` }] });
       return undefined as never;
     };

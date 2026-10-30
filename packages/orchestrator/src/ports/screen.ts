@@ -1,5 +1,6 @@
 import type { Candidate, Column, DeepMutable, Id, InboxItem, Pool } from "@petrina/core";
 import type { RuntimeTask } from "../model.js";
+import type { RepositoryContext } from "../repository-context.js";
 
 export interface ScreenClock {
   now(): number;
@@ -30,8 +31,8 @@ export interface ScreenHost {
   sessionOwned(task: RuntimeTask): boolean;
   waitLine(task: RuntimeTask): string;
   column(task: RuntimeTask): Column;
-  record(task: RuntimeTask, tone: "status" | "milestone" | "you", text: string, roleId?: Id, profileId?: Id): void;
+  record(target: RuntimeTask | RepositoryContext, tone: "status" | "milestone" | "you", text: string, roleId?: Id, profileId?: Id): void;
   inboxId(): Id;
-  checkpoint(): void;
+  checkpoint(scope?: RepositoryContext): void;
   schedule(): void;
 }

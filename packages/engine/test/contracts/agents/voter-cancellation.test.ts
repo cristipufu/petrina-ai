@@ -7,7 +7,7 @@ const { voting, checkedFinding, verifierSteps, close } = independentReviewFixtur
 afterAll(close);
 describe.concurrent("bounded verifier panels", () => {
 it("stops owned verifier work when the task is cancelled mid-vote, and admits no third answer", async () => {
-    const f = await voting({ verifier: "not-a-bug" }, 3, []);
+    const f = await voting({ verifier: "not-a-bug" }, 3, [], false, { acceptedBuild: true });
     try {
       await f.run(async () => {
       await f.advance(() => f.fakes.received("verifier").length === 2, (role) => role !== "verifier");

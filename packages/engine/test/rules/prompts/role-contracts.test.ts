@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { BUILT_IN_ROLES, DEFAULT_PROFILES, DEMO_PRODUCTS, KNOWN_TOOLS, DESIGN_OBJECTION_RULE, NOTES_HANDOFF_RULE } from "@petrina/core";
-import { type PromptContext } from "../../../src/prompts.js";
+import { buildPrompt, roleCard, type PromptContext } from "../../../src/prompts.js";
 import { contractFor, ROLE_CONTRACTS, shapeFor } from "../../../src/roles.js";
 import { promptTask } from "../../fixtures/prompt-context.js";
 const state = { products: DEMO_PRODUCTS, profiles: DEFAULT_PROFILES, tools: KNOWN_TOOLS };
@@ -35,5 +35,18 @@ it("tells a role the coordinator made its purpose, and has it hand back notes", 
     expect(contract.instructions(ctx())).toBe(`Tighten the wording of every screen.\n${NOTES_HANDOFF_RULE}`);
     expect(contract.reads).toEqual(["notes", "brief"]);
     expect(contract.result.safeParse({ summary: "Done.", notes: [] }).success).toBe(true);
+  });
+
+  it("derives contracts, prompt workspace rules and role cards from result kind for non-built-in role ids", () => {
+    for (const builtIn of BUILT_IN_ROLES) {
+      const custom = { ...builtIn, id: `custom-${builtIn.result}` };
+      const contract = contractFor(custom);
+      expect(contract.result).toBe(ROLE_CONTRACTS[builtIn.id]!.result);
+      expect(contract.reads).toEqual(ROLE_CONTRACTS[builtIn.id]!.reads);
+    }
+    const customDelivery = { ...BUILT_IN_ROLES.find((role) => role.result === "delivery")!, id: "custom-delivery" };
+    expect(roleCard({ ...ctx(), role: customDelivery })).toBe("");
+    const customPlanner = { ...BUILT_IN_ROLES.find((role) => role.result === "plan")!, id: "custom-planner" };
+    expect(buildPrompt({ ...ctx(), role: customPlanner })).toContain("Your planning folder is /w. No task working copy exists yet.");
   });
 });

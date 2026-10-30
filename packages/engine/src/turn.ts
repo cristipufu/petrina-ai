@@ -1,4 +1,4 @@
-import { TurnRecovery, ModelCapacity } from "@petrina/orchestrator";
+import { openParticipantSession, ParticipantInputs, TurnRecovery, ModelCapacity, MaintenanceSettings } from "@petrina/orchestrator";
 import { opensBrowser } from "./browser-policy.js";
 import { repositoryView, type RepositoryContext } from "@petrina/orchestrator";
 import { completeAll } from "@petrina/core";
@@ -9,10 +9,10 @@ import type { Sources } from "./sources.js";
 // One agent working one step: opening or reopening its conversation, its instructions, the turns until
 // it hands back a valid result, and what it asks the coordinator on the way.
 
-import { sameModel, addAsk, beginAgentStep, endAgentStep, JOURNEY_WORDS as W, limitOf, openStep, owedAcceptanceTest, SCREEN_WORDS, screenReason, slotWait, stepMayChange, type ActiveAgent, type AgentProfile, type Id, type InboxKind, type Pool, type Product, type Role, type StepNote, type TurnReason, type CheckId, type ConversationNote, type BuilderContext, pauseClock, plainTodo, resumeClock, retryingWords, startClock } from "@petrina/core";
+import { addAsk, beginAgentStep, endAgentStep, recordAcceptanceStart, recordAgentResult, JOURNEY_WORDS, limitOf, openStep, SCREEN_WORDS, screenReason, slotWait, stepMayChange, type ActiveAgent, type AgentProfile, type Id, type InboxKind, type Pool, type Product, type Role, type StepNote, type TurnReason, type CheckId, type ConversationNote, type BuilderContext, pauseClock, plainTodo, resumeClock, retryingWords, startClock } from "@petrina/core";
 import type { z } from "zod";
 import { AgentRun, type RunCallbacks } from "@petrina/agent-runtime/acp-run";
-import { ReopenFailed, type NativeRetryReport, type PermissionInfo, type TurnResult, type AgentSession, type AgentSessionOptions, type AgentSessionCallbacks, type AgentMessage, type ToolActivityEvent } from "@petrina/orchestrator";
+import { type NativeRetryReport, type PermissionInfo, type TurnResult, type AgentSession, type AgentSessionOptions, type AgentSessionCallbacks, type AgentMessage, type ToolActivityEvent } from "@petrina/orchestrator";
 import * as git from "@petrina/repositories/git";
 import { agentEnv } from "@petrina/platform/process-environment";
 import { claudeSandbox, type ClaudeSandbox } from "@petrina/agent-runtime/sandbox";
@@ -61,6 +61,8 @@ type ConversationOptions = {
 /** `used` hears which profile worked each attempt: a stand-in when the planned one was out of usage. */
 interface TurnOptions<T> extends ConversationOptions {
   builderTree?: string;
+  initialHead?: string;
+  initialCompanionHeads?: Readonly<Record<Id, string>>;
   requestedProfileId?: Id;
   selectionReason?: string;
   status?: string;
@@ -88,12 +90,28 @@ const NO_SCREEN_HERE = "you cannot ask for the screen in this step. Finish witho
 
 export class Turns {
   readonly repositoryCopies = new Map<string, Readonly<Record<string, string>>>();
+  readonly copyHeads = new Map<string, string>();
   private readonly recovery: TurnRecovery;
+  private readonly maintenanceSettings: MaintenanceSettings;
+  private readonly inputs: ParticipantInputs;
   constructor(
     private readonly k: Kernel,
     private readonly tools: ToolChecks,
     private readonly sources: Sources,
   ) {
+    this.inputs = new ParticipantInputs({
+      now: () => Date.now(), current: scope => k.task(scope.task.id) === scope.task, stopped: () => k.stopped,
+      status: (scope, reason, roleId, profileId) => k.log(scope, "status", reason, roleId, profileId),
+      checkpoint: scope => k.commitNow(scope), commit: scope => k.commit(scope), noteStream: scope => k.noteStream(scope),
+      say: (scope, text, roleId, profileId, reviewerKey) => k.participantSay(scope, "agent", text, roleId, profileId, reviewerKey),
+      briefed: scope => this.briefed(scope),
+    }, { clone: structuredClone, manifest: inputManifest, numberManifest: numberInputManifest,
+      saveExact: (taskId, text) => saveExactMessage(k.dataDir, taskId, text),
+    });
+    this.maintenanceSettings = new MaintenanceSettings({
+      now: () => Date.now(), pauseStep: task => k.pauseStep(task), addDecision: item => { k.s.inbox.push(item); },
+      checkpoint: task => k.commitNow(task), aborted: () => new Aborted(), unconfirmed: message => new MaintenanceProfileProblem(message),
+    }, { readOnlyStatus: worktree => git.worktreeStatus(worktree) });
     const capacity = new ModelCapacity({ profile: id => k.profile(id), now: () => Date.now(),
       record: (task, roleId, profileId, error, waitMs) => k.recordModelCapacity(task, roleId, profileId, error, waitMs), words: capacityWaiting });
     this.recovery = new TurnRecovery({
@@ -148,8 +166,13 @@ export class Turns {
   async turn<T>(scope: RepositoryContext, roleId: Id, plannedId: Id, given: Given, schema: z.ZodType<T>, signal: AbortSignal, options: TurnOptions<T> = {}): Promise<T> {
     const { task } = scope;
     if (!this.k.role(roleId, task) || !(task.maintenance?.profile.id === plannedId || this.k.profile(plannedId)) || (this.k.role(roleId, task)?.result !== "plan" && !this.k.productOf(scope))) throw new Error(`Unknown role or product: ${roleId} on ${plannedId}`);
+    let firstAttempt = true;
     return this.recovery.main({ scope, roleId, plannedId, signal, get room() { return options.room; }, reviewerKey: options.reviewerKey, member: options.member, used: id => options.used?.(id),
-      attempt: (profile, choice) => this.attempt(scope, roleId, plannedId, profile, given, schema, signal, { ...options, selectionReason: [options.selectionReason, choice.reason].filter(Boolean).join(" "), ...(choice.freshReason ? { freshReason: choice.freshReason } : {}), ...(choice.readiness ? { readiness: choice.readiness } : {}) }),
+      attempt: (profile, choice) => {
+        const initial = firstAttempt;
+        firstAttempt = false;
+        return this.attempt(scope, roleId, plannedId, profile, given, schema, signal, { ...options, ...(initial ? {} : { initialHead: undefined, initialCompanionHeads: undefined }), selectionReason: [options.selectionReason, choice.reason].filter(Boolean).join(" "), ...(choice.freshReason ? { freshReason: choice.freshReason } : {}), ...(choice.readiness ? { readiness: choice.readiness } : {}) });
+      },
     });
   }
 
@@ -163,23 +186,7 @@ export class Turns {
 
   /** One saved bubble per public message, including parallel agents; token chunks update that bubble. */
   private messageStream(scope: RepositoryContext, roleId: Id, profileId: Id, reviewerKey: string | undefined, signal: AbortSignal, main = false): (message: AgentMessage) => void {
-    const { task } = scope;
-    let last: { key: number; line: Id } | undefined;
-    return (message) => {
-      if (this.k.task(task.id) !== task || this.k.stopped || signal.aborted) return;
-      if (main) this.briefed(scope);
-      const saved = last;
-      const line = saved?.key === message.id ? task.session.find((entry) => entry.id === saved.line) : undefined;
-      if (line) {
-        if (line.text === message.text) return;
-        line.text = message.text;
-        this.k.noteStream(scope);
-      } else {
-        this.k.participantSay(scope, "agent", message.text, roleId, profileId, reviewerKey);
-        last = { key: message.id, line: task.session.at(-1)!.id };
-        this.k.commit(scope);
-      }
-    };
+    return this.inputs.stream(scope, roleId, profileId, reviewerKey, signal, main);
   }
 
   /** An agent's last messages in a step, most recent first, as many as fit. */
@@ -198,59 +205,12 @@ export class Turns {
    * returned, and joins the journey when the exact text goes out, so its saved message reference is part of it.
    */
   private recordJourneyInput(scope: RepositoryContext, roleId: Id, profileId: Id, sections: readonly Section[], mode: "fresh" | "continued", plannedId: Id, selectionReason: string | undefined, reviewerKey: string | undefined, confirmedSettings: { model?: string; modelName?: string; effort?: string }, instructions: string, extra: { omitted?: readonly ContextOmission[]; freshReason?: string; sessionId?: string; resumed?: boolean; supplied?: readonly Section[]; place?: string; readiness?: ReadinessRecheck } = {}): PendingInput | undefined {
-    const { task, work } = scope;
-    const step = openStep(task);
-    if (step?.kind !== "agent") return undefined;
-    const stage = task.plan?.stages[task.stageIndex];
-    const designReview = stage?.kind === "converge" && roleId === (stage.reviewerRoleId ?? "design-reviewer");
-    const seats = designReview ? stage?.reviewerProfileIds : stage?.profileIds;
-    const index = reviewerKey !== undefined ? Number(reviewerKey) : seats?.indexOf(plannedId) ?? -1;
-    const assignedRole = designReview ? stage?.reviewerRoleId ?? "design-reviewer" : stage?.roleIds?.[index] ?? stage?.roleId;
-    const assignment = assignedRole === roleId ? (designReview ? stage?.reviewerAssignments : stage?.assignments)?.[index] : undefined;
-    const previous = step.agentInputs?.findLast(entry => entry.roleId === roleId && entry.profileId === profileId && entry.reviewerKey === reviewerKey);
-    const reason = selectionReason || previous?.selectionReason;
-    if (reason && /^(Kept its own conversation|Started a fresh conversation:)/.test(reason)) this.k.log(scope, "status", reason, roleId, profileId);
-    const input = {
-      productId: work.productId,
-      stepAttempts: work.stepAttempts ?? 0,
-      versions: { ...(work.baseSha ? { base: work.baseSha } : {}), ...(work.reviewedSha ? { reviewed: work.reviewedSha } : {}), ...(work.reviewedTree ? { reviewedTree: work.reviewedTree } : {}), ...(work.checks ? { checks: { at: work.checks.at, sha: work.checks.sha, tree: work.checks.tree, definition: work.checks.definition, passed: work.checks.results.every((run) => run.ok), count: work.checks.results.length, ...(work.checks.provenance ? { node: work.checks.provenance.nodeId } : {}) } } : {}) },
-      ...(step.reviewInput ? { reviewInput: structuredClone(step.reviewInput) } : {}),
-      at: Date.now(),
-      instructions,
-      requestedProfileId: plannedId,
-      ...(reason ? { selectionReason: reason } : {}),
-      ...(reviewerKey !== undefined ? { reviewerKey } : {}),
-      ...(extra.place !== undefined ? { place: extra.place } : {}),
-      ...(assignment ? { assignment: structuredClone(assignment) } : {}),
-      ...(confirmedSettings ? { confirmedSettings } : {}),
-      roleId,
-      profileId,
-      taskTitle: task.title,
-      // Fresh prompts include the task request for every role. Continued prompts
-      // receive only their updated sections in the existing conversation.
-      ...(mode === "fresh" ? { taskDescription: task.description } : {}),
-      ...(task.plan?.stages[task.stageIndex]?.title ? { stageTitle: task.plan.stages[task.stageIndex]!.title } : {}),
-      sections: sections.map(({ title, body }) => ({ title, body })),
-      mode,
-      ...(extra.resumed ? { resumed: true } : {}),
-      manifest: inputManifest(instructions, extra.supplied ?? sections, extra.omitted, extra.supplied !== undefined),
-      ...(extra.freshReason ? { freshReason: extra.freshReason } : {}),
-      ...(extra.readiness ? { readiness: structuredClone(extra.readiness) } : {}),
-      ...(extra.sessionId ? { sessionId: extra.sessionId } : {}),
-    };
-    return { stepId: step.id, input };
+    return this.inputs.capture(scope, roleId, profileId, sections, mode, plannedId, selectionReason, reviewerKey, confirmedSettings, instructions, extra);
   }
 
   /** Another start on this seat is another input, never a rewrite of what it heard before. Saved once the text is known. */
   private async attachInput(scope: RepositoryContext, pending: PendingInput | undefined, text: string, additions: readonly Section[] = [], openingSections: readonly Section[] = []): Promise<void> {
-    if (!pending) return;
-    const { task } = scope;
-    const step = task.journey?.find((entry) => entry.id === pending.stepId);
-    if (!step) return;
-    const exact = await saveExactMessage(this.k.dataDir, task.id, text);
-    const input = { ...pending.input, sections: [...pending.input.sections, ...openingSections].filter(section => section.body), ...(additions.length ? { manifest: numberInputManifest([...(pending.input.manifest ?? []), ...inputManifest("", additions, [], true)]) } : {}), ...(exact ? { exact } : {}) } as NonNullable<typeof step.agentInputs>[number];
-    step.agentInputs = [...(step.agentInputs ?? []), input];
-    this.k.commitNow(scope);
+    return this.inputs.attach(scope, pending, text, additions, openingSections);
   }
 
   /** One attempt at the step by one agent on one profile. */
@@ -321,7 +281,7 @@ export class Turns {
     // A stand-in is a new box, so the first agent's tool, time and lines stay with its own work.
     const previous = openStep(task);
     if (previous?.kind === "agent" && previous.roleId === roleId && !previous.team && previous.profileId !== profileId) {
-      endAgentStep(task, { outcome: W.handedOn, reason: W.agentChanged, tone: "back" }, Date.now());
+      endAgentStep(task, { outcome: JOURNEY_WORDS.handedOn, reason: JOURNEY_WORDS.agentChanged, tone: "back" }, Date.now());
     }
     // Its box on the journey: picking up after a restart, a pause or a hand back continues the same one.
     const stage = task.plan?.stages[task.stageIndex];
@@ -330,11 +290,8 @@ export class Turns {
     const journeyStep = beginAgentStep(task, journeyRole, profileId, Date.now(), this.k.s.roles, options.copy ? [...new Set([...team, profileId])] : undefined, repository);
     if (options.seats) journeyStep.seats = [...options.seats];
     if (role.result === "build") journeyStep.buildProductId = repository.productId;
-    if (role.result === "checks" && task.acceptanceRun) journeyStep.proofRun = structuredClone(task.acceptanceRun);
+    recordAcceptanceStart(task, journeyStep, role.result, structuredClone);
     if (["findings", "votes"].includes(role.result) && task.hunt?.input) journeyStep.reviewInput = structuredClone(task.hunt.input);
-    const owed = role.result === "checks" && !journeyStep.agentInputs?.length ? owedAcceptanceTest(task) : undefined;
-    if (owed?.final) journeyStep.trigger = { ...journeyStep.trigger, reason: task.proofRetestReason === "requested" ? "A reviewer asked for proof on the final code" : task.proofRetestReason === "main-moved" ? "Main moved since the proof was recorded" : task.proofRetestReason === "code-changed" ? "The task's code changed since acceptance testing" : "Final acceptance testing after review: the final code needs current acceptance evidence" };
-    else if (owed) journeyStep.trigger = { ...journeyStep.trigger, reason: "Checking the builder's repair of the failed acceptance checks; the planned reviews follow" };
     if (saved) {
       task.statusLine = options.status ?? `${role.name} is getting back to work`;
     } else {
@@ -343,16 +300,21 @@ export class Turns {
     if (same) { same.role = role; same.access = access; }
     // This attempt has crossed the source and slot gates. Save editable ownership before
     // native startup can wait or fail, even when no prerequisite wait exists yet.
-    if (role.canEdit && repository.worktree) repository.editAttempt = { step };
+    if (role.canEdit && repository.worktree) this.k.stepOwnership.admitEditable(scope, step);
     this.k.commitNow(scope);
 
     const live = () => this.k.task(taskId);
     // How its turns are written down in the work log, with its own waits for the coordinator left out of its time.
     const agent: TurnAgent = { roleId, profile, waits: new WaitClock(), journeyId: journeyStep.id, agentSeat: options.reviewerKey ?? options.reviewKey ?? roleId };
+    const knownCopyHead = options.copy ? this.copyHeads.get(options.copy) : undefined;
+    if (options.copy) this.copyHeads.delete(options.copy);
     // The working copy as the step first found it: what the summary compares with, and what a read-only role leaves.
     const [head, protectedCopies] = await Promise.all([
-      same?.head ?? (worktree ? git.head(worktree).catch(() => undefined) : undefined),
-      task.repositories && !options.copy ? Promise.all(task.repositories.filter((work) => work.worktree && work.productId !== repository.productId).map(async (work) => ({ productId: work.productId, path: work.worktree!, sha: await git.head(work.worktree!) }))) : [],
+      same?.head ?? ((!tookOver ? (knownCopyHead ?? options.initialHead) : undefined) ?? ((options.copy ?? repository.worktree) ? git.head(worktree).catch(() => undefined) : undefined)),
+      task.repositories && !options.copy ? Promise.all(task.repositories.filter((work) => work.worktree && work.productId !== repository.productId).map(async (work) => {
+        const knownCompanion = !tookOver ? options.initialCompanionHeads?.[work.productId] : undefined;
+        return { productId: work.productId, path: work.worktree!, sha: knownCompanion && git.isSha(knownCompanion) ? knownCompanion : await git.head(work.worktree!) };
+      })) : [],
     ]);
     // Tests: the command is asked for every agent process, so a test can tell a reopen attempt from the fresh start after it.
     const opened = await this.openAgentRun(scope, role, profile, worktree, signal, agent, {
@@ -427,36 +389,10 @@ export class Turns {
         if (pending) pending.conversation = repository.conversation;
       }
       this.k.commitNow(scope);
-      const checkSettings = async (reply?: TurnResult, result?: T) => {
-        const maintenance = task.maintenance;
-        if (maintenance?.role.id !== roleId || !run.lastTurn) return;
-        const notes = run.lastTurn;
-        const model = notes.changed.model ?? notes.modelSeen ?? run.settings.model;
-        const effort = notes.changed.effort ?? run.settings.effort;
-        if (sameModel(profile.toolId, profile.modelId ?? profile.model, model) && effort === profile.effort && !notes.rerouted) return;
-        if (!role.canEdit && headBefore) {
-          const status = await git.worktreeStatus(worktree);
-          if (status.head !== headBefore || !status.clean) maintenance.readOnlyWrites = true;
-        }
-        const requested = `${profile.model} · ${profile.effort} effort`;
-        const actual = `${model ?? "unconfirmed model"} · ${effort ?? "unconfirmed effort"} effort`;
-        const stageId = task.plan!.stages[task.stageIndex]!.id;
-        if (reply) {
-          maintenance.pendingReply = { stageId, text: reply.text, stopReason: reply.stopReason, ...(reply.streamed ? { streamed: true } : {}) };
-          delete maintenance.pendingResult;
-        } else maintenance.pendingResult = { stageId, value: result };
-        maintenance.settingsDecision = { requested, actual, at: Date.now() };
-        this.k.pauseStep(task);
-        task.state = "needs-you"; task.holdsSlot = false; delete task.agent;
-        task.statusLine = "The tool reported different settings. Choose whether to keep or stop this run.";
-        this.k.s.inbox.push({ id: `maintenance-settings-${task.id}`, taskId: task.id, kind: "maintenance-settings", title: "Unexpected maintenance agent settings", body: `Requested: ${requested}\nReported: ${actual}\nKeeping this run accepts the work as produced. Delivery still needs its usual checks and approval. The routine keeps its saved profile.`, at: Date.now(), blocking: true });
-        this.k.commitNow(task);
-        throw new Aborted();
-      };
-      if (task.maintenance?.role.id === roleId) {
-        const confirmed = run.settings;
-        if (confirmed.model !== (profile.modelId ?? profile.model) || confirmed.effort !== profile.effort) throw new MaintenanceProfileProblem(`The maintenance profile could not be confirmed. Requested ${profile.model} at ${profile.effort}; reported ${confirmed.model ?? "no model"} at ${confirmed.effort ?? "no effort"}. Check the tool settings, then retry this run. No maintenance instructions were sent.`);
-      }
+      const checkSettings = (reply?: TurnResult, result?: T) => this.maintenanceSettings.check(task, {
+        role, profile, settings: run.settings, lastTurn: run.lastTurn, worktree, headBefore, reply, result,
+      });
+      if (task.maintenance?.role.id === roleId) this.maintenanceSettings.confirm(profile, run.settings);
       // The last moment to notice a pause before the agent gets any work.
       if (signal.aborted || !live()) throw new Aborted();
       let openingMessages: ReturnType<typeof takeMessages> = [];
@@ -682,7 +618,9 @@ export class Turns {
       this.k.commit(scope);
       this.k.syncIdleSleep();
       if (!ADAPTERS[profile.toolId]?.usageReader?.liveSession) this.k.readUsage(profile.toolId);
-      const head = await git.head(copy).catch(() => undefined);
+      const knownHead = this.copyHeads.get(copy);
+      this.copyHeads.delete(copy);
+      const head = (!options.took && !held ? knownHead : undefined) ?? await git.head(copy).catch(() => undefined);
       if (signal.aborted || !this.k.task(taskId)) throw new Aborted();
       const givenSections = [...currentStepAssignment(task, roleId), ...await given(), ...(wentBack ? offered?.continuedSections ?? [] : []), ...(repository.prBackground ? [{ title: "Pull request background", body: pullRequestBackground(repository.prBackground) }] : []), { title: OWN_COPY, body: ownCopy(head ?? "") }];
       // A parallel opening has no earlier-attempt section: a fresh one keeps the step's heard guidance as background.
@@ -954,7 +892,7 @@ export class Turns {
               }
               const step = openStep(live);
               const inputIndex = step?.agentInputs?.findLastIndex((input) => input.roleId === role.id && input.profileId === profileId && input.reviewerKey === options.reviewerKey) ?? -1;
-              if (step) step.agentResults = [...(step.agentResults ?? []), { roleId: role.id, profileId, productId: scope.work.productId, at: finishedAt, value: parsed.value, ...(inputIndex >= 0 ? { inputIndex } : {}), ...(saved.length ? { images: saved } : {}) }];
+              if (step) recordAgentResult(step, { roleId: role.id, profileId, productId: scope.work.productId, at: finishedAt, value: parsed.value, ...(inputIndex >= 0 ? { inputIndex } : {}), ...(saved.length ? { images: saved } : {}) });
               // The result ends the agent's work. Saving its pictures is Petrina's time.
               if (options.main) this.k.pauseStep(current, finishedAt);
               const work = options.reviewKey ? current.hunt?.work?.[options.reviewKey] : undefined;
@@ -1042,12 +980,26 @@ export class Turns {
       if (signal.aborted) throw new Aborted();
       const launchFor = () => {
         const cleanup = this.k.agentCleanup.opening(task.id, cwd);
+        const onCleanupIncomplete = () => { cleanup.onCleanupIncomplete(); callbacks.onCleanupIncomplete?.(); };
+        const nativeCallbacks: RunCallbacks = {
+          ...callbacks,
+          onCleanupIncomplete,
+          onLog: text => void this.k.agentLog(task.id, text),
+          onUsage: info => this.k.recordUsage(info),
+          onAccountUsage: reports => this.k.recordAccountUsage(profile.toolId, reports),
+        };
+        const sessionCallbacks: AgentSessionCallbacks = { ...callbacks, onCleanupIncomplete };
+        Object.defineProperties(sessionCallbacks, {
+          onLog: { value: nativeCallbacks.onLog },
+          onUsage: { value: nativeCallbacks.onUsage },
+          onAccountUsage: { value: nativeCallbacks.onAccountUsage },
+        });
         const launch: AgentSessionOptions = { profile, cwd, browser, signal,
         ...(sessionId ? { reopen: sessionId, ...(this.k.options.reopenTimeoutMs ? { reopenTimeoutMs: this.k.options.reopenTimeoutMs } : {}) } : {}),
         ...(this.k.options.startTimeoutMs ? { startTimeoutMs: this.k.options.startTimeoutMs } : {}), onGone: cleanup.onGone,
-        callbacks: { ...callbacks, onCleanupIncomplete: () => { cleanup.onCleanupIncomplete(); callbacks.onCleanupIncomplete?.(); } },
+        callbacks: sessionCallbacks,
         };
-        return { launch, cleanup };
+        return { launch, cleanup, nativeCallbacks };
       };
       try {
         if (this.k.options.startAgentSession) {
@@ -1061,14 +1013,9 @@ export class Turns {
           // Every actual launch must wait for the previous owner's cleanup.
           await this.k.agentCleanup.wait(task.id, cwd);
           if (signal.aborted) throw new Aborted();
-          const { launch, cleanup } = launchFor();
+          const { launch, cleanup, nativeCallbacks } = launchFor();
           // Resolve native launch details for each process, including a fallback or sandbox retry.
           const command = agentCommandFor(this.k.options, profile);
-          const nativeCallbacks: RunCallbacks = { ...launch.callbacks,
-            onLog: text => void this.k.agentLog(task.id, text),
-            onUsage: info => this.k.recordUsage(info),
-            onAccountUsage: reports => this.k.recordAccountUsage(profile.toolId, reports),
-          };
           const run = await AgentRun.start({ ...launch, ...(command ? { command } : {}), env: this.envFor(), ...(sandbox ? { sandbox } : {}),
             browserRoot: join(this.k.dataDir, "browser-temp"), ...(browserTempRoot ? { browserTempRoot } : {}), callbacks: nativeCallbacks });
           cleanup.attach(run);
@@ -1086,43 +1033,18 @@ export class Turns {
         throw await this.tools.problem(profile.toolId, error);
       }
     };
-    // Ordinary starts remain visible even when the tool fails to open. A cross-round
-    // reopen is only a probe until it succeeds, and must not announce abandoned work.
-    let announced = false;
-    const announce = () => {
-      if (announced || signal.aborted) return;
-      announced = true;
-      options.onStarting?.();
-    };
-    let reopenFailure: string | undefined;
-    if (options.sessionId) {
-      if (!options.reselect) announce();
-      let opened: { run: AgentSession; off?: string } | undefined;
-      try {
-        opened = await start(options.sessionId);
-        announce();
-        return opened;
-      } catch (error) {
-        if (opened) {
-          try { await this.k.stopAgent(task.id, opened.run); }
-          catch (cleanup) { throw new AggregateError([error, cleanup], "Starting the agent failed and its cleanup was not confirmed"); }
-        }
-        if (signal.aborted || !(error instanceof ReopenFailed)) throw error;
-        if (options.reselect) throw new ParticipantUnavailable(`the tool could not reopen its saved conversation (${error.message})`);
-        reopenFailure = error.message;
-      }
-    }
-    announce();
-    return { ...await start(), ...(reopenFailure ? { reopenFailure } : {}) };
+    return openParticipantSession(options, {
+      start, stop: run => this.k.stopAgent(task.id, run), announce: () => options.onStarting?.(),
+      aborted: () => signal.aborted, unavailable: reason => new ParticipantUnavailable(reason),
+    });
   }
 
   private discardUnavailableParticipant(scope: RepositoryContext, roleId: Id, error: unknown, reviewerKey?: string): boolean {
     if (!(error instanceof ParticipantUnavailable)) return false;
-    if (!discardParticipant(scope, this.k.role(roleId, scope.task)!, error.message, reviewerKey)) return false;
-    const kind = this.k.role(roleId, scope.task)?.result === "findings" ? "review conversation" : "conversation";
-    this.k.log(scope, "status", `Could not go back to its own ${kind}: ${error.message}. Choosing this seat again before sending instructions.`, roleId);
-    this.k.commitNow(scope);
-    return true;
+    return discardParticipant(scope, this.k.role(roleId, scope.task)!, error.message, reviewerKey, text => {
+      this.k.log(scope, "status", text, roleId);
+      this.k.commitNow(scope);
+    });
   }
 
   /**
@@ -1169,26 +1091,15 @@ export class Turns {
 
   private async prepareTurnPrompt(scope: RepositoryContext, role: Role, sessionId: string, sections: Section[], note: ConversationNote | undefined,
     options: { packet?: boolean; previous?: BuilderContext; design?: boolean; knownSections?: readonly string[]; findings?: readonly import("@petrina/core").Finding[]; supplyHistory?: boolean }): Promise<{ sections: Section[]; refreshRole: boolean; omitted?: readonly ContextOmission[] }> {
-    const prepared: Awaited<ReturnType<typeof builderContext>> = options.packet ? await builderContext(this.k.dataDir, repositoryView(scope), role, sessionId, sections, options.previous, { design: options.design, knownSections: options.knownSections, findings: options.findings }) : { sections };
-    if (note && options.packet) {
-      if (prepared.snapshot) note.context = prepared.snapshot;
-      else delete note.context;
-    }
-    const supplied = options.supplyHistory === false ? { sections: prepared.sections } : await supplyReviewHistory(scope, prepared.sections, { continued: !!options.previous });
-    if (supplied.retained) this.k.commitNow(scope);
-    return { sections: supplied.sections, refreshRole: !options.previous || prepared.snapshot?.scope !== options.previous.scope, ...(prepared.omitted ? { omitted: prepared.omitted } : {}) };
+    return this.inputs.prepare(scope, {
+      packet: !!options.packet, note, previous: options.previous, sections, supplyHistory: options.supplyHistory !== false,
+      prepare: () => builderContext(this.k.dataDir, repositoryView(scope), role, sessionId, sections, options.previous, { design: options.design, knownSections: options.knownSections, findings: options.findings }),
+      history: (supplied, continued) => supplyReviewHistory(scope, supplied, { continued }),
+    });
   }
 
   private saveScreenTurn(scope: RepositoryContext, role: Role, profile: AgentProfile, member: string, copy: string, note: ConversationNote | undefined, reason: string): boolean {
-    const { task, work: repository } = scope;
-    if (!this.k.task(task.id)?.hunt || !note) return false;
-    const conversation = structuredClone(note);
-    task.hunt!.screenTurns = { ...task.hunt!.screenTurns, [member]: { reason, at: Date.now(), copy, conversation } };
-    if (task.screen) this.k.log(scope, "status", SCREEN_WORDS.asked(reason), role.id, profile.id);
-    const granted = !task.screen && this.k.askScreen(task, role.id, profile.id, reason, member);
-    if (granted) repository.conversation = conversation;
-    this.k.commitNow(scope);
-    return granted;
+    return this.k.screens.saveTurn(scope, role.id, profile.id, member, copy, note, reason);
   }
 
   /** A tool known to be missing or logged out is not started: the coordinator gets its fix instead. */

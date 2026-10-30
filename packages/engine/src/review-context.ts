@@ -1,12 +1,15 @@
+import { reviewBases as savedReviewBases, reviewBaseUpdates as observedReviewBaseUpdates } from "@petrina/orchestrator";
 import { reviewConversationScope as projectReviewScope } from "@petrina/core";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 import type { BuilderContext, Finding, Hunt, Id, Role, Task } from "@petrina/core";
 import type { Section } from "./context.js";
 import type { ContextPart } from "./roles.js";
-import { repositoryView, scopesFor, type RepositoryContext } from "@petrina/orchestrator";
+import { repositoryView, type RepositoryContext } from "@petrina/orchestrator";
 import * as git from "@petrina/repositories/git";
+import { commitAndFile } from "@petrina/repositories/object-batch";
+import { readReviewComparison as comparison, EXCLUDE_LOCKS, hasNoPortLockfileChanges, ONLY_LOCKS } from "@petrina/repositories/review-comparison";
 import { saveImmutable } from "./immutable-file.js";
 import { freezeReviewHistory, readReviewHistory, type CompactReviewHistory, type StoodThrough } from "./review-history.js";
 
@@ -36,22 +39,6 @@ async function output(path: string, args: string[]): Promise<string> {
   return result.stdout;
 }
 
-const LOCKFILES = ["bun.lock", "bun.lockb", "package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "yarn.lock"];
-const EXCLUDE_LOCKS = LOCKFILES.map((name) => `:(glob,exclude)**/${name}`);
-const ONLY_LOCKS = LOCKFILES.map((name) => `:(glob)**/${name}`);
-async function comparison(path: string, range: string, files?: readonly string[]) {
-  if (files?.length === 0) return { stat: "", patch: "", locks: "" };
-  const args = ["diff", "--no-ext-diff", "--no-textconv", "--no-color", range, "--"];
-  const selected = files?.map((file) => `:(literal)${file}`) ?? ["."];
-  const lockPaths = files ? files.filter((file) => LOCKFILES.includes(basename(file))).map((file) => `:(literal)${file}`) : ONLY_LOCKS;
-  const [stat, patch, locks] = await Promise.all([
-    output(path, ["diff", "--no-ext-diff", "--stat", range, "--", ...selected]),
-    output(path, [...args, ...selected, ...EXCLUDE_LOCKS]),
-    lockPaths.length ? output(path, [...args, ...lockPaths]) : "",
-  ]);
-  return { stat, patch, locks };
-}
-
 /** Resolve each comparison once, before any reviewer reports. Raw code never enters task/window state. */
 export async function prepareReviewInput(dataDir: string, scope: RepositoryContext, input: ReviewInput, signal: AbortSignal): Promise<InputRef> {
   const { task } = scope;
@@ -63,14 +50,14 @@ export async function prepareReviewInput(dataDir: string, scope: RepositoryConte
   for (const work of task.repositories ?? [scope.work]) {
     signal.throwIfAborted();
     const path = work.worktree!;
-    const { head, tree } = await git.commitVersion(path), base = work.baseSha ?? work.base!;
+    const base = work.baseSha ?? work.base!;
+    const { head, tree, text: guide } = await commitAndFile(path, "HEAD", base, "REVIEW.md");
     if (!head || !tree || !git.isSha(head) || !git.isSha(tree)) throw new Error("Petrina could not read the product's committed version before review");
     heads[work.productId] = head;
     trees[work.productId] = tree;
     const full = `${base}...${head}`;
     const delta = !work.portReview && work.reviewedSha ? `${work.reviewedSha}..${head}` : undefined;
-    const [guide, change, fixes] = await Promise.all([
-      git.fileAt(path, base, "REVIEW.md"),
+    const [change, fixes] = await Promise.all([
       work.portReview ? undefined : comparison(path, full),
       delta ? comparison(path, delta) : undefined,
     ]);
@@ -95,7 +82,11 @@ export async function prepareReviewInput(dataDir: string, scope: RepositoryConte
         const [before, after] = await Promise.all([port.from === port.head ? "" : patch(`${port.from}..${port.head}`), port.onto === head ? "" : patch(`${port.onto}..${head}`)]);
         return before || after || includeEmpty ? `Previous reviewed change:\n${before || (port.from === port.head ? "No commits in this range." : "No changes.")}\n\nCurrent port:\n${after || (port.onto === head ? "No commits in this range." : "No changes.")}` : "";
       };
-      const [ported, portLocks, resolved] = await Promise.all([compare([".", ...EXCLUDE_LOCKS], true), compare(ONLY_LOCKS), comparison(path, `${port.onto}..${head}`, port.files)]);
+      const [ported, portLocks, resolved] = await Promise.all([
+        compare([".", ...EXCLUDE_LOCKS], true),
+        hasNoPortLockfileChanges(path, port.from, port.head, port.onto, head) ? "" : compare(ONLY_LOCKS),
+        comparison(path, `${port.onto}..${head}`, port.files),
+      ]);
       parts.push(`## Port of the previously reviewed change\n${ported}`);
       parts.push(`## Resolved files against the new base\n${resolved.stat}\n${resolved.patch || "No non-lockfile changes."}`, await lockMaterial([portLocks, resolved.locks].filter(Boolean).join("\n\n"), "port"));
     }
@@ -139,35 +130,16 @@ export function reviewScopeKey(scope: RepositoryContext, stageId: Id, seat: Id, 
 }
 
 export function reviewBases(scope: RepositoryContext): Record<Id, string> {
-  return Object.fromEntries(scopesFor(scope.task).flatMap(({ work }) => work.baseSha ? [[work.productId, work.baseSha]] : []));
+  return savedReviewBases(scope);
 }
 
-/** Forward execution bases are compatible, independently of the immutable approved source identity. */
+/** Native observations are consumed by the portable conversation owner. */
 export async function reviewBaseUpdates(scope: RepositoryContext, bases: Readonly<Record<Id, string>> | undefined, heads: Readonly<Record<Id, string>>): Promise<{ sections: Section[]; reason?: string }> {
-  const scopes = scopesFor(scope.task);
-  if (!bases || Object.keys(bases).length !== scopes.length) return { sections: [], reason: "its saved repository bases are unavailable" };
-  const updates: string[] = [];
-  for (const { work } of scopes) {
-    const before = bases[work.productId], base = work.baseSha, head = heads[work.productId];
-    if (!before || !base || !head || !work.worktree) return { sections: [], reason: "its saved repository bases are unavailable" };
-    if (work.portReview || work.updating) return { sections: [], reason: "the change requires a conflict port review" };
-    if (before === base) continue;
-    if (!(await git.contains(work.worktree, base, before))) return { sections: [], reason: "its starting branch's history was replaced or diverged" };
-    const [incoming, changed, count] = await Promise.all([
-      git.changedFiles(work.worktree, before, base),
-      git.changedFiles(work.worktree, base, head),
-      output(work.worktree, ["rev-list", "--count", `${before}..${base}`]),
-    ]);
-    const overlap = incoming.filter((file) => changed.includes(file));
-    const commits = Number(count.trim());
-    if (!Number.isSafeInteger(commits) || commits < 1) throw new Error("Could not count the starting branch's incoming commits for review.");
-    const branch = work.source?.start.branch ?? "main", source = branch === "main" ? "Main" : branch;
-    const incremental = work.reviewedSha
-      ? `Read the incremental comparison too. ${source}'s incoming changes are not in the incremental comparison: it contains only this task's changes since the last round, carried onto the new base.`
-      : "No incremental comparison is available. Review the complete change.";
-    updates.push(`### ${work.source?.product.name ?? work.productId} (${work.productId})\nOld base: ${before}\nNew base: ${base}\n${source} gained ${commits} commit${commits === 1 ? "" : "s"}.\nExact commit under review: ${head}\nThe change was carried onto the new base without an engine conflict port.\nFiles the starting branch changed that this task also changes; read their current versions again:\n${overlap.map((file) => `- ${JSON.stringify(file)}`).join("\n") || "None."}\nRead the complete prepared comparison against ${base} and its current base review guide. ${incremental} Inspect the incoming range ${before}..${base} and its interactions wherever relevant, including beyond the files listed above. Review all code that now requires review, not only the Builder's fixes.`);
-  }
-  return { sections: updates.length ? [{ title: "The review base advanced since your last review", body: updates.join("\n\n") }] : [] };
+  return observedReviewBaseUpdates(scope, bases, heads, {
+    contains: (bound, base, before) => git.contains(bound.work.worktree!, base, before),
+    changedFiles: (bound, from, to) => git.changedFiles(bound.work.worktree!, from, to),
+    count: (bound, before, base) => git.commitsSince(bound.work.worktree!, before, base).then(String),
+  });
 }
 
 /** Retain the established native SHA256 scope while the portable owner projects its exact fields. */

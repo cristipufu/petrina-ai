@@ -1,4 +1,5 @@
 import { shutdownActors, alive } from "../../fixtures/shutdown-actors.js";
+import { installPreparedProduct, acmeDemoProduct } from "../../fixtures/prepared-product.js";
 import { afterAll, describe, expect, it } from "bun:test";
 import { completeAll } from "@petrina/core";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -26,7 +27,8 @@ it("cancels a running builder, waits for its background build, and removes any f
       w.setScript((script) => { script.hold = { title: "Long build", file: hold }; script.background = { title: "Long build", pids, program: actors.background }; });
       await w.engine(async engine => {
         try {
-          const productId = await engine.addProduct(w.clone);
+          await engine.waitUntilReady(); w.signal.throwIfAborted(); engine.stopRequested.signal.throwIfAborted();
+          const productId = installPreparedProduct(engine, acmeDemoProduct(w.clone));
           const id = engine.addTask({ productId, title: "Long build", description: "[quick]", delivery: "local" });
           await until(engine, () => existsSync(`${hold}.reached`), coordinator());
           const before = taskOf(engine.getState(), id);

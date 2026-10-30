@@ -2,7 +2,6 @@ import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { fixtureFiles } from "@petrina/test-support/fixture-files";
 import { expectRejection } from "@petrina/test-support/rejections";
 import { afterEach, afterAll, expect, it, spyOn } from "bun:test";
-import { type ChildProcess } from "node:child_process";
 import { existsSync, linkSync, lstatSync, readFileSync, readdirSync, realpathSync, renameSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -80,7 +79,7 @@ it.skipIf(process.platform !== "darwin")("keeps the standard home browser folder
     expect(browserTempRoot()).toBe(join(link, ".petrina", "b"));
     const browser = await AgentBrowser.start(registry, process.env);
     expect(dirname(browser.directory)).toBe(realpathSync(join(home, ".petrina", "b")));
-    const child = (browser as unknown as { child: ChildProcess }).child;
+    const child = browser["child"];
     const exited = new Promise<void>((resolve) => child.once("close", () => resolve()));
     forceBrowser(browser); await exited;
     expect(existsSync(browser.directory)).toBe(true);
@@ -123,7 +122,7 @@ it("keeps a folder registered under another name for the browser root, removing 
 
 it("cleans output after the browser server is killed unexpectedly", async () => {
   const browser = await startBrowser(root);
-  const child = (browser as unknown as { child: ChildProcess }).child;
+  const child = browser["child"];
   const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
   forceBrowser(browser);
   await exited;
@@ -165,7 +164,7 @@ it.skipIf(process.platform === "win32")("stops an opened browser when its contro
     if (port === undefined) throw new Error("The local page has no port");
     for (const duringClose of [false, true]) {
       await expectBrowserStops(port, async (browser) => {
-        const child = (browser as unknown as { child: ChildProcess }).child;
+        const child = browser["child"];
         const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
         // Hold graceful shutdown so the second case cannot accidentally pass by
         // closing Chromium before we simulate a controller failure.
@@ -208,7 +207,7 @@ it.skipIf(process.platform === "win32")("keeps a killed helper's folder and regi
   const registry = join(root, "killed-during-shutdown");
   const notes: string[] = [];
   const browser = await startBrowser(registry, process.env, notesIn(notes));
-  const child = (browser as unknown as { child: ChildProcess }).child;
+  const child = browser["child"];
   let standIn: number | undefined, unrelated: number | undefined;
   let unavailable = false;
   const reads: string[] = [];
@@ -257,7 +256,7 @@ it.skipIf(process.platform === "win32")("records a helper that never answered an
   const registry = join(root, "forced-without-scans");
   const notes: string[] = [];
   const browser = await startBrowser(registry, process.env, notesIn(notes));
-  const helper = requiredPid((browser as unknown as { child: ChildProcess }).child.pid, "The browser controller");
+  const helper = requiredPid(browser["child"].pid, "The browser controller");
   let unavailable = false;
   const scan = overrideBrowserProcesses(browser, {
     readFolder: async directory => unavailable ? undefined : browserProcesses.readFolder(directory),
@@ -288,7 +287,7 @@ it.skipIf(process.platform === "win32")("records a helper that never answered an
 it.skipIf(process.platform === "win32")("keeps what the helper's early list finds after the helper closed as targets of that stop", async () => {
   const notes: string[] = [];
   const browser = await startBrowser(root, process.env, notesIn(notes));
-  const child = (browser as unknown as { child: ChildProcess }).child;
+  const child = browser["child"];
   let standIn: number | undefined;
   // A slow early list, as on a busy machine: it names the helper's child only after the helper has closed.
   const scan = answerEarlyList(browser, (done) => child.once("close", () => setTimeout(() => done([standIn!]), 50)));
@@ -535,7 +534,7 @@ it.skipIf(!process.env.PETRINA_BROWSER_CHECK)("startup recovery retains a browse
   const sentinel = await orphan(process.execPath, "-e", "setInterval(() => {}, 1000)");
   const sentinelPid = sentinel;
   const browser = await startBrowser(registry);
-  const child = (browser as unknown as { child: ChildProcess }).child;
+  const child = browser["child"];
   const controller = requiredPid(child.pid, "The browser controller");
   let client: Client | undefined;
   let owned: number[] = [];

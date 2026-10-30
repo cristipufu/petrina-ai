@@ -6,7 +6,7 @@
 import { owedAcceptanceTest, requiredUnverified } from "./acceptance.js";
 import { CALL_WORDS, followingCall } from "./call.js";
 import { allowsReviewFix, coveredByDecision, reviewRoundEnd } from "./flow.js";
-import { portReviewerIndex } from "./journey.js";
+import { portReviewerIndex } from "./journey-recording.js";
 import { reviewerAt, roleForTask } from "./roles.js";
 import type { DeliveryMode, GateKind, Id, Stage, State, StepClock, StepRecord, Task } from "./model.js";
 

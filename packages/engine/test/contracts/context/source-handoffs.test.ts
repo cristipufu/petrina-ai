@@ -6,11 +6,12 @@ import { describe, expect, it } from "bun:test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type JourneyAgentInput, type WorkChoice } from "@petrina/core";
-import type { MTask } from "../../../src/kernel.js";
+import type { RuntimeTask } from "../../../src/kernel.js";
 import { BuildResult } from "../../../src/roles.js";
+import * as gitOps from "@petrina/repositories/git";
 import { currentSourcePointers } from "@petrina/repositories/source-pointers";
 import { Fakes } from "../../fixtures.js";
-import { git } from "@petrina/test-support/commands";
+import { fakeAgentSessions } from "../../fixtures/fake-agent-sessions.js";
 import { makeProduct } from "@petrina/test-support/repositories";
 import { scriptedToolProbe } from "../../scripted-probes.js";
 const cases = engineCaseFixtures();
@@ -26,6 +27,7 @@ async function handoff(owner: EngineCaseOwner, products: readonly { id: string; 
   const fakes = new Fakes(join(root, "fake"));
   const engine = owner.open(join(root, "data"), {
     agentCommand: () => [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), fakes.dir],
+    startAgentSession: fakeAgentSessions(fakes),
     toolPath: () => process.execPath,
     toolProbe: scriptedToolProbe({ "claude-code": { status: "ready" }, codex: { status: "ready" }, grok: { status: "ready" }, antigravity: { status: "ready" }, gh: { status: "unknown" }, git: { status: "ready" }, node: { status: "ready" } }), usageCommands: { codex: null, grok: null, antigravity: null },
   });
@@ -35,19 +37,18 @@ async function handoff(owner: EngineCaseOwner, products: readonly { id: string; 
     await engine.checkTools();
     const copies: Record<string, string> = {};
     for (const { id, repo } of products) {
-      copies[id] = await makeProduct(join(root, id));
+      copies[id] = await makeProduct(join(root, id), { origin: "none" });
       engine.s.products.push({ id, name: `Product ${id}`, repo, path: copies[id], defaultBranch: "main", tone: "blue" });
     }
     engine.s.pool.paused = false;
-    const head = (id: string) => git(copies[id]!, "rev-parse", "HEAD");
+    const head = async (id: string) => (await gitOps.head(copies[id]!))!;
     const commit = async (id: string, file: string) => {
       writeFileSync(join(copies[id]!, file), `${file}\n`);
-      await git(copies[id]!, "add", file);
-      await git(copies[id]!, "commit", "-q", "-m", `Add ${file}`);
+      await gitOps.commitChanges(copies[id]!, `Add ${file}`);
       return head(id);
     };
-    const plan = (task: MTask) => engine["planning"].runPlanner(task, owner.signal);
-    const design = (task: MTask, productId?: string) => {
+    const plan = (task: RuntimeTask) => engine["planning"].runPlanner(task, owner.signal);
+    const design = (task: RuntimeTask, productId?: string) => {
       const index = task.plan!.stages.findIndex((stage) => stage.kind === "converge");
       task.stageIndex = index;
       task.sub = 0;
@@ -55,7 +56,7 @@ async function handoff(owner: EngineCaseOwner, products: readonly { id: string; 
       delete scope.work.conversation;
       return engine["design"].runConverge(scope, task.plan!.stages[index]!, owner.signal);
     };
-    const build = (task: MTask, productId?: string) => {
+    const build = (task: RuntimeTask, productId?: string) => {
       task.stageIndex = task.plan!.stages.findIndex((stage) => stage.roleId === "builder");
       const scope = executionFor(task, productId);
       delete scope.work.conversation;
@@ -67,7 +68,7 @@ async function handoff(owner: EngineCaseOwner, products: readonly { id: string; 
 }
 
 /** The receiving agent's latest saved input, which must show any hints in its sections, manifest and exact text alike. */
-function delivered(task: MTask, roleId: string): string[] {
+function delivered(task: RuntimeTask, roleId: string): string[] {
   const input = task.journey!.flatMap((step) => step.agentInputs ?? []).filter((entry) => entry.roleId === roleId).at(-1) as JourneyAgentInput;
   const section = input.sections.find((entry) => entry.title === HINTS);
   const listed = input.manifest!.filter((entry) => entry.name === HINTS);
@@ -82,8 +83,8 @@ function delivered(task: MTask, roleId: string): string[] {
   return section.body.split("\n").filter((line) => line.startsWith("- ")).map((line) => line.slice(2));
 }
 
-const instructions = (task: MTask, roleId: string) => task.journey!.flatMap((step) => step.agentInputs ?? []).filter((entry) => entry.roleId === roleId).at(-1)!.instructions;
-const notes = (task: MTask) => task.timeline.filter((entry) => entry.text.startsWith("Left out")).map((entry) => `${entry.roleId}: ${entry.text}`);
+const instructions = (task: RuntimeTask, roleId: string) => task.journey!.flatMap((step) => step.agentInputs ?? []).filter((entry) => entry.roleId === roleId).at(-1)!.instructions;
+const notes = (task: RuntimeTask) => task.timeline.filter((entry) => entry.text.startsWith("Left out")).map((entry) => `${entry.roleId}: ${entry.text}`);
 const line = (productId: string, path: string, revision: string) => `${productId}: ${path} (source version ${revision})`;
 
 describe.concurrent("source hints between agents", () => {

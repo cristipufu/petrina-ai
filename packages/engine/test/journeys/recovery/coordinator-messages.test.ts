@@ -1,15 +1,17 @@
+import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { afterAll, afterEach, describe, expect, it } from "bun:test";
 import { join } from "node:path";
 import { journeyProblems, type Task } from "@petrina/core";
 import { Engine } from "../../engine.js";
 import { EARLIER_ATTEMPT } from "../../../src/prompts.js";
-import { engineProcessCases, Fakes, makeProduct, removeDir, tempDir, waitFor } from "../../support.js";
+import { engineProcessCases, Fakes, makeProduct, tempDir, waitFor } from "../../support.js";
+import { privateAgentToolProbe } from "../../scripted-probes.js";
 
-const roots: string[] = [];
+const engineCases = engineCaseFixtures();
+afterAll(() => engineCases.close());
 const cases = engineProcessCases();
 afterEach(() => cases.close());
-afterAll(() => roots.forEach(removeDir));
 
 async function setup() {
   const root = tempDir("petrina-restart-");
@@ -128,12 +130,8 @@ describe("a message sent as the engine is killed", () => {
 });
 
 describe("what the coordinator says is kept for the step", () => {
-  const root = tempDir("petrina-steps-");
-  roots.push(root);
-  const engine = new Engine(join(root, "data"));
-  afterAll(() => engine.shutdown());
 
-  async function waitingTask(): Promise<() => Task> {
+  async function waitingTask(engine: Engine): Promise<() => Task> {
     engine.setPoolPaused(true);
     const productId = `private-message-product-${engine.s.products.length + 1}`;
     engine.s.products.push({ id: productId, name: `Product ${engine.s.products.length + 1}`, repo: `local/${productId}`, tone: "blue", delivery: "local" });
@@ -142,27 +140,39 @@ describe("what the coordinator says is kept for the step", () => {
   }
 
   it("counts a resend once when its confirmation was lost", async () => {
-    const task = await waitingTask();
+    return engineCases.use("petrina-steps-", async caseOwner => {
+    const engine = caseOwner.open(join(caseOwner.root, "data"), { toolProbe: privateAgentToolProbe() });
+    const task = await waitingTask(engine);
     engine.sendMessage(task().id, "Only once", "queue", "same-id");
     engine.sendMessage(task().id, "Only once", "queue", "same-id");
     expect(task().queued).toHaveLength(1);
     expect(task().stepNotes).toHaveLength(1);
     expect(task().notes).toHaveLength(1);
-  });
+
+    });
+});
 
   it("forgets a message taken back before any agent got it", async () => {
-    const task = await waitingTask();
+    return engineCases.use("petrina-steps-", async caseOwner => {
+    const engine = caseOwner.open(join(caseOwner.root, "data"), { toolProbe: privateAgentToolProbe() });
+    const task = await waitingTask(engine);
     engine.sendMessage(task().id, "Never mind", "queue");
     engine.removeQueued(task().id, task().queued[0]!.id);
     expect(task().queued).toHaveLength(0);
     expect(task().stepNotes).toHaveLength(0);
     expect(task().notes).toHaveLength(0);
-  });
+
+    });
+});
 
   it("keeps an answer whose question a restart dropped, and hands it to the step", async () => {
-    const task = await waitingTask();
+    return engineCases.use("petrina-steps-", async caseOwner => {
+    const engine = caseOwner.open(join(caseOwner.root, "data"), { toolProbe: privateAgentToolProbe() });
+    const task = await waitingTask(engine);
     engine.answer("inbox-gone", "Green", { taskId: task().id, about: "Which colour?", clientId: "late-answer" });
     expect(task().stepNotes).toEqual([expect.objectContaining({ kind: "answer", text: "Green", about: "Which colour?" })]);
     expect(task().queued.at(-1)?.text).toBe("About your question “Which colour?”: Green");
-  });
+
+    });
+});
 });

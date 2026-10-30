@@ -11,9 +11,20 @@ export interface ProcessMetric {
 }
 export interface ProcessMetricsPlan { argv: string[]; format: "ps" | "windows"; env?: NodeJS.ProcessEnv }
 
+const WINDOWS_PROCESS_METRICS_FIELDS = [
+  "pid=$_.ProcessId",
+  "ppid=$_.ParentProcessId",
+  "born=$(if ($_.CreationDate) {$_.CreationDate.ToUniversalTime().ToString('O')} else {''})",
+  "program=$_.Name",
+  "rssBytes=$_.WorkingSetSize",
+  "cpuMs=$(if ($null -ne $_.UserModeTime -and $null -ne $_.KernelModeTime) {([double]$_.UserModeTime+[double]$_.KernelModeTime)/10000} else {$null})",
+].join("; ");
+
+const WINDOWS_PROCESS_METRICS_SCRIPT =
+  `$ErrorActionPreference='Stop'; @(Get-CimInstance Win32_Process | ForEach-Object { [pscustomobject]@{ ${WINDOWS_PROCESS_METRICS_FIELDS} } }) | ConvertTo-Json -Compress`;
+
 export function processMetricsPlan(platform: NodeJS.Platform): ProcessMetricsPlan {
-  if (platform === "win32") return { format: "windows", argv: ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
-    "$ErrorActionPreference='Stop'; @(Get-CimInstance Win32_Process | ForEach-Object { [pscustomobject]@{ pid=$_.ProcessId; ppid=$_.ParentProcessId; born=$(if ($_.CreationDate) {$_.CreationDate.ToUniversalTime().ToString('O')} else {''}); program=$_.Name; rssBytes=$_.WorkingSetSize; cpuMs=$(if ($null -ne $_.UserModeTime -and $null -ne $_.KernelModeTime) {([double]$_.UserModeTime+[double]$_.KernelModeTime)/10000} else {$null}) } }) | ConvertTo-Json -Compress"] };
+  if (platform === "win32") return { format: "windows", argv: ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", WINDOWS_PROCESS_METRICS_SCRIPT] };
   if (platform === "darwin" || platform === "linux") return { format: "ps", env: { LC_ALL: "C" }, argv: ["ps", "-axo", "pid=,ppid=,pcpu=,rss=,lstart=,comm="] };
   throw new Error(`Process resource sampling is not implemented for ${platform}.`);
 }

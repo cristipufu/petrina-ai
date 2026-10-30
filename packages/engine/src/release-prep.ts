@@ -1,10 +1,9 @@
 // Release versions and notes preparation. Publishing and its gates stay in Shipping.
-import { writeFileSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import * as github from "@petrina/repositories/github";
 import * as git from "@petrina/repositories/git";
 import { declaredVersion, isVersionFile, lockWithVersion, MAIN_VERSION_FILES, nextVersion, onlyVersionChanged, ownCrates, parseVersion, withVersion } from "./version.js";
-import { type Kernel, type MStage, RELEASE_MANAGER_PROFILE } from "./kernel.js";
+import { type Kernel, type MutableStage, RELEASE_MANAGER_PROFILE } from "./kernel.js";
 import type { RepositoryContext } from "@petrina/orchestrator";
 import { type Connections, Unreachable } from "./connection.js";
 import { ReleaseNotesResult } from "./roles.js";
@@ -15,12 +14,12 @@ const MAX_LOG = 200;
 function says(entries: readonly { file: string; version?: string }[]): string {
   return entries.map((entry) => `${entry.file} says ${entry.version ?? "something Petrina cannot read"}`).join(", ");
 }
-type ReleaseHost = Pick<Kernel, "repositoryOf" | "finishStep" | "commitNow" | "options" | "rememberVersion">;
+type ReleaseHost = Pick<Kernel, "repositoryOf" | "finishStep" | "commitNow" | "options" | "rememberVersion" | "github">;
 export class ReleasePrep {
   constructor(private readonly k: ReleaseHost, private readonly turns: Turns, private readonly connections: Connections) {}
 
   /** Release previews contain text only; no version files change until shared approval. */
-  async previewRelease(scope: RepositoryContext, stage: MStage, signal: AbortSignal): Promise<void> {
+  async previewRelease(scope: RepositoryContext, stage: MutableStage, signal: AbortSignal): Promise<void> {
     const { task, work: repository } = scope;
     if (!task.repositories || repository.delivery !== "release") return;
     const start = await git.head(repository.worktree!);
@@ -29,7 +28,7 @@ export class ReleasePrep {
     try {
       await this.chooseVersion(scope, signal);
       const log = await this.sincePreviousRelease(scope, signal);
-      const result = await this.turns.turn(scope, "release-manager", stage.profileIds[0] ?? RELEASE_MANAGER_PROFILE, () => [log], ReleaseNotesResult, signal);
+      const result = await this.turns.turn(scope, "release-manager", stage.profileIds[0] ?? RELEASE_MANAGER_PROFILE, () => [log], ReleaseNotesResult, signal, { initialHead: start });
       const shipping = repository.shipping!;
       repository.releasePreview = { start, base: repository.baseSha, version: shipping.version!, tag: shipping.tag!, after: shipping.after!, notes: result.notes, summary: result.summary };
     } finally {
@@ -107,14 +106,16 @@ export class ReleasePrep {
     }
     const conventional = /^[a-z]+(\([^)]+\))?!?: /.test(repository.report?.title ?? "");
     const message = `${conventional ? `chore(release): ${shipping.tag}` : `Release ${shipping.tag}`}\n\nSet the version to ${version}.\n\nBy Petrina`;
-    const tested = await git.commitAll(worktree, message);
+    if (!await git.commitChanges(worktree, message)) return start;
+    const committed = await git.commitVersion(worktree);
+    const tested = committed.head ?? await git.head(worktree);
     if (!tested) return start;
     // Checked like anyone's version commit: only the version, and every main version file says it.
     const changed = await git.changedFiles(worktree, start, tested);
     const targets = new Map<string, Promise<string | undefined>>();
     const targetAt = (file: string) => {
       let read = targets.get(file);
-      if (!read) { read = git.fileAt(worktree, tested, file); targets.set(file, read); }
+      if (!read) { read = existsSync(join(worktree, file)) ? git.fileAt(worktree, tested, file) : Promise.resolve(undefined); targets.set(file, read); }
       return read;
     };
     const [invalid, declaredAfter] = await Promise.all([
@@ -131,7 +132,7 @@ export class ReleasePrep {
       await git.resetTo(worktree, start);
       stop(more.length ? `the change in ${more.join(", ")} would be more than the version` : `${says(wrong)}`);
     }
-    await this.k.rememberVersion(scope);
+    await this.k.rememberVersion(scope, committed.head === tested ? committed : undefined);
     return tested;
   }
 
@@ -141,7 +142,7 @@ export class ReleasePrep {
     const product = this.k.repositoryOf(scope)!;
     const shipping = repository.shipping!;
     const remote = await this.connections.requireConnection(scope, signal);
-    const latest = await this.connections.serial(product.id, () => github.latestRelease(product.repo, this.k.options.gh));
+    const latest = await this.connections.serial(product.id, () => this.k.github.latestRelease(product.repo));
     if (!latest.ok) throw new Error(`Petrina could not read the latest release on GitHub (${latest.error}), so it published nothing. Retry when GitHub is reachable.`);
     // The product's main version files, on the work as it is now.
     const declared = await this.declaredVersions(repository.worktree!, shipping.start!);
@@ -173,7 +174,7 @@ export class ReleasePrep {
   }
 
   /** What the product's main version files say at a commit: those that state a version, and those Petrina cannot read (no `version`). */
-  private async declaredVersions(path: string, sha: string, read = (file: string) => git.fileAt(path, sha, file)): Promise<DeclaredVersion[]> {
+  private async declaredVersions(path: string, sha: string, read = (file: string) => existsSync(join(path, file)) ? git.fileAt(path, sha, file) : Promise.resolve(undefined)): Promise<DeclaredVersion[]> {
     const contents = await Promise.all(MAIN_VERSION_FILES.map(read));
     return MAIN_VERSION_FILES.flatMap((file, index) => {
       const text = contents[index];

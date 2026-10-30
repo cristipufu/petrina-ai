@@ -3,12 +3,11 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { followUpKey } from "@petrina/core";
 import { createFollowUpFixtures, older, taskOf, finish, cardFor, plant } from "../../fixtures/follow-up-native.js";
-
-const { open, close, shutdown } = createFollowUpFixtures();
+const { open, close, use } = createFollowUpFixtures();
 afterAll(close);
-
 it("keeps an unfinished source's picture while its report's link is copied, even when that task is cancelled", async () => {
-  const world = await open();
+  return use(async caseOwner => {
+  const world = await open(caseOwner);
   const { engine } = world;
   try {
     const fixId = engine.addTask({ productId: world.shop, kind: "bug", title: "bug-held: The coordinator's fix", backlog: true });
@@ -21,12 +20,15 @@ it("keeps an unfinished source's picture while its report's link is copied, even
     const originalCopy = world.files.copyFile;
     let release!: () => void;
     const held = new Promise<void>(resolve => { release = resolve; });
+    caseOwner.onStop(() => release());
     let copying!: () => void;
     const started = new Promise<void>(resolve => { copying = resolve; });
-    const copy = spyOn(world.files, "copyFile").mockImplementation(async (...args) => { copying(); await held; return originalCopy(...args); });
+    const copy = spyOn(world.files, "copyFile");
+    caseOwner.onStop(() => copy.mockRestore());
+    copy.mockImplementation(async (...args) => { copying(); await held; return originalCopy(...args); });
     try {
-      const finishing = finish(engine, done);
-      await started;
+      const finishing = caseOwner.prepare(() => finish(caseOwner, engine, done));
+      await Promise.race([started, finishing.then(() => { throw new Error("The owned operation ended before copy progress"); })]);
       engine.cancel(running.id);
       await engine["cleanup"].removeCaptures(running.id);
       expect(existsSync(original)).toBe(true);
@@ -39,11 +41,12 @@ it("keeps an unfinished source's picture while its report's link is copied, even
     expect(engine.task(running.id)!.findings[0]!.tracking).toEqual({ taskId: fixId });
     await engine["cleanup"].removeCaptures(running.id);
     expect(existsSync(original)).toBe(false);
-  } finally { await shutdown(world.engine); }
+  } finally { await caseOwner.stop(world.engine); }
+  });
 });
-
 it("keeps a saved link and its picture when the manual fix finishes or is cancelled during the copy, then follows the closed-target rules", async () => {
-  const world = await open();
+  return use(async caseOwner => {
+  const world = await open(caseOwner);
   const { engine } = world;
   try {
     for (const [end, copied] of [["finish", true], ["cancel", true], ["finish", false]] as const) {
@@ -58,17 +61,20 @@ it("keeps a saved link and its picture when the manual fix finishes or is cancel
       const originalCopy = world.files.copyFile;
       let release!: () => void;
       const held = new Promise<void>(resolve => { release = resolve; });
+    caseOwner.onStop(() => release());
       let copying!: () => void;
       const started = new Promise<void>(resolve => { copying = resolve; });
-      const copy = spyOn(world.files, "copyFile").mockImplementation(async (...args) => {
+      const copy = spyOn(world.files, "copyFile");
+    caseOwner.onStop(() => copy.mockRestore());
+    copy.mockImplementation(async (...args) => {
         copying();
         await held;
         if (!copied) throw new Error("Copy refused");
         return originalCopy(...args);
       });
       try {
-        const finishing = finish(engine, source);
-        await started;
+        const finishing = caseOwner.prepare(() => finish(caseOwner, engine, source));
+        await Promise.race([started, finishing.then(() => { throw new Error("The owned operation ended before copy progress"); })]);
         // The destination and the report were saved before copying began.
         expect(fix.followUp!.reports.map(report => report.findingId)).toEqual(["old"]);
         expect(engine.s.followUpPending).toContainEqual({ keys: [key], cardId: fixId });
@@ -105,5 +111,6 @@ it("keeps a saved link and its picture when the manual fix finishes or is cancel
       expect([existsSync(original), existsSync(join(engine.dataDir, "captures", fixId))]).toEqual([false, false]);
     }
     expect(world.prompts).toHaveLength(3);
-  } finally { await shutdown(world.engine); }
+  } finally { await caseOwner.stop(world.engine); }
+  });
 });

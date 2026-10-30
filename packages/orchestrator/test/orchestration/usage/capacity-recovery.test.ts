@@ -5,6 +5,20 @@ import { recordModelCapacity, expireModelCapacity } from "../../../src/model-cap
 const SHORT_WAITS = [5_000, 10_000, 30_000] as const;
 
 describe("actual turn recovery policy", () => {
+  it("accepts a completed attempt mentioning capacity without recording a refusal, retry or account restriction", async () => {
+    const result = "A note mentioned a full model; this attempt completed normally.";
+    const f = capacityFixture(() => result);
+    try {
+      expect(await f.main()).toBe(result);
+      expect(f.attempts).toHaveLength(1);
+      expect(f.task.modelCapacity).toBeUndefined();
+      expect(f.task.capacityRetries).toBeUndefined();
+      expect(f.events.some(event => event.kind === "capacity" || event.kind === "owesRetry")).toBe(false);
+      expect(f.state.pool.limited ?? []).toEqual([]);
+      expect(f.limits).toEqual([]);
+      expect(f.failures).toEqual([]);
+    } finally { await f.close(); }
+  });
   for (const mode of ["main", "member", "grok"] as const) it(`keeps the same ${mode} retry budget, then waits longer when no alternative is offered`, async () => {
     let stops = 0;
     const f = capacityFixture(prompt => { if (++stops <= 4) throw new FullModel(prompt.toolId, prompt.model, prompt.profileId, prompt.sessionId); return "Recovered"; });

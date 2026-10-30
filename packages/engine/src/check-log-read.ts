@@ -26,7 +26,9 @@ export function checkLogRevision(dataDir: string, taskId: string, paths: readonl
   });
 }
 
-export async function readCheckLog(dataDir: string, task: Task, a: { nodeId?: string; productId?: string; setupAttemptId?: string; index: number; section?: string; cursor?: string; limit?: number; ifRevision?: string; preview?: "ends" }): Promise<Result> {
+export type CheckLogSubject = Pick<Task, "id" | "checks" | "checkSetup" | "journey" | "repositories"> & Partial<Pick<Task, "productId">>;
+
+export async function readCheckLog(dataDir: string, task: CheckLogSubject, a: { nodeId?: string; productId?: string; setupAttemptId?: string; index: number; section?: string; cursor?: string; limit?: number; ifRevision?: string; preview?: "ends" }): Promise<Result> {
   const node = a.nodeId ? task.journey?.find((node) => node.id === a.nodeId) : undefined;
   if (a.nodeId && !node) return { outcome: "missing", message: "That journey node does not exist." };
   const work = a.productId ? (task.repositories ?? [task]).find((work) => work.productId === a.productId) : task;

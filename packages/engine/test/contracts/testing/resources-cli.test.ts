@@ -89,9 +89,15 @@ const runCommand: typeof actualRunCommand = (argv, options = {}) => {
       expect(report.code).toBe(1);
       if (completedFirst) expect(report.fullExitCode).toBe(0);
       expect(report.sampling.errors).toContain("Process sampler settlement was not confirmed: controlled sampler cleanup uncertainty");
+      // The controlled legacy error supplied no execution observations.
+      expect(report.sampling.commandFailures).toBeUndefined();
       expect(result.stderr).toContain("Test command settlement was not confirmed; private files retained");
       const actual = JSON.parse(readFileSync(captured, "utf8"));
       expect(actual.pid).toBeGreaterThan(0);
+      if (report.fullFailureExecution) {
+        expect(report.fullFailureExecution.pid).toBe(actual.pid);
+        expect(report.fullFailureExecution.atFailure.exitPromiseReported).toBe(report.fullFailureExecution.atFailure.exitPromiseCode !== undefined);
+      } else expect(report.fullExitCode).toBe(0);
       // Subject termination is observed before the independent lease/handle fallback in finally.
       expect(await childState(actual.pid)).toBe("ended");
     }), close);

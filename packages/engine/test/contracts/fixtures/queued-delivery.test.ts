@@ -1,3 +1,4 @@
+import { installPreparedProduct, acmeDemoProduct } from "../../fixtures/prepared-product.js";
 import { afterAll, expect, it } from "bun:test";
 import { queuePreparedDelivery } from "../../fixtures/queued-delivery.js";
 import { nativeWorldFixtures } from "../../fixtures/native-worlds.js";
@@ -8,7 +9,8 @@ for (const approval of [false, true]) it(`starts settled delivery prerequisites 
   return fixtures.world(`prepared-choice-${approval}`, ({ world, engine: withEngine }) => withEngine(async engine => {
     await engine.waitUntilReady();
     engine.setPoolPaused(true);
-    const productId = await engine.addProduct(world.clone);
+    engine.stopRequested.signal.throwIfAborted();
+    const productId = installPreparedProduct(engine, acmeDemoProduct(world.clone));
     engine.setProductDelivery(productId, "pull-request", approval);
     const id = await queuePreparedDelivery(engine, { productId, title: "An already reviewed greeting" });
     const task = engine.task(id)!;

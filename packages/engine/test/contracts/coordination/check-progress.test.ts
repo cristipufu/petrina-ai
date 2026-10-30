@@ -1,5 +1,5 @@
 import { engineCaseFixtures, type EngineCaseOwner } from "../../fixtures/engine-cases.js";
-import { mkdtempSync } from "node:fs";
+import { appendFileSync, existsSync, mkdtempSync } from "node:fs";
 import { afterAll as closeOwnedCases } from "bun:test";
 import { nonpassingChecks } from "../../fixtures/check-verification.js";
 import { rejectionOf } from "@petrina/test-support/rejections";
@@ -11,12 +11,49 @@ import { JOURNEY_WORDS as W, journeyView, type ProductCheck, type WorkflowEvent 
 import * as gitOps from "@petrina/repositories/git";
 import { Aborted } from "../../../src/kernel.js";
 import { Coordination } from "../../../src/coordination.js";
-import { git, makeProduct, waitFor } from "../../fixtures.js";
+import type { EngineOptions } from "../../engine.js";
+import { makeProduct, waitFor } from "../../fixtures.js";
+import { privateAgentToolProbe } from "../../scripted-probes.js";
 const cases = engineCaseFixtures();
 closeOwnedCases(() => cases.close());
 
+const waitUntilAbortedOrReleased = async (signal?: AbortSignal, releaseFile?: string, maxMs = 60_000) => {
+  const deadline = Date.now() + maxMs;
+  while (!signal?.aborted && Date.now() < deadline && (!releaseFile || !existsSync(releaseFile))) {
+    await Bun.sleep(10);
+  }
+};
 
-const options = { agentCommand: () => undefined, usageCommands: { codex: null, grok: null }, terminals: () => [] };
+const runCheckProgressCommand: NonNullable<EngineOptions["runCheckCommand"]> = async (req) => {
+  if (req.argv[0] !== process.execPath || req.argv[1] !== "-e") return undefined;
+  const code = req.argv[2]!;
+  if (code === "process.exit(1)") return { code: 1 };
+  if (code === 'console.log("First preparation diagnostic")') return { code: 0, stdout: "First preparation diagnostic\n" };
+  if (code === 'while (!(await Bun.file(process.argv[1]).exists())) await Bun.sleep(20);') {
+    await waitUntilAbortedOrReleased(req.signal, req.argv[3]);
+    return { code: 0 };
+  }
+  if (code === 'await Bun.write(Bun.stderr, "Original failure near the beginning\\n" + "Later diagnostic line\\n".repeat(9000)); process.exit(1);') {
+    return { code: 1, stderr: "Original failure near the beginning\n" + "Later diagnostic line\n".repeat(9000) };
+  }
+  if (code === "console.log('checked')") return { code: 0, stdout: "checked\n" };
+  if (code === 'console.log("Completed peer")') return { code: 0, stdout: "Completed peer\n" };
+  if (code === 'console.log("Before interruption"); await Bun.sleep(60000);') {
+    await waitUntilAbortedOrReleased(req.signal, undefined, 60_000);
+    return { code: 0, stdout: "Before interruption\n" };
+  }
+  if (code === "require('node:fs').appendFileSync('README.md', 'Added by a check\\n')") {
+    appendFileSync(join(req.cwd, "README.md"), "Added by a check\n");
+    return { code: 0 };
+  }
+  if (code === "if (!require('node:fs').existsSync(process.argv[1])) setTimeout(() => process.exit(0), 20000); else process.exit(0)") {
+    if (!existsSync(req.argv[3]!)) await waitUntilAbortedOrReleased(req.signal, undefined, 20_000);
+    return { code: 0 };
+  }
+  return undefined;
+};
+
+const options: EngineOptions = { agentCommand: () => undefined, runCheckCommand: runCheckProgressCommand, toolProbe: privateAgentToolProbe(), usageCommands: { codex: null, grok: null }, terminals: () => [] };
 async function fixture(owner: EngineCaseOwner) {
   const root = mkdtempSync(join(owner.root, "petrina-check-evidence-"));
 
@@ -25,7 +62,7 @@ async function fixture(owner: EngineCaseOwner) {
 
   engine.setPoolPaused(true);
   engine.schedule = () => {};
-  const product = await makeProduct(root);
+  const product = await makeProduct(root, { origin: "none" });
   engine.s.products.push({ id: "product", name: "Example", repo: "local/example", path: product, tone: "blue", delivery: "local" });
   const task = engine.task(engine.addTask({ productId: "product", title: "Check evidence" }))!;
   executionFor(task).work.worktree = product;
@@ -42,10 +79,10 @@ it("records a first failure on its own code before completion, including a hook 
     const { engine, task, coordination } = await fixture(owner);
     return owner.run(engine, async () => {
       const scope = executionFor(task);
-      scope.work.baseSha = await git(scope.work.worktree!, "rev-parse", "HEAD");
-      scope.work.branch = await git(scope.work.worktree!, "symbolic-ref", "--short", "HEAD");
+      scope.work.baseSha = await gitOps.head(scope.work.worktree!);
+      scope.work.branch = await gitOps.currentBranch(scope.work.worktree!);
       writeFileSync(join(scope.work.worktree!, "checked.txt"), "The change to check\n");
-      await git(scope.work.worktree!, "add", "."); await git(scope.work.worktree!, "commit", "-qm", "Prepare the checked change");
+      await gitOps.commitChanges(scope.work.worktree!, "Prepare the checked change");
       const check: ProductCheck = { name: "Quick", argv: [process.execPath, "-e", "process.exit(1)"] };
       task.journey = [];
       expect(nonpassingChecks(await engine["checks"].runProductChecks(scope, [check], owner.signal))).toBe(1);
@@ -78,7 +115,7 @@ it("retains live check progress and every original diagnostic through repeated p
     ];
     const cursor = (await coordination.call("watch.events", { taskIds: [task.id], timeoutMs: 0 })).cursor;
     const work = executionFor(task).work;
-    const firstSha = await git(work.worktree!, "rev-parse", "HEAD");
+    const firstSha = (await gitOps.head(work.worktree!))!;
     const running = owner.run(engine, () => engine["checks"].runProductChecks(executionFor(task), checks, owner.signal));
     try {
       await owner.run(engine, async () => {
@@ -95,7 +132,7 @@ it("retains live check progress and every original diagnostic through repeated p
         expect(visible[0]!.run!.source).toEqual({ stepId: "notes", attemptId: "run-0", checkId: "check-0" });
         const batch = await coordination.call("watch.events", { taskIds: [task.id], cursor, timeoutMs: 0, limit: 100 });
         const completed = (batch.events as WorkflowEvent[]).find(event => event.kind === "check.finished")!;
-        expect(completed).toEqual(expect.objectContaining({ name: "Quick", result: "pass", versions: expect.objectContaining({ sha: firstSha, tree: await git(work.worktree!, "rev-parse", "HEAD^{tree}"), definition: expect.any(String), attemptId: "run-0" }) }));
+        expect(completed).toEqual(expect.objectContaining({ name: "Quick", result: "pass", versions: expect.objectContaining({ sha: firstSha, tree: (await gitOps.treeOf(work.worktree!))!, definition: expect.any(String), attemptId: "run-0" }) }));
         expect(completed.versions).not.toHaveProperty("passed");
 
       });
@@ -104,8 +141,8 @@ it("retains live check progress and every original diagnostic through repeated p
     const firstLog = task.journey![0]!.productChecks![0]!.run!.logPath;
     const firstVersion = structuredClone(task.journey![0]!.checkAttempts![0]!);
     writeFileSync(join(work.worktree!, "changed.txt"), "New code for the next attempt\n");
-    await git(work.worktree!, "add", "."); await git(work.worktree!, "commit", "-qm", "Change the checked code");
-    const nextSha = await git(work.worktree!, "rev-parse", "HEAD");
+    await gitOps.commitChanges(work.worktree!, "Change the checked code");
+    const nextSha = (await gitOps.head(work.worktree!))!;
     const repeatCursor = (await coordination.call("watch.events", { taskIds: [task.id], timeoutMs: 0 })).cursor;
     const failure = "Original failure near the beginning\n" + "Later diagnostic line\n".repeat(9000);
     expect(nonpassingChecks(await engine["checks"].runProductChecks(executionFor(task), [{ name: "Quick", argv: [process.execPath, "-e", 'await Bun.write(Bun.stderr, "Original failure near the beginning\\n" + "Later diagnostic line\\n".repeat(9000)); process.exit(1);'] }], owner.signal))).toBe(1);
@@ -154,7 +191,7 @@ it("reuses the recorded attempt within repeated release preparation without link
       engine.s.products[0]!.checksBy = "coordinator";
       expect(nonpassingChecks(await engine["checks"].runProductChecks(scope, checks, owner.signal))).toBe(0);
       writeFileSync(join(scope.work.worktree!, "changed.txt"), "A new version for release preparation\n");
-      await git(scope.work.worktree!, "add", "."); await git(scope.work.worktree!, "commit", "-qm", "Change the checked version");
+      await gitOps.commitChanges(scope.work.worktree!, "Change the checked version");
       expect(nonpassingChecks(await engine["checks"].runProductChecks(scope, checks, owner.signal))).toBe(0);
       expect(task.journey).toHaveLength(1);
       const attempts = task.journey![0]!.checkAttempts!;
@@ -199,7 +236,7 @@ it("keeps stopped check diagnostics beside completed peers without duplicating p
       const batch = await coordination.call("watch.events", { taskIds: [task.id], from: "oldest", timeoutMs: 0, limit: 100 });
       const completed = (batch.events as WorkflowEvent[]).filter(event => event.kind === "check.finished");
       expect(completed.map(event => event.result)).toEqual(["pass", "stopped"]);
-      const head = await git(executionFor(task).work.worktree!, "rev-parse", "HEAD");
+      const head = (await gitOps.head(executionFor(task).work.worktree!))!;
       expect(completed.every(event => (event.versions as { sha?: string } | null)?.sha === head)).toBe(true);
       expect(task.journey![0]!.checkAttempts![0]).not.toHaveProperty("passed");
       expect((await coordination.call("journey.check", { taskId: task.id, nodeId: "notes", index: 1 })).commandOutcome).toBe("unfinished");
@@ -274,7 +311,7 @@ it("keeps uncommitted edits when there is nothing to run, and still records the 
           expect(restores).not.toHaveBeenCalled();
           expect(resets).not.toHaveBeenCalled();
           // Control: a check that changes a tracked file is put back, so nothing unreviewed joins the work.
-          await git(scope.work.worktree!, "add", "."); await git(scope.work.worktree!, "commit", "-qm", "Keep the edit");
+          await gitOps.commitChanges(scope.work.worktree!, "Keep the edit");
           const changing = { name: "Changing", argv: [process.execPath, "-e", "require('node:fs').appendFileSync('README.md', 'Added by a check\\n')"] };
           engine.s.products[0]!.checks = [changing];
           expect(nonpassingChecks(await engine["checks"].runProductChecks(scope, [changing], engine.stopRequested.signal))).toBe(0);

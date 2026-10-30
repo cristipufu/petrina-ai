@@ -1,13 +1,12 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { executionFor } from "@petrina/orchestrator";
 import { createWorkflowEventFixtures, kinds, all } from "../../fixtures/workflow-event-native.js";
-
-const { fixture, close } = createWorkflowEventFixtures();
+const { fixture, close, use } = createWorkflowEventFixtures();
 afterAll(close);
-
 describe("the bounded event log", () => {
 it("follows a product's newly admitted tasks, keeps terminal and later delivery events readable after retirement, and never touches execution", async () => {
-    const { e, c, events } = fixture();
+  return use("petrina-events-", async caseOwner => {
+    const { e, c, events } = fixture(caseOwner);
     const start = await events({ productId: "product", timeoutMs: 0 });
     const taskId = e.addTask({ productId: "product", title: "Shipped" });
     const task = e.task(taskId)!;
@@ -51,4 +50,5 @@ it("follows a product's newly admitted tasks, keeps terminal and later delivery 
     expect(e.drivers.size).toBe(0);
     expect(e.s.inbox).toEqual([]);
   });
+});
 });

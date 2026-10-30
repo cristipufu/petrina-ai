@@ -1,11 +1,10 @@
 import { afterAll, expect, it } from "bun:test";
 import { createFollowUpFixtures, STEPS, EVIDENCE, older, taskOf, finish, cards, cardFor } from "../../fixtures/follow-up-native.js";
-
-const { open, close, shutdown } = createFollowUpFixtures();
+const { open, close, use } = createFollowUpFixtures();
 afterAll(close);
-
 it("keeps one backlog card for a confirmed older bug and leaves everything else on the task", async () => {
-  const world = await open();
+  return use(async caseOwner => {
+  const world = await open(caseOwner);
   const { engine } = world;
   try {
     const inbox = engine.s.inbox.length;
@@ -25,8 +24,7 @@ it("keeps one backlog card for a confirmed older bug and leaves everything else 
     await engine["followUps"].noteDone(waiting);
     await engine["followUps"].catchUp();
     expect(cards(engine)).toHaveLength(0);
-
-    await finish(engine, kept);
+    await finish(caseOwner, engine, kept);
     const card = cardFor(engine, "kept");
     expect(card).toHaveLength(1);
     expect(card[0]!.state).toBe("backlog");
@@ -48,17 +46,16 @@ it("keeps one backlog card for a confirmed older bug and leaves everything else 
     expect(kept.rounds).toEqual({ review: 1 });
     expect(engine.s.inbox.length).toBe(inbox);
     expect(waiting.findings[0]!.tracking).toBeUndefined();
-
     engine.setPoolPaused(false);
     engine.schedule();
     expect(card[0]!.state).toBe("backlog");
     expect(card[0]!.startedAt).toBeUndefined();
     expect(engine.drivers.size).toBe(0);
     engine.setPoolPaused(true);
-
     await engine["followUps"].catchUp();
     expect(cards(engine)).toHaveLength(1);
     expect(cardFor(engine, "pull")).toHaveLength(0);
     expect(waiting.findings[0]!.tracking).toBeUndefined();
-  } finally { await shutdown(engine); }
+  } finally { await caseOwner.stop(engine); }
+  });
 });

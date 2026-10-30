@@ -4,12 +4,13 @@ import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "no
 import { join } from "node:path";
 import { commandText, commandInputText, checkOutcome, checkSetupOutcome, recordedCheckBatch, type ExtraValidation } from "@petrina/core";
 
-import { git, waitFor } from "../../fixtures.js";
+import { waitFor } from "../../fixtures.js";
+import { readWorktreeCommit } from "../../fixtures/shared-preparation.js";
 
 import { executionFor } from "@petrina/orchestrator";
 
 
-import { extraFixture } from "../../extra-fixtures.js";
+import { serviceExtraFixture, preparedServiceExtraFixture as extraFixture } from "../../extra-fixtures.js";
 
 const cases = engineCaseFixtures();
 afterAll(() => cases.close());
@@ -51,7 +52,7 @@ for (const checkRuns of [1, 2]) it(`reserves the final place atomically and keep
     releaseOlder(); await f.finished(next);
     for (const release of held) release();
 
-  }, { checkRuns });
+  }, { checkRuns }, { fastClientStop: true, actorLease: false, scriptedNonHoldRuns: true });
 
   });
 });
@@ -118,11 +119,12 @@ it("caller cancellation ends only its wait; retries return the same saved run an
 
 it("holds capacity after the client dies while its container remains, survives cancellation and refuses removal until confirmed", async () => {
   return cases.use("petrina-extra-", async owner => {
-    return await extraFixture(owner, async f => {
+    return await serviceExtraFixture(owner, async f => {
     f.engine.setPoolPaused(false);
     const record = await f.submit("held"); await f.started(record);
-    expect(await git(record.snapshot, "rev-parse", "HEAD")).toBe(record.commit);
-    expect(await git(record.snapshot, "rev-parse", "HEAD^{tree}")).toBe(record.tree);
+    const snapshotVer = readWorktreeCommit(record.snapshot)!;
+    expect(snapshotVer.commit).toBe(record.commit);
+    expect(snapshotVer.tree).toBe(record.tree);
     expect(readFileSync(join(record.snapshot, ".git", "config"), "utf8")).not.toContain("alternates");
     expect(existsSync(join(record.snapshot, ".git", "objects", "info", "alternates"))).toBe(false);
     writeFileSync(join(f.service, "cleanup-off"), "unavailable");
@@ -164,6 +166,10 @@ it("keeps the remaining cleanup blocker on waiting checks after one of two held 
     f.engine.setPoolPaused(false);
     const productTask = await f.add(); productTask.state = "running";
     const ordinary = { name: "Ordinary check", argv: [process.execPath, "-e", "process.exit(0)"] };
+    f.engine.options.runCheckCommand = (req) =>
+      req.argv.length === 3 && req.argv[0] === process.execPath && req.argv[1] === "-e" && req.argv[2] === "process.exit(0)"
+        ? { code: 0 }
+        : undefined;
     f.engine.setProductChecks(f.productId, [{ name: ordinary.name, command: commandInputText(ordinary.argv) }]);
     const controller = new AbortController();
     owner.onStop(() => controller.abort());

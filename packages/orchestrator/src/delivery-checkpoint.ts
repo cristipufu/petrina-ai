@@ -51,8 +51,9 @@ export class DeliveryCheckpoint {
     if (sentBack) return { kind: "repeat" };
     const hasProofs = !!current.proofRequests?.length;
     const observed = hasProofs ? await this.effects.committedCode(current) : undefined;
-    const versions = await this.effects.invalidateAcceptance(current, observed?.versions) ?? observed?.versions ?? await this.effects.versions(current);
-    refreshProofs(current, versions);
+    const versions = await this.effects.invalidateAcceptance(current, observed?.versions) ?? observed?.versions
+      ?? (hasProofs || current.repositories ? await this.effects.versions(current) : undefined);
+    if (versions) refreshProofs(current, versions);
     // The tester tried an earlier version of the change: the final code gets one more pass first.
     const tester = current.plan!.stages.findIndex((entry) => entry.kind === "do" && this.host.role(entry.roleId, current)?.result === "checks");
     const acceptanceFailed = current.acceptancePassed === false;
@@ -79,7 +80,7 @@ export class DeliveryCheckpoint {
       this.host.checkpoint();
       return { kind: "repeat" };
     }
-    if (hasProofs) current.checkedProofDecision = proofDecision(current, versions);
+    if (hasProofs) current.checkedProofDecision = proofDecision(current, versions!);
     if (this.host.shipsUnasked(current)) {
       if (hasProofs) current.approvedProofDecision = structuredClone(current.checkedProofDecision);
       for (const { work } of scopesFor(current)) {

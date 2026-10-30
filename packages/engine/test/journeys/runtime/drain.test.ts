@@ -1,34 +1,40 @@
+import { engineCaseFixtures, type EngineCaseOwner } from "../../fixtures/engine-cases.js";
+import { fakeAgentSessions } from "../../fixtures/fake-agent-sessions.js";
+import { installPreparedProduct, privateCloneProduct } from "../../fixtures/prepared-product.js";
 import { ENGINE_TEST_ROOT } from "../../fixtures/runtime-paths.js";
+import { installSharedWorkflowFastPaths } from "../../fixtures/shared-preparation.js";
 import { afterAll, describe, expect, it } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { State } from "@petrina/core";
-import { Engine } from "../../engine.js";
-import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "../../fixtures.js";
 
-const roots: string[] = [];
-afterAll(() => roots.forEach(removeDir));
+import { Fakes, createProductRepository, waitFor } from "../../fixtures.js";
+const engineCases = engineCaseFixtures();
+afterAll(() => engineCases.close());
+
+
 
 /** Two reviewers held mid-turn by the controlled fake, every agent before them let through. */
-async function reviewing() {
-  const root = tempDir("petrina-drain-");
-  roots.push(root);
+async function reviewing(caseOwner: EngineCaseOwner) {
+  const root = caseOwner.root;
+
   const fakes = new Fakes(join(root, "fake"));
   fakes.scenario({ controlled: true });
-  const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, join(ENGINE_TEST_ROOT, "fake-agent.ts"), fakes.dir] });
+  const engine = installSharedWorkflowFastPaths(caseOwner.open(join(root, "data"), { agentCommand: () => [process.execPath, join(ENGINE_TEST_ROOT, "fake-agent.ts"), fakes.dir], startAgentSession: fakeAgentSessions(fakes) }));
   const released = new Set<string>();
   const release = (session: string) => {
     if (released.has(session)) return;
     released.add(session);
     writeFileSync(join(fakes.dir, `release-${session}`), "go");
   };
-  const clone = await makeProduct(root);
-  const productId = await engine.addProduct(clone);
+  const { path: clone, initialSha } = await createProductRepository(root);
+  await engine.waitUntilReady(); caseOwner.check(); engine.stopRequested.signal.throwIfAborted();
+  const productId = installPreparedProduct(engine, privateCloneProduct(clone));
   engine.setPoolPaused(true);
   const taskId = engine.addTask({ productId, title: "Add a greeting", description: "[no-check]", backlog: true });
   const task = engine.task(taskId)!;
   const product = engine.s.products.find(product => product.id === productId)!;
-  task.repository!.source = { product: { ...product }, start: { kind: "default", branch: "main" }, destination: { mode: "local", kind: "branch", repo: product.repo, branch: "main" }, confirmed: true, initialSha: await git(clone, "rev-parse", "HEAD") };
+  task.repository!.source = { product: { ...product }, start: { kind: "default", branch: "main" }, destination: { mode: "local", kind: "branch", repo: product.repo, branch: "main" }, confirmed: true, initialSha };
   task.startedAt = Date.now(); task.state = "waiting"; task.stageIndex = 0;
   task.plan = { rationale: "Only parallel review draining is under test", plannerProfileId: "sol-high", stages: [
     { id: "review", title: "Review", kind: "review-chain", roleId: "code-reviewer", profileIds: ["opus-high", "sol-high"] },
@@ -58,7 +64,8 @@ async function reviewing() {
 
 describe("stopping gently", () => {
   it("starts nothing new while draining, waits for the reviewers in flight to hand back, then reports nothing left", async () => {
-    const { engine, taskId, productId, reviewers, release, settle } = await reviewing();
+  return engineCases.use("petrina-drain-", async caseOwner => {
+    const { engine, taskId, productId, reviewers, release, settle } = await reviewing(caseOwner);
     let releaseStops!: () => void;
     const stopping = new Promise<void>((resolve) => { releaseStops = resolve; });
     const finishing = new Set();
@@ -93,19 +100,24 @@ describe("stopping gently", () => {
       }, "the task to wait for the restart", 30_000);
     } finally {
       releaseStops();
-      await engine.shutdown();
+      await caseOwner.stop(engine);
     }
+
   });
+});
 
   it("gives up after the limit with the count of agents still in flight", async () => {
-    const { engine, reviewers, release } = await reviewing();
+  return engineCases.use("petrina-drain-", async caseOwner => {
+    const { engine, reviewers, release } = await reviewing(caseOwner);
     try {
       const started = Date.now();
       expect(await engine.drain(1500)).toBe(2);
       expect(Date.now() - started).toBeGreaterThanOrEqual(1500);
       for (const session of reviewers) release(session);
     } finally {
-      await engine.shutdown();
+      await caseOwner.stop(engine);
     }
+
   });
+});
 });

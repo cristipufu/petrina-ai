@@ -1,4 +1,8 @@
 import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
+import { fakeAgentSessions } from "../../fixtures/fake-agent-sessions.js";
+import { installPreparedProduct, privateCloneProduct } from "../../fixtures/prepared-product.js";
+import { installSharedWorkflowFastPaths, readRef } from "../../fixtures/shared-preparation.js";
+import { privateAgentToolProbe } from "../../scripted-probes.js";
 import { mkdtempSync } from "node:fs";
 import { afterAll as closeOwnedCases } from "bun:test";
 import { expect, it } from "bun:test";
@@ -7,8 +11,8 @@ import { join } from "node:path";
 import { roleForTask, type JourneyStep, type Task } from "@petrina/core";
 import { Coordination } from "../../../src/coordination.js";
 import { executionFor } from "@petrina/orchestrator";
-import { commandInputText } from "../../../src/checks.js";
-import { coordinator, Fakes, git, itemOf, makeProduct, taskOf, until, waitFor } from "../../support.js";
+import { coordinator, Fakes, itemOf, taskOf, until, waitFor } from "../../support.js";
+import { createProductRepository } from "../../fixtures.js";
 const cases = engineCaseFixtures();
 closeOwnedCases(() => cases.close());
 
@@ -31,25 +35,30 @@ for (const restarts of [true] as boolean[]) it(`continues an exhausted review th
     // Restarting partway: the security reviewer holds its first turn of each conversation until the test releases it.
     // High risk: Petrina adds its own security review after the code review.
     fakes.scenario({ planner: "tester-after", risk: "high", builder: "plain", reviewer: "important", ...(restarts ? { nativeRetry: [{ role: "security reviewer", steps: [{ mark: "security-held-{session}" }, { wait: "security-release-{session}" }] }] } : {}) });
-    const options = { agentCommand: () => [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), fakes.dir] };
-    let engine = owner.open(join(root, "data"), options);
+    const options = { agentCommand: () => [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), fakes.dir], startAgentSession: fakeAgentSessions(fakes), toolProbe: privateAgentToolProbe() };
+    const fastPaths = { skipDriverPrepare: true, skipUpToDate: true, skipPrepareChecks: true, skipReviewCopies: true, skipReviewInputDiffs: true, fastCheckCapture: true, fastCleanup: true, fastCheckpoints: true } as const;
+    let engine = installSharedWorkflowFastPaths(owner.open(join(root, "data"), options), fastPaths);
     const replaced: Promise<void>[] = [];
     const restart = async () => {
       engine.setPoolPaused(true);
       const stopping = owner.stop(engine);
       replaced.push(stopping);
       await stopping;
-      engine = owner.open(join(root, "data"), options);
+      engine = installSharedWorkflowFastPaths(owner.open(join(root, "data"), options), fastPaths);
     };
     const held = () => readdirSync(fakes.dir).filter((name) => name.startsWith("security-held-")).map((name) => name.slice("security-held-".length));
     const release = () => { for (const session of held()) if (!existsSync(join(fakes.dir, `security-release-${session}`))) writeFileSync(join(fakes.dir, `security-release-${session}`), ""); };
     owner.onStop(release);
     try {
-      const clone = await makeProduct(root);
-      const productId = await engine.addProduct(clone);
+      const { path: clone, initialSha: main } = await createProductRepository(root, { origin: "none" });
+      owner.check(); engine.stopRequested.signal.throwIfAborted();
+      await engine.waitUntilReady();
+      owner.check(); engine.stopRequested.signal.throwIfAborted();
+      const productId = installPreparedProduct(engine, privateCloneProduct(clone));
       engine.setProductDelivery(productId, "local", true);
-      engine.setProductChecks(productId, [{ name: "Tests", command: commandInputText([process.execPath, "-e", "process.exit(0)"]) }]);
-      const main = await git(clone, "rev-parse", "main");
+      const product = engine.s.products.find(p => p.id === productId)!;
+      product.checks = [];
+      product.checksBy = "coordinator";
       const id = engine.addTask({ productId, title: "A reviewed greeting", description: "[no-check]" });
       const task = () => engine.task(id)!;
       const resultOf = (step: JourneyStep) => roleForTask(engine.s.roles, step.roleId ?? "", task())?.result;
@@ -117,14 +126,14 @@ for (const restarts of [true] as boolean[]) it(`continues an exhausted review th
       const work = executionFor(task()).work;
       expect(work.approvedSha).toBeUndefined();
       expect(work.landed).toBeUndefined();
-      expect(await git(clone, "rev-parse", "main")).toBe(main);
+      expect(readRef(join(clone, ".git"), "refs/heads/main")).toBe(main);
 
       // Approving that decision delivers.
       const current = await c.call("inbox.inspect", { itemId: final.id });
       expect((await c.call("inbox.approve", { itemId: final.id, revision: current.revision, requestId: "ship-it" })).outcome).toBe("completed");
       const done = await until(engine, (state) => taskOf(state, id).state === "done", coordinator([]));
       expect(taskOf(done, id).landed).toBeDefined();
-      expect(await git(clone, "rev-parse", "main")).not.toBe(main);
+      expect(readRef(join(clone, ".git"), "refs/heads/main")).not.toBe(main);
 
     } finally {
       release();

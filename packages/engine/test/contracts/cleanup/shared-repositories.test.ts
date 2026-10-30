@@ -43,7 +43,7 @@ describe.concurrent("one task across products", () => {
       // A crash can remove a review folder before its Git registration is cleaned up.
       for (const work of task.repositories) {
         const copy = join(shop.data, "worktrees", work.productId, `${id}.copies`, "review-0");
-        await addCopy(work.source!.product.path!, copy, await git(work.worktree!, "rev-parse", "HEAD"));
+        await addCopy(work.source!.product.path!, copy, (await gitOps.head(work.worktree!))!);
         rmSync(copy, { recursive: true });
       }
       task.state = "cancelled";

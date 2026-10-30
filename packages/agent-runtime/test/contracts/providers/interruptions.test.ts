@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { AgentProfile } from "@petrina/core";
 import { AgentRun } from "../../../src/acp-run.js";
 import type { NativeRetryReport } from "@petrina/orchestrator";
-import { GROK_OVERLOADED } from "../../../src/provider-interruptions.js";
+import { CODEX_MODEL_CAPACITY, GROK_OVERLOADED } from "../../../src/provider-interruptions.js";
 import { ModelAtCapacity, UsageLimited } from "../../../src/failures.js";
 import { rejectionOf } from "@petrina/test-support/rejections";
 import { removeDir, tempDir, waitFor } from "@petrina/test-support/fixtures";
@@ -155,6 +155,40 @@ describe.concurrent("a terminal capacity stop in each tool's own shape", () => {
       return { error, sessionId: run.sessionId };
     } finally { await run.stop(); }
   };
+
+  it("preserves Codex's actual session identity for bare capacity sentences and RPC overloads", async () => {
+    for (const prompt of [
+      { steps: [], reply: CODEX_MODEL_CAPACITY },
+      { steps: [{ fail: { code: -32603, message: "Internal error", data: {
+        message: CODEX_MODEL_CAPACITY, codexErrorInfo: "serverOverloaded", codex_error_info: "server_overloaded",
+      } } }] },
+    ] satisfies NativePrompt[]) {
+      const { error, sessionId } = await stop(PROFILES.codex, prompt);
+      expect(error).toBeInstanceOf(ModelAtCapacity);
+      expect(error).not.toBeInstanceOf(UsageLimited);
+      expect(error).toMatchObject({ toolId: "codex", modelId: "gpt-6.1-sol", profileId: "sol-high", sessionId });
+      expect((error as ModelAtCapacity).retryAfterMs).toBeUndefined();
+    }
+  });
+
+  it("preserves the provider's explicit delay on the typed native capacity failure", async () => {
+    const { error, sessionId } = await stop(PROFILES.codex, { steps: [{ fail: { code: -32603, message: "Internal error", data: {
+      message: CODEX_MODEL_CAPACITY, codexErrorInfo: "serverOverloaded", codex_error_info: "server_overloaded", retryAfterMs: 45_000,
+    } } }] });
+    expect(error).toBeInstanceOf(ModelAtCapacity);
+    expect(error).not.toBeInstanceOf(UsageLimited);
+    expect(error).toMatchObject({ toolId: "codex", modelId: "gpt-6.1-sol", profileId: "sol-high", sessionId, retryAfterMs: 45_000 });
+  });
+
+  it("accepts a completed native result that quotes a capacity sentence in its earlier prose", async () => {
+    const reply = `A note along the way said “${CODEX_MODEL_CAPACITY}” The work is finished.\n\n\`\`\`petrina\n${JSON.stringify({ summary: "Added a greeting.", changes: ["People see a greeting"], tests: "Supplied provider report" })}\n\`\`\``;
+    const { run } = await conversation(PROFILES.codex, { prompt: { steps: [], reply } });
+    try {
+      const result = await run.prompt("Return the completed result");
+      expect(result.text).toBe(reply);
+      expect(result.stopReason).toBe("end_turn");
+    } finally { await run.stop(); }
+  });
 
   it("recognizes Claude's explicit overload and keeps what it had said", async () => {
     const { error, sessionId } = await stop(PROFILES.claude, { steps: [said("I drafted the greeting before the model filled up."), claudeOverload] });

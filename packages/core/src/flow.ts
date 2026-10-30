@@ -10,11 +10,11 @@ import { exhaustedAcceptanceFailure, restoredAcceptance } from "./acceptance.js"
 import { CALL_WORDS, callOn, designStageIndex, startCall } from "./call.js";
 import { assignedProducts, taskProductIds } from "./repositories.js";
 import { findingCount } from "./findings.js";
-import { JOURNEY_WORDS } from "./journey.js";
+import { JOURNEY_WORDS } from "./journey-words.js";
 import type { Column, Finding, GateKind, Id, InboxKind, Role, Stage, Task } from "./model.js";
 
 /** A writable copy of a read-only state type: what the engine and the simulator change in place. */
-export type DeepMutable<T> = T extends readonly (infer U)[] ? DeepMutable<U>[] : T extends object ? { -readonly [K in keyof T]: DeepMutable<T[K]> } : T;
+export type DeepMutable<T> = T extends (...args: never[]) => unknown ? T : T extends readonly (infer U)[] ? DeepMutable<U>[] : T extends object ? { -readonly [K in keyof T]: DeepMutable<T[K]> } : T;
 
 export function lastIndexWhere<T>(items: readonly T[], match: (item: T, index: number) => boolean): number {
   for (let index = items.length - 1; index >= 0; index -= 1) if (match(items[index]!, index)) return index;
@@ -102,7 +102,7 @@ export function gateStatus(task: Task, gate: GateKind): string {
 export function afterChangesAsked(task: DeepMutable<Task>, kind: InboxKind, note: string, now: number, roles: readonly Role[]): { call: boolean } {
   const stages = task.plan?.stages ?? [];
   if (task.repositories && (kind === "design" || kind === "disagreement")) task.designRevision = (task.designRevision ?? 0) + 1;
-  const call = kind === "disagreement" ? startCall(task as unknown as Task, note, now, roles) : undefined;
+  const call = kind === "disagreement" ? startCall(task, note, now, roles) : undefined;
   if (call && task.plan) {
     // The call is final: the architect follows it once, then the coordinator checks the brief. No review round.
     task.plan.stages = call.stages as DeepMutable<Stage>[];
@@ -117,7 +117,7 @@ export function afterChangesAsked(task: DeepMutable<Task>, kind: InboxKind, note
     const index = designStageIndex(stages as Stage[], task.stageIndex);
     if (index >= 0) {
       // On a design the call settled, changes go to the architect alone and come back to the same check.
-      if (!callOn(task as unknown as Task, index)) task.rounds[stages[index]!.id] = (task.rounds[stages[index]!.id] ?? 1) + 1;
+      if (!callOn(task, index)) task.rounds[stages[index]!.id] = (task.rounds[stages[index]!.id] ?? 1) + 1;
       task.stageIndex = index;
     }
   } else if (kind === "delivery") {

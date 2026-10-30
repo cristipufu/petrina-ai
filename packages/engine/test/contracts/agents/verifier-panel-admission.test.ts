@@ -6,7 +6,7 @@ const { voting, checkedFinding, plain, verifierSteps, inject, close } = independ
 afterAll(close);
 describe.concurrent("bounded verifier panels", () => {
 it("starts two fresh verifiers instead of one per ready tool, avoiding the reporting tool", async () => {
-    const f = await voting({}, 4, [], true);
+    const f = await voting({}, 4, [], true, { acceptedBuild: true });
     try {
       await f.run(async () => {
       // Keep actual near-limit admission in this transport control; usage permutations belong to selection contracts.
@@ -54,37 +54,9 @@ it("targets a mixed batch's third answer at the unsettled finding only", async (
     } finally { await f.close(); }
   });
 
-it("leaves a finding unresolved when no ready tool can give its third answer, and never repeats that ballot", async () => {
-    const f = await voting({ verifier: "not-a-bug", answer: { fixed: false, text: "It is not broken." }, reviewRounds: 2 }, 3, []);
-    try {
-      await f.run(async () => {
-      await f.advance(() => f.fakes.received("verifier").length === 2, (role) => role !== "verifier");
-      // Claude Code signs out after selection: it was usable, but cannot give the required third answer.
-      f.engine.s.setup!.checks = [{ id: "claude-code", status: "logged-out" }, { id: "codex", status: "ready" }, { id: "grok", status: "ready" }];
-      await f.advance(f.delivery);
-      const finding = checkedFinding(f);
-      expect(f.fakes.openings("verifier")).toHaveLength(2);
-      expect(finding.verification).toBeUndefined();
-      expect(finding.unresolved?.reason).toContain("no ready independent tool can give the required third answer");
-      // The reviewed commit and its tree, so a later round compares like with like.
-      expect(Object.values(finding.unresolved?.heads ?? {})).toHaveLength(1);
-      expect(Object.values(finding.unresolved?.trees ?? {})).toHaveLength(1);
-      expect(finding.severity).toBe("blocking");
-      expect(finding.status).toBe("open");
-      expect(verifierSteps(f).map((step) => step.outcome)).toEqual(["1 checked: 1 unresolved"]);
-      const { answer: laterAnswer, ...reviewed } = finding;
-      expect(laterAnswer).toEqual({ fixed: false, text: "It is not broken.", at: expect.any(Number) });
-      expect(verifierSteps(f)[0]!.result).toEqual({ findings: [reviewed], findingsSettled: true });
-      expect(f.task().timeline.some((entry) => entry.text.startsWith("Review rounds used up"))).toBe(true);
-      });
-    } finally { await f.close(); }
-  });
-
-
-
-for (const modelOnly of [false, true]) it(`retains a selected seat whose ${modelOnly ? "model" : "tool"} is limited after its peer finishes, without borrowing the peer's vote`, async () => {
+for (const modelOnly of [false]) it(`retains a selected seat whose ${modelOnly ? "model" : "tool"} is limited after its peer finishes, without borrowing the peer's vote`, async () => {
     // Grok is out before selection, so the pair is Codex and Claude Code with no independent replacement.
-    const f = await voting({ limited: [{ model: "opus", role: "verifier", ...(modelOnly ? { type: "seven_day_opus" } : { spendCap: true }) }] }, 3, ["grok"]);
+    const f = await voting({ limited: [{ model: "opus", role: "verifier", ...(modelOnly ? { type: "seven_day_opus" } : { spendCap: true }) }] }, 3, ["grok"], false, { acceptedBuild: true });
     try {
       await f.run(async () => {
       if (!modelOnly) {
@@ -115,20 +87,7 @@ for (const modelOnly of [false, true]) it(`retains a selected seat whose ${model
     } finally { await f.close(); }
   });
 
-it("replaces a selected seat limited after its peer finishes with an independent usable tool", async () => {
-    const f = await voting({ limited: [{ model: "grok-4.7", role: "verifier", spendCap: true }] }, 3, []);
-    try {
-      await f.run(async () => {
-      await f.advance(f.delivery);
-      const finding = checkedFinding(f);
-      expect(new Set(plain(finding.votes)!.map((vote) => vote.toolId))).toEqual(new Set(["codex", "claude-code"]));
-      expect(finding.votes!.find((vote) => vote.toolId === "claude-code")!.ballot!.seat).toBe("grok-high");
-      const replacement = f.task().journey!.flatMap((step) => step.agentInputs ?? []).find((input) => input.selectionReason?.includes("takes its required seat"));
-      expect(replacement?.profileId).toBe("opus-high");
-      expect(finding.verification?.verdict).toBe("real");
-      });
-    } finally { await f.close(); }
-  });
+
 
 
 

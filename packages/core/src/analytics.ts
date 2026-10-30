@@ -2,6 +2,8 @@
 // gets the log: it asks for one of these views and gets just its numbers.
 
 import { limitBuckets, limitsOverTime, readingsView, type LimitsOverTime, type ReadingsRequest, type ReadingsView } from "./limit-history-view.js";
+import { figures, type Detail } from "./analytics-figures.js";
+export { figures, type Detail } from "./analytics-figures.js";
 import { nodeUsage, type NodeUsage } from "./node-usage.js";
 import { tokensOverTime, type OverTimeView } from "./charts.js";
 import type { AgentProfile, Id, State, Task, UsageReport } from "./model.js";
@@ -30,14 +32,6 @@ export interface UsageContext {
   taskName?: (taskId: Id) => string | undefined;
   /** The live allowance readings Analytics uses instead of the pool's current ones: a paged read keeps its first page's. */
   usage?: readonly UsageReport[];
-}
-
-/** New input, reused, written and output. Missing: not reported. */
-export interface Detail {
-  input?: number;
-  cacheRead?: number;
-  cacheWrite?: number;
-  output?: number;
 }
 
 export interface WorkUsageLine {
@@ -232,24 +226,6 @@ export function dayBuckets(period: UsagePeriod, now: number): { start: number; e
 }
 
 // ── Figures ────────────────────────────────────────────────────────────────
-
-/**
- * Tokens and time for a tally. "At least" only when whole turns are known to be missing. When
- * nothing known adds up to more than zero and work is missing, there is no number at all: it
- * reads "not reported" when a tool sent no figure, and "not known" when the work wasn't
- * recorded (cut off, or from before Petrina kept track). Unknown is never zero.
- */
-export function figures(tally: Tally, beforeTracking = false): { tokens: Figure; time: Figure } {
-  const tokens: Figure = { atLeast: tally.noTokens > 0 || tally.lost > 0 || beforeTracking };
-  if (!tokens.atLeast) tokens.value = tally.tokens;
-  else if (tally.reported > 0 && tally.tokens > 0) tokens.value = tally.tokens;
-  else if (tally.noTokens === 0) tokens.unknown = true;
-  const time: Figure = { atLeast: tally.lost > 0 || beforeTracking };
-  if (!time.atLeast) time.value = tally.workMs;
-  else if (tally.timed > 0 && tally.workMs > 0) time.value = tally.workMs;
-  else time.unknown = true;
-  return { tokens, time };
-}
 
 function detailOf(tally: Tally): Detail {
   return {

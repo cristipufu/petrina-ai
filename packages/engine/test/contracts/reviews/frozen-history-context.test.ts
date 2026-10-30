@@ -12,7 +12,7 @@ import { builderContext } from "../../../src/builder-context.js";
 import { formatFindings } from "../../../src/prompts.js";
 import { checkReviewEvidence } from "@petrina/core";
 import { ReviewResult } from "../../../src/roles.js";
-import { git, makeProduct } from "../../fixtures.js";
+import { createProductRepository } from "../../fixtures.js";
 import { frozenHistoryFixtures } from "../../fixtures/review-history.js";
 const cases = engineCaseFixtures();
 closeOwnedCases(() => cases.close());
@@ -286,9 +286,9 @@ it("preserves separate shared-product claims and judgments in the frozen referen
     const f = await fixture(owner, 0);
     try {
       await owner.run(f.engine, async () => {
-        const second = await makeProduct(join(f.root, "second"));
+        const { path: second, initialSha: secondSha } = await createProductRepository(join(f.root, "second"), { origin: "none" });
         f.engine.s.products.push({ id: "second", name: "Second", path: second, repo: "local/second", tone: "blue" });
-        f.task.repositories = [{ ...f.scope.work, completedStages: [] }, { ...f.scope.work, productId: "second", worktree: second, baseSha: await git(second, "rev-parse", "HEAD"), completedStages: [] }];
+        f.task.repositories = [{ ...f.scope.work, completedStages: [] }, { ...f.scope.work, productId: "second", worktree: second, baseSha: secondSha, completedStages: [] }];
         delete f.task.repository;
         f.scope = executionFor(f.task);
         const shared = { ...finding("shared"), productIds: ["p", "second"], answers: { p: { fixed: true, text: "Product p claim", at: 10 }, second: { fixed: true, text: "Separate second-product claim", at: 25 } }, judgments: [{ by: "sol-high", severity: "blocking" as const, at: 5 }, { by: "opus-high", severity: "suggestion" as const, at: 6 }] };

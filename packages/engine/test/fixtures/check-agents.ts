@@ -59,6 +59,10 @@ export function checkAgents() {
   return {
     start,
     respond,
+    acceptedBuild: (cwd: string, findingIds: readonly string[], fixing: boolean) => {
+      if (script.controlled) throw new Error("A controlled participant cannot use the accepted-result boundary");
+      return replies.acceptedBuild(cwd, findingIds, fixing);
+    },
     release: (sessionId: string) => releases.release(sessionId),
     received,
     prompts: (role: string) => received(role).map(prompt => prompt.text),

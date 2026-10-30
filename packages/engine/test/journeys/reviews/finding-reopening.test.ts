@@ -13,7 +13,7 @@ describe.concurrent("reviews that converge", () => {
   it("passes a fresh failing reproduction to the next builder and saves the original evidence in history", async () => {
     return cases.use("petrina-engine-case-", async owner => {
       const evidence = "On current code, send an explicit dispute before an independent confirmation: the finding stays dismissed. Reverse the order: it stays open. Expected both orders to keep independently confirmed findings open.";
-      const { task, fakes, root } = await untilDelivery(owner, { builder: "plain", reviewer: "confirm-fixed", reviewRounds: 3, reopenedEvidence: evidence });
+      const { task, fakes, root } = await untilDelivery(owner, { builder: "plain", reviewer: "confirm-fixed", reviewRounds: 3, reopenedEvidence: evidence }, undefined, false, { entry: "builder", skipDiffs: true });
       const finding = task.findings.find((entry) => entry.severity === "blocking")!;
       expect(task.findings.filter((entry) => entry.id === finding.id)).toHaveLength(1);
       expect(task.findings.filter((entry) => entry.severity === "blocking")).toHaveLength(2);

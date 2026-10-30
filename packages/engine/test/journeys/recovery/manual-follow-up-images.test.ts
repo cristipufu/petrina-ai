@@ -3,12 +3,11 @@ import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { Coordination } from "../../../src/coordination.js";
 import { createFollowUpFixtures, cards, failedAssignment } from "../../fixtures/follow-up-native.js";
-
-const { open, reopen, close, shutdown } = createFollowUpFixtures();
+const { open, reopen, close, use } = createFollowUpFixtures();
 afterAll(close);
-
 for (const reason of ["unavailable", "no-choice"] as const) it(`finishes the existing ${reason} assignment by hand without crediting another target`, async () => {
-  const world = await open();
+  return use(async caseOwner => {
+  const world = await open(caseOwner);
   let release = () => {};
   try {
     const { engine } = world;
@@ -46,5 +45,6 @@ for (const reason of ["unavailable", "no-choice"] as const) it(`finishes the exi
     expect(world.engine.task(source.id)!.findings[0]!.tracking).toEqual({ taskId: automaticId });
     expect(cards(world.engine).filter(task => task.followUp!.reports.some(report => report.taskId === source.id && report.findingId === "old")).map(task => task.id)).toEqual([automaticId]);
     expect(world.engine.task(automaticId)!.session.flatMap(line => line.images ?? [])).toHaveLength(1);
-  } finally { release(); await shutdown(world.engine); }
+  } finally { release(); await caseOwner.stop(world.engine); }
+  });
 });

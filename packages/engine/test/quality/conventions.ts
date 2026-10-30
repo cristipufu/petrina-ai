@@ -1,37 +1,109 @@
-import { isSource, isTest } from "./test-paths.js";
-import { sourceFacts } from "./source.js";
-import { sourceCandidates } from "./source-paths.js";
+import { engineConstructionBoundaries } from "./engine-construction.js";
 import { childFixtureBoundaries, layerBoundaries, packageBoundaries } from "./layers.js";
+import { sourceCandidates } from "./source-paths.js";
+import { sourceFacts } from "./source.js";
+import { isSource, isTest } from "./test-paths.js";
 import { TEST_WORKSPACES } from "./workspaces.js";
 
 export function conventions(files: ReadonlyMap<string, string>): string[] {
   const errors: string[] = [];
   for (const [file, source] of files) {
     const engine = file.startsWith("packages/engine/test/");
-    const native = TEST_WORKSPACES.some(workspace => workspace.runner === "bun" && file.startsWith(`${workspace.path}/test/`));
+    const native = TEST_WORKSPACES.some(
+      (workspace) => workspace.runner === "bun" && file.startsWith(`${workspace.path}/test/`),
+    );
     if ((!native && !isTest(file)) || !isSource(file)) continue;
+
     let facts;
-    try { facts = sourceFacts(source, file); }
-    catch (error) { errors.push(`${file}: cannot parse test source: ${error instanceof Error ? error.message : String(error)}`); continue; }
-    const fromProduction = (path: string, ...modules: readonly string[]) => sourceCandidates(file, path).some(candidate => modules.some(module => candidate === `packages/engine/src/${module}.ts`));
-    if (engine && file !== "packages/engine/test/engine.ts") for (const entry of facts.imports) {
-      if (entry.runtime && fromProduction(entry.path, "engine", "index") && entry.names.some(name => ["Engine", "*", "default"].includes(name))) errors.push(`${file}: import Engine from the isolated test/engine fixture`);
+    try {
+      facts = sourceFacts(source, file);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      errors.push(`${file}: cannot parse test source: ${detail}`);
+      continue;
     }
-    if (engine && file !== "packages/engine/test/client.ts") for (const entry of facts.imports) {
-      if (entry.runtime && fromProduction(entry.path, "engine-client") && entry.names.some(name => ["EngineClient", "*", "default"].includes(name))) errors.push(`${file}: import EngineClient from test/client so lifecycle starts use the isolated fixture CLI`);
+
+    if (engine) errors.push(...engineConstructionBoundaries(file, facts.engineConstructions));
+
+    const fromProduction = (path: string, ...modules: readonly string[]) =>
+      sourceCandidates(file, path).some((candidate) =>
+        modules.some((module) => candidate === `packages/engine/src/${module}.ts`),
+      );
+
+    if (engine && file !== "packages/engine/test/engine.ts") {
+      for (const entry of facts.imports) {
+        if (
+          entry.runtime
+          && fromProduction(entry.path, "engine", "index")
+          && entry.names.some((name) => ["Engine", "*", "default"].includes(name))
+        ) {
+          errors.push(`${file}: import Engine from the isolated test/engine fixture`);
+        }
+      }
     }
-    if (engine && file !== "packages/engine/test/fixtures.ts") for (const entry of facts.imports) {
-      if (entry.runtime && fromProduction(entry.path, "checks") && entry.names.some(name => ["runChecks", "*", "default"].includes(name))) errors.push(`${file}: import runChecks from test/fixtures, which never reads this Mac's power log`);
+
+    if (engine && file !== "packages/engine/test/client.ts") {
+      for (const entry of facts.imports) {
+        if (
+          entry.runtime
+          && fromProduction(entry.path, "engine-client")
+          && entry.names.some((name) => ["EngineClient", "*", "default"].includes(name))
+        ) {
+          errors.push(`${file}: import EngineClient from test/client so lifecycle starts use the isolated fixture CLI`);
+        }
+      }
     }
-    if (native) for (const line of facts.promiseMatchers) errors.push(`${file}:${line}: await rejectionOf/expectRejection or the ordinary Promise before asserting; do not use Bun's promise matchers`);
-    if (native) errors.push(...childFixtureBoundaries(file, facts.childPrograms, files));
-    for (const line of facts.blockingCalls) errors.push(`${file}:${line}: run test programs with runCommand or git from @petrina/test-support/commands; a synchronous child call holds the whole test worker until its exit is reported`);
-    if (native) for (const { line, name } of facts.unfinished) errors.push(`${file}:${line}: await ${name}(…), return it or collect it before going on; its result and its failure are otherwise lost`);
-    if (native) for (const line of facts.asyncCallbacks) errors.push(`${file}:${line}: keep this callback synchronous, it is called without waiting; read what it needs before, or hold the workflow while reading it`);
-    if (native && facts.concurrentTests.length) for (const line of facts.environmentMutations)
-      errors.push(`${file}:${line}: concurrent tests cannot change process.env in their worker; pass an environment to the boundary or use an owned child process`);
-    for (const line of facts.exclusiveTests) errors.push(`${file}:${line}: remove the exclusive test selection before handoff`);
+
+    if (engine && file !== "packages/engine/test/fixtures.ts") {
+      for (const entry of facts.imports) {
+        if (
+          entry.runtime
+          && fromProduction(entry.path, "checks")
+          && entry.names.some((name) => ["runChecks", "*", "default"].includes(name))
+        ) {
+          errors.push(`${file}: import runChecks from test/fixtures, which never reads this Mac's power log`);
+        }
+      }
+    }
+
+    if (native) {
+      for (const line of facts.promiseMatchers) {
+        errors.push(
+          `${file}:${line}: await rejectionOf/expectRejection or the ordinary Promise before asserting; do not use Bun's promise matchers`,
+        );
+      }
+      errors.push(...childFixtureBoundaries(file, facts.childPrograms, files));
+    }
+
+    for (const line of facts.blockingCalls) {
+      errors.push(
+        `${file}:${line}: run test programs with runCommand or git from @petrina/test-support/commands; a synchronous child call holds the whole test worker until its exit is reported`,
+      );
+    }
+
+    if (native) {
+      for (const { line, name } of facts.unfinished) {
+        errors.push(
+          `${file}:${line}: await ${name}(…), return it or collect it before going on; its result and its failure are otherwise lost`,
+        );
+      }
+      for (const line of facts.asyncCallbacks) {
+        errors.push(
+          `${file}:${line}: keep this callback synchronous, it is called without waiting; read what it needs before, or hold the workflow while reading it`,
+        );
+      }
+      if (facts.concurrentTests.length) {
+        for (const line of facts.environmentMutations) {
+          errors.push(
+            `${file}:${line}: concurrent tests cannot change process.env in their worker; pass an environment to the boundary or use an owned child process`,
+          );
+        }
+      }
+    }
+
+    for (const line of facts.exclusiveTests) {
+      errors.push(`${file}:${line}: remove the exclusive test selection before handoff`);
+    }
   }
   return [...errors, ...layerBoundaries(files), ...packageBoundaries(files)].sort();
 }
-

@@ -1,9 +1,14 @@
+import { afterAll } from "bun:test";
+import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
 import { expect, it } from "bun:test";
-import { Engine } from "../../engine.js";
-import { removeDir, tempDir } from "../../fixtures.js";
+
+const engineCases = engineCaseFixtures();
+afterAll(() => engineCases.close());
+
 it("names each real repository context on its report without allocating duplicate activity ids", async () => {
-  const root = tempDir("session-routing-");
-  const engine = new Engine(root, { admissionsClosed: true });
+  return engineCases.use("session-routing-", async caseOwner => {
+  const root = caseOwner.root;
+  const engine = caseOwner.open(root, { admissionsClosed: true });
   try {
     engine.s.products.push(...["first", "second"].map(id => ({ id, name: id, repo: `local/${id}`, tone: "blue" as const })));
     const task = engine.task(engine.addTask({ productId: "first", title: "Shared reports", backlog: true }))!;
@@ -19,5 +24,7 @@ it("names each real repository context on its report without allocating duplicat
     engine.say(task, "activity", "Working");
     expect(engine.s.seq).toBe(sequence);
     expect(task.session.filter(line => line.text === "Working")).toHaveLength(1);
-  } finally { await engine.shutdown(); removeDir(root); }
+  } finally { await caseOwner.stop(engine);  }
+
+  });
 });

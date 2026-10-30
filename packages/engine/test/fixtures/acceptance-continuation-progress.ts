@@ -2,8 +2,9 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { normalizePlan, type DeepMutable } from "@petrina/core";
 import { executionFor, repositoryView } from "@petrina/orchestrator";
+import * as gitOps from "@petrina/repositories/git";
 import { Engine } from "../engine.js";
-import { git, makeProduct } from "../fixtures.js";
+import { createProductRepository } from "../fixtures.js";
 import { scriptedToolProbe } from "../scripted-probes.js";
 import type { EngineProcesses } from "./engine-processes.js";
 import { installPreparedProduct } from "./prepared-product.js";
@@ -17,7 +18,7 @@ export function acceptanceProgressSeed(root: string) {
       return owners.prepare(async () => {
         const admitted = () => { if (owners.signal.aborted) throw new Error("Progress fixture setup was stopped before handoff"); };
         admitted();
-        const repo = await makeProduct(root, { origin: "none" }); admitted();
+        const { path: repo, initialSha: base } = await createProductRepository(root, { origin: "none" }); admitted();
         seed = new Engine(home, { admissionsClosed: true, agentCommand: () => undefined, terminals: () => [],
           toolProbe: scriptedToolProbe({ git: { status: "ready" }, node: { status: "ready" }, gh: { status: "unknown" },
             "claude-code": { status: "ready" }, codex: { status: "ready" }, grok: { status: "ready" }, antigravity: { status: "ready" } }),
@@ -30,12 +31,11 @@ export function acceptanceProgressSeed(root: string) {
         product.checks = []; product.checksBy = "coordinator";
         const taskId = seed.addTask({ productId, title: "Check the greeting", approvePlan: true, backlog: true });
         const task = seed.task(taskId)!, scope = executionFor(task);
-        const base = await git(repo, "rev-parse", "HEAD"); admitted();
+        admitted();
         const worktree = join(root, "reviewed-greeting"), branch = `progress-${taskId}`;
-        await git(repo, "worktree", "add", "-qb", branch, worktree, base); admitted();
+        await gitOps.ensureWorktree(repo, worktree, branch, base); admitted();
         writeFileSync(join(worktree, "greeting.txt"), "Hello\n");
-        await git(worktree, "add", "."); admitted();
-        await git(worktree, "commit", "-qm", "Prepare the greeting for the native progress contract"); admitted();
+        await gitOps.commitChanges(worktree, "Prepare the greeting for the native progress contract"); admitted();
         Object.assign(scope.work, { worktree, branch, base: "main", baseSha: base, preparation: "ready", delivery: "local",
           report: { summary: "Added a greeting.", changes: ["People see a greeting"] },
           source: { product: { ...product }, start: { kind: "default", branch: "main" }, destination: { mode: "local", kind: "branch", repo: product.repo, branch: "main" }, confirmed: true, initialSha: base } });

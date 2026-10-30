@@ -1,23 +1,25 @@
+import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
 
 import { afterAll, expect, it } from "bun:test";
 
 import { join } from "node:path";
 
-import { Engine } from "../../engine.js";
 
 
-import { removeDir, tempDir } from "../../fixtures.js";
 
-const roots: string[] = [];
-afterAll(() => roots.forEach(removeDir));
+const engineCases = engineCaseFixtures();
+afterAll(() => engineCases.close());
+
+
 
 
 it("admits bounded check preparation while every model slot is occupied", async () => {
-  const root = tempDir("petrina-check-separate-capacity-");
-  roots.push(root);
-  const engine = new Engine(join(root, "data"), { agentCommand: () => undefined, usageCommands: { codex: null, grok: null },  });
+  return engineCases.use("petrina-check-separate-capacity-", async caseOwner => {
+  const root = caseOwner.root;
+
+  const engine = caseOwner.open(join(root, "data"), { agentCommand: () => undefined, usageCommands: { codex: null, grok: null },  });
   engine.setPoolPaused(true);
-  await engine.waitUntilReady();
+  await caseOwner.run(engine, async () => { await engine.waitUntilReady(); });
   try {
     const productId = "product";
     engine.s.products.push({ id: productId, name: "Product", repo: "local/product", tone: "blue" });
@@ -44,14 +46,17 @@ it("admits bounded check preparation while every model slot is occupied", async 
     engine["driver"].workflow["preparedTesters"].set(task.id, "already checked");
     engine.cancel(task.id);
     expect(engine["driver"].workflow["preparedTesters"].has(task.id)).toBe(false);
-  } finally { await engine.shutdown(); }
+  } finally { await caseOwner.stop(engine); }
+
+  });
 });
 
 it("admits a queued planner while the check-preparation lane is full", async () => {
-  const root = tempDir("petrina-planner-beside-checks-"); roots.push(root);
-  const engine = new Engine(join(root, "data"), { agentCommand: () => undefined, usageCommands: { codex: null, grok: null, antigravity: null },   });
+  return engineCases.use("petrina-planner-beside-checks-", async caseOwner => {
+  const root = caseOwner.root;
+  const engine = caseOwner.open(join(root, "data"), { agentCommand: () => undefined, usageCommands: { codex: null, grok: null, antigravity: null },   });
   engine.setPoolPaused(true);
-  await engine.waitUntilReady();
+  await caseOwner.run(engine, async () => { await engine.waitUntilReady(); });
   try {
     const productId = "product";
     engine.s.products.push({ id: productId, name: "Product", repo: "local/product", tone: "blue" });
@@ -64,5 +69,7 @@ it("admits a queued planner while the check-preparation lane is full", async () 
     engine.setPoolPaused(false);
     expect(started).toContain(queued);
     expect(engine["checks"].preparingCount).toBe(1);
-  } finally { await engine.shutdown(); }
+  } finally { await caseOwner.stop(engine); }
+
+  });
 });

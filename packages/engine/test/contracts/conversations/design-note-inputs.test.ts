@@ -7,7 +7,9 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { type ConversationNote, type JourneyStep, type Objection } from "@petrina/core";
 import { BuildResult } from "../../../src/roles.js";
-import { Fakes, git, makeProduct } from "../../fixtures.js";
+import { Fakes, createProductRepository } from "../../fixtures.js";
+import { fakeAgentSessions } from "../../fixtures/fake-agent-sessions.js";
+import { privateAgentToolProbe } from "../../scripted-probes.js";
 const cases = engineCaseFixtures();
 closeOwnedCases(() => cases.close());
 
@@ -25,21 +27,25 @@ const designCheck = (id: string, round: number): JourneyStep => ({ id, kind: "yo
 
 async function fixture(owner: EngineCaseOwner) {
   const root = mkdtempSync(join(owner.root, "petrina-design-notes-"));
-  const repo = await makeProduct(root);
+  const { path: repo, initialSha: baseSha } = await createProductRepository(root); owner.check();
   const fakes = new Fakes(join(root, "fake"));
   fakes.scenario({ builder: "plain", reopen: "resume" });
   const engine = owner.open(join(root, "data"), {
     agentCommand: () => [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), fakes.dir],
+    startAgentSession: fakeAgentSessions(fakes),
+    toolProbe: privateAgentToolProbe(),
     toolPath: () => process.execPath, usageCommands: { codex: null, grok: null, antigravity: null },
   });
   engine.schedule = () => {};
   engine.setPoolPaused(true);
-  await engine.checkTools();
+  await engine.waitUntilReady(); owner.check();
+  await engine.checkTools(); owner.check();
   engine.s.pool.paused = false;
   engine.s.products.push({ id: "product", name: "Product", repo: "local/product", path: repo, defaultBranch: "main", tone: "blue" });
   const task = engine.task(engine.addTask({ productId: "product", title: "Add a greeting", description: "A greeting file.", backlog: true }))!;
   const scope = executionFor(task);
-  Object.assign(scope.work, { worktree: repo, branch: "main", base: "main", baseSha: await git(repo, "rev-parse", "HEAD") });
+  owner.check();
+  Object.assign(scope.work, { worktree: repo, branch: "main", base: "main", baseSha });
   task.plan = { rationale: "Design, then build", plannerProfileId: "opus-high", stages: [
       { id: "design", kind: "converge", title: "Agree on the greeting", roleId: "architect", profileIds: ["opus-high"], reviewerRoleId: "design-reviewer", reviewerProfileIds: ["sol-high"], maxRounds: 3 },
       { id: "check", kind: "gate", title: "Your design check", roleId: "architect", profileIds: [], gate: "design" },

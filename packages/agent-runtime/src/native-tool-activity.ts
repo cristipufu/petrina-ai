@@ -1,4 +1,4 @@
-import { ADAPTERS } from "./tools.js";
+import { ADAPTERS } from "./tool-catalog.js";
 import { createToolActivity } from "./tool-activity.js";
 
 /** Native composition retains the shared provider registry; formatting itself consumes only observations. */

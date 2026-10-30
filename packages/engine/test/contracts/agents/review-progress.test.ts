@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { mainLine, timeLeft, workedSoFar, type State, type Task } from "@petrina/core";
 import { Store } from "@petrina/storage/store";
 import { ADAPTERS } from "@petrina/agent-runtime/tools";
-import { git } from "../../support.js";
+import * as gitOps from "@petrina/repositories/git";
 import { reviewProgressFixtures } from "../../fixtures/review-todo.js";
 
 const { MINUTE, models, hasReadAction, reviewersHaveRead, setup, close } = reviewProgressFixtures();
@@ -164,7 +164,7 @@ describe("real grouped review summaries", () => {
           const state = store.load()!;
           const task = run.find(state);
           const product = state.products.find((entry) => entry.id === task.productId)!;
-          const baseSha = task.baseSha ?? (await git(product.path!, "rev-parse", "HEAD")).trim();
+          const baseSha = task.baseSha ?? (await gitOps.head(product.path!))!;
           // This test starts at the review boundary: seed a valid working copy and already-approved checks,
           // so it measures the one port reviewer rather than setup, checkout or Check finder work.
           store.save({

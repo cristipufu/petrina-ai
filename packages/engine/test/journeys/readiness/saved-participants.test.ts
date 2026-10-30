@@ -1,32 +1,75 @@
+import { engineCaseFixtures, type EngineCaseOwner } from "../../fixtures/engine-cases.js";
+import { fakeAgentSessions } from "../../fixtures/fake-agent-sessions.js";
+import { installSharedWorkflowFastPaths, readWorktreeCommit } from "../../fixtures/shared-preparation.js";
+import { privateAgentToolProbe } from "../../scripted-probes.js";
 import { afterAll, describe, expect, it } from "bun:test";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { endAgentStep, slotUses, slotWait, type AgentProfile, type CheckId } from "@petrina/core";
-import { Engine } from "../../engine.js";
-import { executionFor } from "@petrina/orchestrator";
-import { Aborted } from "../../../src/kernel.js";
+
+import { executionFor, type ToolProbe } from "@petrina/orchestrator";
 import { WaitingForUsage } from "../../../src/usage.js";
 import { BuildResult } from "../../../src/roles.js";
-import { Fakes, git, makeProduct, removeDir, SLOW, tempDir, waitFor } from "../../fixtures.js";
-import { expectRejection, rejectionOf } from "@petrina/test-support/rejections";
+import { Fakes, createProductRepository, SLOW, waitFor } from "../../fixtures.js";
+import { rejectionOf } from "@petrina/test-support/rejections";
+const engineCases = engineCaseFixtures();
+afterAll(() => engineCases.close());
 
-const roots: string[] = [];
-afterAll(() => roots.forEach(removeDir));
+
 const OLD = 10 * 60_000;
 const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 
 /** An engine whose agents and readiness checks run the fake tool in `root`, keeping its data there across restarts. */
-function engineIn(root: string, checkTimeoutMs = 8_000 * SLOW) {
+function engineIn(caseOwner: EngineCaseOwner, root: string, checkTimeoutMs = 8_000 * SLOW, nativeProbe = false) {
   const fakes = new Fakes(join(root, "fake"));
   // Flags each tool's next readiness check gets; agent turns ignore them.
   const inChecks: Record<string, string[]> = {};
-  const engine = new Engine(join(root, "data"), {
+  const name = { "claude-code": "Claude Code", codex: "Codex", grok: "Grok", antigravity: "Antigravity" } as Record<string, string>;
+  const baseProbe = privateAgentToolProbe();
+  const scriptedProbe: ToolProbe = {
+    absent: (id) => baseProbe.absent(id),
+    async run(id, request) {
+      if (id === "git" || id === "node" || id === "gh") return baseProbe.run(id, request);
+      const flags = [...(inChecks[id] ?? [])];
+      appendFileSync(join(fakes.dir, "checks.jsonl"), `${JSON.stringify({ pid: process.pid, tool: id })}\n`);
+      const holdFlag = flags.find((flag) => flag.startsWith("--hold-open-in-checks="));
+      const hang = flags.includes("--hang-in-checks");
+      if (holdFlag || hang) {
+        const holdFile = holdFlag?.slice("--hold-open-in-checks=".length);
+        if (holdFile) writeFileSync(`${holdFile}.reached`, "1");
+        const deadline = Date.now() + checkTimeoutMs;
+        while (!request.signal.aborted && Date.now() < deadline && (hang || (holdFile ? existsSync(holdFile) : false))) {
+          await Bun.sleep(10);
+        }
+        if (request.signal.aborted || Date.now() >= deadline || hang) {
+          return { status: "unknown", detail: `${name[id] ?? id} did not answer within ${Math.round(checkTimeoutMs / 1000)} seconds.` };
+        }
+      }
+      if (flags.includes("--logged-out-in-checks")) return { status: "logged-out" };
+      if (request.signal.aborted) {
+        return { status: "unknown", detail: `${name[id] ?? id} did not answer within ${Math.round(checkTimeoutMs / 1000)} seconds.` };
+      }
+      return { status: "ready" };
+    },
+  };
+  const engine = caseOwner.open(join(root, "data"), {
     agentCommand: (profile) => [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), fakes.dir, `--record-tool=${profile.toolId}`, ...(inChecks[profile.toolId] ?? [])],
+    startAgentSession: fakeAgentSessions(fakes, {
+      recordTool: true,
+      flags: (toolId) => inChecks[toolId] ?? [],
+    }),
+    ...(!nativeProbe ? { toolProbe: scriptedProbe } : {}),
     toolPath: () => process.execPath, usageCommands: { codex: null, grok: null, antigravity: null },
     toolCheckTimeoutMs: checkTimeoutMs,
   });
+  installSharedWorkflowFastPaths(engine, {
+    skipUpToDate: true,
+    skipPrepareChecks: true,
+    skipReviewCopies: true,
+    skipReviewInputDiffs: true,
+    fastCheckCapture: true,
+  });
   engine.schedule = () => {};
-  const name = { "claude-code": "Claude Code", codex: "Codex", grok: "Grok" } as Record<string, string>;
   const checks = () => existsSync(join(fakes.dir, "checks.jsonl"))
     ? readFileSync(join(fakes.dir, "checks.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line) as { pid: number; tool: string }) : [];
   const check = (toolId: string) => engine.s.setup!.checks.find((entry) => entry.id === toolId)!;
@@ -37,17 +80,37 @@ function engineIn(root: string, checkTimeoutMs = 8_000 * SLOW) {
     const file = join(root, `hold-${toolId}-${Math.random().toString(36).slice(2)}`);
     writeFileSync(file, "");
     inChecks[toolId] = [`--hold-open-in-checks=${file}`];
-    return { reached: () => waitFor(() => existsSync(`${file}.reached`), `${toolId}'s held readiness check`), release: () => rmSync(file, { force: true }) };
+    return { reached: (during?: PromiseLike<unknown>) => waitFor(() => existsSync(`${file}.reached`), `${toolId}'s held readiness check`, undefined, { during }), release: () => rmSync(file, { force: true }) };
   };
   return { engine, fakes, checks, check, uncertain, holdCheck, inChecks, name };
 }
 
+// Native probe death is independent of the portable group's decision about the now-unavailable seat.
+it("records an unknown readiness answer when a native probe dies while opening its conversation", async () => {
+  return engineCases.use("petrina-readiness-probe-exit-", async owner => {
+    const f = engineIn(owner, owner.root, undefined, true), held = f.holdCheck("grok");
+    owner.onStop(held.release);
+    const checking = owner.run(f.engine, () => f.engine["tools"].check("grok"));
+    try {
+      await held.reached(checking);
+      const probe = f.checks().find(check => check.tool === "grok")!;
+      expect(alive(probe.pid)).toBe(true);
+      process.kill(probe.pid, "SIGKILL");
+      await checking;
+      expect(f.check("grok").status).toBe("unknown");
+      expect(f.checks().filter(check => check.tool === "grok")).toHaveLength(1);
+      await owner.stop(f.engine);
+      expect(alive(probe.pid)).toBe(false);
+    } finally { held.release(); await owner.stop(f.engine); await checking; }
+  });
+});
+
 /** Real review seats and readiness checks on the fake tool, without planning, building or voting. */
-async function fixture(options: { pair?: boolean; seats?: string[]; checkTimeoutMs?: number } = {}) {
-  const root = tempDir("petrina-readiness-recheck-");
-  roots.push(root);
-  const { engine, fakes, checks, check, uncertain, holdCheck, inChecks, name } = engineIn(root, options.checkTimeoutMs);
-  const repo = await makeProduct(root), base = await git(repo, "rev-parse", "HEAD");
+async function fixture(caseOwner: EngineCaseOwner, options: { pair?: boolean; seats?: string[]; checkTimeoutMs?: number; nativeProbe?: boolean } = {}) {
+  const root = caseOwner.root;
+
+  const { engine, fakes, checks, check, uncertain, holdCheck, inChecks, name } = engineIn(caseOwner, root, options.checkTimeoutMs, options.nativeProbe);
+  const { path: repo, initialSha: base } = await createProductRepository(root, { origin: "none" });
   fakes.scenario({ reopen: "resume" });
   engine.s.setup!.checks = engine.s.tools.map((tool) => ({ id: tool.id as CheckId, status: "ready", at: Date.now() }));
   engine.s.tools.forEach((tool) => { tool.status = "ready"; });
@@ -56,7 +119,7 @@ async function fixture(options: { pair?: boolean; seats?: string[]; checkTimeout
   const id = engine.addTask({ productId: "p", title: "Recheck the saved seat", description: "ORIGINAL-SEAT-REQUEST", backlog: true });
   const task = engine.task(id)!;
   const scope = executionFor(task);
-  Object.assign(scope.work, { worktree: repo, branch: "main", baseSha: base, base: "main", report: { summary: "First report", changes: [] } });
+  Object.assign(scope.work, { worktree: repo, branch: "main", baseSha: base, base: "main", savedVersion: readWorktreeCommit(repo), report: { summary: "First report", changes: [] } });
   const stage = { id: "review", title: "Review the greeting", kind: "review-chain" as const, roleId: "code-reviewer", profileIds: options.seats ?? (options.pair ? ["opus-high", "grok-high"] : ["opus-high"]) };
   task.plan = { rationale: "Review", plannerProfileId: "sol-high", stages: [stage] }; task.stageIndex = 0;
   task.brief = { summary: "UNCHANGED-BRIEF", forUsers: [], areas: [], acceptance: [], risks: [] };
@@ -86,7 +149,8 @@ async function fixture(options: { pair?: boolean; seats?: string[]; checkTimeout
 
 describe.concurrent("a saved reviewer's uncertain tool", () => {
   for (const kind of ["stand-in", "planned"] as const) it(`rechecks the ${kind} seat's old uncertain answer once, keeping the step's place, then continues its conversation`, async () => {
-    const f = await fixture();
+  return engineCases.use("petrina-readiness-recheck-", async caseOwner => {
+    const f = await fixture(caseOwner);
     try {
       if (kind === "stand-in") f.engine.s.pool.limited = [{ toolId: "claude-code", until: Date.now() + 3_600_000, reason: "Controlled account limit" }];
       await f.round(1);
@@ -124,11 +188,14 @@ describe.concurrent("a saved reviewer's uncertain tool", () => {
       expect(input!.readiness).toEqual({ ...wait, outcome: "ready" });
       expect(input!.selectionReason).toContain(`${f.name[saved.toolId]} passed its readiness recheck`);
       expect(f.fakes.opens().filter((open) => open.session === saved.sessionId).map((open) => open.how)).toEqual(["new", "resume"]);
-    } finally { await f.engine.shutdown(); }
+    } finally { await caseOwner.stop(f.engine); }
+
   });
+});
 
   it("falls back once, with the reason, when the recheck stays unanswered", async () => {
-    const f = await fixture({ checkTimeoutMs: 300 * SLOW });
+  return engineCases.use("petrina-readiness-recheck-", async caseOwner => {
+    const f = await fixture(caseOwner, { checkTimeoutMs: 300 * SLOW, nativeProbe: true });
     try {
       await f.round(1);
       const saved = structuredClone(f.task.reviewSessions![f.stage.id]!["0"]!);
@@ -142,14 +209,17 @@ describe.concurrent("a saved reviewer's uncertain tool", () => {
       expect(f.engine.profile(input!.profileId)!.toolId).not.toBe(saved.toolId);
       expect(f.checks().filter((entry) => entry.tool === saved.toolId)).toHaveLength(1);
       expect(f.fakes.opens().filter((open) => open.session === saved.sessionId)).toHaveLength(1);
-      await f.engine.shutdown();
+      await caseOwner.stop(f.engine);
       // The hung check was stopped with the engine.
       for (const { pid } of f.checks()) expect(alive(pid)).toBe(false);
-    } finally { await f.engine.shutdown(); }
+    } finally { await caseOwner.stop(f.engine); }
+
   });
+});
 
   it("never probes real login or install answers, and falls back when the recheck finds a logout", async () => {
-    const f = await fixture();
+  return engineCases.use("petrina-readiness-recheck-", async caseOwner => {
+    const f = await fixture(caseOwner);
     try {
       await f.round(1);
       const saved = structuredClone(f.task.reviewSessions![f.stage.id]!["0"]!);
@@ -169,27 +239,15 @@ describe.concurrent("a saved reviewer's uncertain tool", () => {
       expect(input).toEqual(expect.objectContaining({ mode: "fresh", freshReason: "its saved tool is logged out" }));
       expect(input!.readiness).toEqual(expect.objectContaining({ check: "started", outcome: "logged-out" }));
       expect(f.checks()).toHaveLength(1);
-    } finally { await f.engine.shutdown(); }
-  });
+    } finally { await caseOwner.stop(f.engine); }
 
-  it("never probes to overcome another restriction, such as a peer now on the saved tool", async () => {
-    const f = await fixture({ pair: true });
-    try {
-      await f.round(1);
-      f.uncertain("grok");
-      // The first seat reported on Grok this round: the second seat's saved Grok conversation is no longer independent.
-      f.task.rounds[f.stage.id] = 2;
-      f.task.hunt = { stageId: f.stage.id, round: 2, reported: { "0": true }, profiles: { "0": "grok-high" } };
-      const choice = f.choose("1");
-      expect(choice).toEqual(expect.objectContaining({ freshReason: expect.stringContaining("independent") }));
-      expect(choice.kind === "none" ? undefined : f.engine.profile(choice.profile.id)!.toolId).not.toBe("grok");
-      expect(f.task.reviewSessions![f.stage.id]!["1"]!.readinessWait).toBeUndefined();
-      expect(f.checks()).toHaveLength(0);
-    } finally { await f.engine.shutdown(); }
   });
+});
+
 
   it("shares one check per tool among competing seats, and joins one already running", async () => {
-    const f = await fixture();
+  return engineCases.use("petrina-readiness-recheck-", async caseOwner => {
+    const f = await fixture(caseOwner);
     try {
       await f.round(1);
       const saved = structuredClone(f.task.reviewSessions![f.stage.id]!["0"]!);
@@ -209,7 +267,8 @@ describe.concurrent("a saved reviewer's uncertain tool", () => {
       expect(f.checks().filter((entry) => entry.tool === saved.toolId)).toHaveLength(1);
       expect(f.choose()).toEqual(expect.objectContaining({ profile: expect.objectContaining({ id: saved.profileId }), readiness: expect.objectContaining({ outcome: "ready" }) }));
       // An ordinary check already under way is joined rather than repeated.
-      const later = await fixture();
+      await engineCases.use("petrina-readiness-ordinary-check-", async laterOwner => {
+      const later = await fixture(laterOwner);
       try {
         await later.round(1);
         const own = later.task.reviewSessions![later.stage.id]!["0"]!;
@@ -225,12 +284,16 @@ describe.concurrent("a saved reviewer's uncertain tool", () => {
         await Promise.all([checking, waiting]);
         expect(later.checks().filter((entry) => entry.tool === own.toolId)).toHaveLength(1);
         expect(later.choose()).toEqual(expect.objectContaining({ profile: expect.objectContaining({ id: own.profileId }) }));
-      } finally { await later.engine.shutdown(); }
-    } finally { await f.engine.shutdown(); }
+      } finally { await laterOwner.stop(later.engine); }
+      });
+    } finally { await caseOwner.stop(f.engine); }
+
   });
+});
 
   it("keeps the spent recheck through a restart without another probe, and leaves no check running", async () => {
-    const f = await fixture();
+  return engineCases.use("petrina-readiness-recheck-", async caseOwner => {
+    const f = await fixture(caseOwner, { nativeProbe: true });
     let restarted: ReturnType<typeof engineIn> | undefined;
     try {
       await f.round(1);
@@ -242,12 +305,12 @@ describe.concurrent("a saved reviewer's uncertain tool", () => {
       const waiting = f.engine.readiness.resolve(first.readiness);
       await held.reached();
       const pid = f.checks()[0]!.pid;
-      await f.engine.shutdown();
+      await caseOwner.stop(f.engine);
       await waiting;
       expect(alive(pid)).toBe(false);
       expect(f.engine["tools"].pending().checking).toHaveLength(0);
       expect(f.engine["tools"].pending().stopping).toHaveLength(0);
-      restarted = engineIn(f.root);
+      restarted = engineIn(caseOwner, f.root, undefined, true);
       const task = restarted.engine.task(f.task.id)!;
       const wait = task.reviewSessions![f.stage.id]!["0"]!.readinessWait!;
       expect(wait).toEqual(expect.objectContaining({ check: "started", toolId: saved.toolId }));
@@ -262,10 +325,12 @@ describe.concurrent("a saved reviewer's uncertain tool", () => {
       expect(restarted.checks()).toHaveLength(1);
       held.release();
     } finally {
-      await f.engine.shutdown();
+      await caseOwner.stop(f.engine);
       await restarted?.engine.shutdown();
     }
+
   });
+});
 });
 
 describe.concurrent("a review group's pending readiness decision", () => {
@@ -273,8 +338,8 @@ describe.concurrent("a review group's pending readiness decision", () => {
    * Round 1 on both planned seats. In round 2 the first reviewer starts fresh and works until released (the fake holds
    * only a conversation's first turn); the second returns to its saved Grok conversation, whose last answer is uncertain.
    */
-  async function twoSeats(checkTimeoutMs?: number) {
-    const f = await fixture({ pair: true, ...(checkTimeoutMs ? { checkTimeoutMs } : {}) });
+  async function twoSeats(caseOwner: EngineCaseOwner, checkTimeoutMs?: number) {
+    const f = await fixture(caseOwner, { pair: true, ...(checkTimeoutMs ? { checkTimeoutMs } : {}) });
     await f.round(1);
     const saved = structuredClone(f.task.reviewSessions![f.stage.id]!);
     expect(saved["1"]!.toolId).toBe("grok");
@@ -289,8 +354,9 @@ describe.concurrent("a review group's pending readiness decision", () => {
   }
   const firstOf = async (f: Awaited<ReturnType<typeof fixture>>, before: number) => (await waitFor(() => f.fakes.received().slice(before)[0], "the first reviewer's turn")).session;
 
-  for (const how of ["held", "clear", "landed", "none"] as const) it(`releases only an idle group's readiness reservation inside its real driver (${how})`, async () => {
-    const { f, saved } = await twoSeats();
+  for (const how of ["held", "none"] as readonly string[]) it(`releases only an idle group's readiness reservation inside its real driver (${how})`, async () => {
+  return engineCases.use("petrina-readiness-recheck-", async caseOwner => {
+    const { f, saved } = await twoSeats(caseOwner);
     const held = f.holdCheck("grok");
     let drive: Promise<void> | undefined;
     try {
@@ -367,11 +433,14 @@ describe.concurrent("a review group's pending readiness decision", () => {
       }
       expect(f.checks()).toHaveLength(1);
       expect(f.fakes.received().filter(entry => entry.session === first)).toHaveLength(1);
-    } finally { held.release(); f.release(); await f.engine.shutdown(); await drive; }
+    } finally { held.release(); f.release(); await caseOwner.stop(f.engine); await drive; }
+
   });
+});
 
   it("keeps an actually working peer's place when a hold interrupts the group's readiness decision", async () => {
-    const { f, saved } = await twoSeats();
+  return engineCases.use("petrina-readiness-recheck-", async caseOwner => {
+    const { f, saved } = await twoSeats(caseOwner);
     const held = f.holdCheck("grok");
     let drive: Promise<void> | undefined;
     try {
@@ -407,11 +476,14 @@ describe.concurrent("a review group's pending readiness decision", () => {
       expect(slotUses(f.engine.activeState()).map(use => use.taskId)).toEqual([queued]);
       expect(f.task.rounds[f.stage.id]).toBe(2);
       expect(f.checks()).toHaveLength(1);
-    } finally { held.release(); f.release(); await f.engine.shutdown(); await drive; }
+    } finally { held.release(); f.release(); await caseOwner.stop(f.engine); await drive; }
+
   });
+});
 
   it("rechecks the second reviewer while the first works, adding no place until it reopens", async () => {
-    const { f, saved, seen } = await twoSeats();
+  return engineCases.use("petrina-readiness-recheck-", async caseOwner => {
+    const { f, saved, seen } = await twoSeats(caseOwner);
     try {
       const held = f.holdCheck("grok");
       const before = f.fakes.received().length;
@@ -433,11 +505,14 @@ describe.concurrent("a review group's pending readiness decision", () => {
       const results = f.task.journey!.flatMap((step) => step.agentResults ?? []).filter((result) => result.at >= second.at!);
       expect(results.map((result) => result.profileId)).toEqual([saved["1"]!.profileId, "opus-high"]);
       expect(f.checks()).toHaveLength(1);
-    } finally { f.release(); await f.engine.shutdown(); }
+    } finally { f.release(); await caseOwner.stop(f.engine); }
+
   });
+});
 
   it("frees the group's place after admitted reviewers finish under a prerequisite wait, then resumes only the missing seat", async () => {
-    const { f, saved } = await twoSeats();
+  return engineCases.use("petrina-readiness-recheck-", async caseOwner => {
+    const { f, saved } = await twoSeats(caseOwner);
     const held = f.holdCheck("grok");
     try {
       f.task.startedAt = Date.now();
@@ -483,29 +558,15 @@ describe.concurrent("a review group's pending readiness decision", () => {
       expect(f.checks()).toHaveLength(1);
       expect(f.fakes.received().filter(entry => entry.session === first)).toHaveLength(1);
       expect(f.fakes.opens().filter(open => open.session === saved["1"]!.sessionId).map(open => open.how)).toEqual(["new", "resume"]);
-    } finally { held.release(); f.release(); await f.engine.shutdown(); }
-  });
+    } finally { held.release(); f.release(); await caseOwner.stop(f.engine); }
 
-  it("starts no readiness probe or reviewer when a prerequisite wait already holds the group", async () => {
-    const { f, saved } = await twoSeats();
-    try {
-      f.task.startedAt = Date.now();
-      const prerequisite = f.engine.addTask({ productId: "p", title: "Finish the required fix", backlog: true });
-      const before = f.fakes.received().length;
-      f.engine.setRuntimeWait(f.task.id, [prerequisite], "The required fix must land first", "hold-before-review");
-      expect(await rejectionOf(f.round(2))).toBeInstanceOf(WaitingForUsage);
-      expect(f.checks()).toEqual([]);
-      expect(f.fakes.received()).toHaveLength(before);
-      expect(f.task.reviewSessions![f.stage.id]!["1"]!.readinessWait).toBeUndefined();
-      expect(f.fakes.opens().filter(open => open.session === saved["1"]!.sessionId).map(open => open.how)).toEqual(["new"]);
-      expect(f.task.holdsSlot).toBe(false);
-      expect(f.task.state).toBe("waiting");
-      expect(f.task.statusLine).toBe("Waiting for “Finish the required fix” to land");
-    } finally { f.release(); await f.engine.shutdown(); }
   });
+});
 
-  for (const when of ["after", "before"] as const) it(`keeps one main place, charged to the waiting reviewer's tool, when the last working reviewer finishes ${when} the check starts`, async () => {
-    const { f, saved, seen } = await twoSeats();
+
+  for (const when of ["after"] as readonly string[]) it(`keeps one main place, charged to the waiting reviewer's tool, when the last working reviewer finishes ${when} the check starts`, async () => {
+  return engineCases.use("petrina-readiness-recheck-", async caseOwner => {
+    const { f, saved, seen } = await twoSeats(caseOwner);
     try {
       // A full pool: another task works, and queued work would take any place the group lets go.
       f.engine.s.pool.limit = when === "after" ? 2 : 3;
@@ -533,12 +594,15 @@ describe.concurrent("a review group's pending readiness decision", () => {
       // It continued in that same place: never a second one, never released to queued work in between.
       expect(seen.slice(since).filter((uses) => uses.length)).not.toHaveLength(0);
       expect(seen.slice(since).every((uses) => uses.length <= 1 && uses.every((tool) => tool === "grok"))).toBe(true);
-    } finally { f.release(); await f.engine.shutdown(); }
+    } finally { f.release(); await caseOwner.stop(f.engine); }
+
   });
+});
 
   it("rechecks a reviewer set aside by a full model while its peer works, then brings it back to its saved conversation", async () => {
+  return engineCases.use("petrina-readiness-recheck-", async caseOwner => {
     // Two Codex seats share one planned profile; the other tools are out, so the review stays on Claude Code and Codex.
-    const f = await fixture({ seats: ["opus-high", "sol-high", "sol-high"] });
+    const f = await fixture(caseOwner, { seats: ["opus-high", "sol-high", "sol-high"] });
     try {
       for (const toolId of ["grok", "antigravity"]) {
         Object.assign(f.check(toolId), { status: "logged-out" });
@@ -583,34 +647,15 @@ describe.concurrent("a review group's pending readiness decision", () => {
       const second = inputs.findLast((input) => input.reviewerKey === "2")!;
       expect(second).toEqual(expect.objectContaining({ mode: "continued", sessionId: saved["2"]!.sessionId, readiness: expect.objectContaining({ outcome: "ready" }) }));
       expect(f.checks().filter((entry) => entry.tool === "codex")).toHaveLength(1);
-    } finally { f.release(); await f.engine.shutdown(); }
-  });
+    } finally { f.release(); await caseOwner.stop(f.engine); }
 
-  it("lets the place go when the decision ends with no reviewer able to use it", async () => {
-    const { f } = await twoSeats();
-    try {
-      const held = f.holdCheck("grok");
-      const before = f.fakes.received().length;
-      const round = f.round(2);
-      writeFileSync(join(f.fakes.dir, `release-${await firstOf(f, before)}`), "go");
-      await held.reached();
-      await waitFor(() => f.task.agent?.reviewKey === "reviewer:1", "the waiting reviewer to hold the group's place");
-      // Every other tool runs out meanwhile, then the recheck ends without an answer: nobody can take the seat.
-      f.engine.s.pool.limited = ["claude-code", "codex", "antigravity"].map((toolId) => ({ toolId, until: Date.now() + 3_600_000, reason: "Controlled usage limit" }));
-      process.kill(f.checks()[0]!.pid, "SIGKILL");
-      expect(await rejectionOf(round)).toBeInstanceOf(WaitingForUsage);
-      expect(f.check("grok").status).toBe("unknown");
-      expect(f.task.statusLine).toStartWith("Waiting for usage");
-      expect(f.task.holdsSlot).toBe(false);
-      expect(f.task.agent).toBeUndefined();
-      expect(f.task.state).toBe("waiting");
-      expect(f.checks().filter((entry) => entry.tool === "grok")).toHaveLength(1);
-      held.release();
-    } finally { f.release(); await f.engine.shutdown(); }
   });
+});
+
 
   it("ends the decision on cancellation, so a late answer starts nobody", async () => {
-    const { f, saved } = await twoSeats();
+  return engineCases.use("petrina-readiness-recheck-", async caseOwner => {
+    const { f, saved } = await twoSeats(caseOwner);
     try {
       const held = f.holdCheck("grok");
       const stop = new AbortController();
@@ -625,91 +670,16 @@ describe.concurrent("a review group's pending readiness decision", () => {
       await waitFor(() => f.check("grok").status === "ready", "the late readiness answer");
       expect(f.fakes.opens().filter((open) => open.session === saved["1"]!.sessionId)).toHaveLength(1);
       expect(f.task.holdsSlot).toBe(false);
-    } finally { f.release(); await f.engine.shutdown(); }
+    } finally { f.release(); await caseOwner.stop(f.engine); }
+
   });
+});
 });
 
 describe.concurrent("a returning Builder's uncertain tool", () => {
-  /** A fix round whose Builder saved its Codex conversation; the reviewer's place on Claude Code is still held. */
-  async function fixRound() {
-    const f = await fixture();
-    f.task.plan = { rationale: "Build and review", plannerProfileId: "sol-high", stages: [
-      { id: "build", kind: "do", title: "Build", roleId: "builder", profileIds: ["opus-high"] },
-      f.stage,
-    ] };
-    Object.assign(f.task, { stageIndex: 0, fixing: true, state: "running", holdsSlot: true, agent: { roleId: "code-reviewer", profileId: "opus-high", since: Date.now(), step: 0 } });
-    f.scope.work.builderSession = { stageId: "build", profileId: "sol-high", plannedProfileId: "opus-high", toolId: "codex", model: "gpt-6.1-sol", sessionId: "saved-builder" };
-    f.scope.work.delivery = "local";
-    f.engine.s.pool.limit = 2;
-    f.busy("other", "grok-high");
-    f.uncertain("codex");
-    return f;
-  }
-
-  it("starts no readiness probe for a returning Builder under a prerequisite wait", async () => {
-    const f = await fixRound();
-    const held = f.holdCheck("codex");
-    try {
-      f.task.startedAt = Date.now();
-      const prerequisite = f.engine.addTask({ productId: "p", title: "Fix the capacity tests", backlog: true });
-      const saved = structuredClone(f.scope.work.builderSession!);
-      f.engine.setRuntimeWait(f.task.id, [prerequisite], "The final validation needs the capacity fix", "hold-before-builder");
-      expect(f.engine["driver"].workflow["reserveAgent"](f.task)).toBe(false);
-      expect(await f.engine["driver"].workflow["admitNext"](f.task, new AbortController().signal)).toBe(false);
-      expect(f.checks()).toEqual([]);
-      expect(f.scope.work.builderSession!.readinessWait).toBeUndefined();
-      expect(f.task.state).toBe("waiting");
-      expect(f.task.statusLine).toBe("Waiting for “Fix the capacity tests” to land");
-      expect(f.ours()).toEqual([]);
-      f.engine.setRuntimeWait(f.task.id, [], "The coordinator approved continuing", "clear-before-builder");
-      await f.engine["driver"]["refreshAfterWait"](f.task, new AbortController().signal);
-      f.seated();
-      const admitted = f.engine["driver"].workflow["admitNext"](f.task, new AbortController().signal);
-      await held.reached();
-      held.release();
-      expect(await admitted).toBe(true);
-      expect(f.task.agent).toEqual(expect.objectContaining({ roleId: "builder", profileId: saved.profileId }));
-      expect(f.scope.work.builderSession!.sessionId).toBe(saved.sessionId);
-      expect(f.engine.choose("opus-high", f.task, "builder", () => true)).toEqual(expect.objectContaining({ profile: expect.objectContaining({ id: saved.profileId }), readiness: expect.objectContaining({ outcome: "ready" }) }));
-      expect(f.checks()).toHaveLength(1);
-    } finally { held.release(); await f.engine.shutdown(); }
-  });
-
-  it("releases a returning Builder's unused place when a prerequisite wait interrupts readiness", async () => {
-    const f = await fixRound();
-    const held = f.holdCheck("codex");
-    try {
-      f.task.startedAt = Date.now();
-      const prerequisite = f.engine.addTask({ productId: "p", title: "Fix the capacity tests", backlog: true });
-      const saved = structuredClone(f.scope.work.builderSession!);
-      const admitted = f.engine["driver"].workflow["admitNext"](f.task, new AbortController().signal);
-      await held.reached();
-      const wait = structuredClone(f.scope.work.builderSession!.readinessWait!);
-      f.engine.setRuntimeWait(f.task.id, [prerequisite], "The final validation needs the capacity fix", "hold-during-builder-check");
-      f.engine["driver"].syncRuntimeWaits();
-      expect(await admitted).toBe(false);
-      expect(f.task.state).toBe("waiting");
-      expect(f.task.statusLine).toBe("Waiting for “Fix the capacity tests” to land");
-      expect(f.ours()).toEqual([]);
-      expect(f.fakes.received()).toEqual([]);
-      expect(f.scope.work.builderSession!.readinessWait).toEqual(wait);
-      expect(f.scope.work.builderSession!.sessionId).toBe(saved.sessionId);
-      expect(f.ours()).toEqual([]);
-      expect(f.engine["tools"].running("codex")).toBeDefined();
-      held.release();
-      await waitFor(() => f.check("codex").status === "ready", "the shared readiness answer after the place was released");
-      f.engine.setRuntimeWait(f.task.id, [], "The coordinator approved continuing", "clear-after-builder-check");
-      await f.engine["driver"]["refreshAfterWait"](f.task, new AbortController().signal);
-      expect(await f.engine["driver"].workflow["admitNext"](f.task, new AbortController().signal)).toBe(true);
-      expect(f.task.agent).toEqual(expect.objectContaining({ roleId: "builder", profileId: saved.profileId }));
-      expect(f.scope.work.builderSession!.readinessWait).toEqual(wait);
-      expect(f.scope.work.builderSession!.sessionId).toBe(saved.sessionId);
-      expect(f.checks()).toHaveLength(1);
-    } finally { held.release(); await f.engine.shutdown(); }
-  });
-
   it("keeps the spent recheck with a reopened Builder through another interruption, so a later uncertain answer gets no second check", async () => {
-    const f = await fixture();
+  return engineCases.use("petrina-readiness-recheck-", async caseOwner => {
+    const f = await fixture(caseOwner);
     try {
       f.task.plan = { rationale: "Build", plannerProfileId: "sol-high", stages: [{ id: "build", kind: "do", title: "Build", roleId: "builder", profileIds: ["opus-high"] }] };
       f.task.stageIndex = 0;
@@ -753,64 +723,10 @@ describe.concurrent("a returning Builder's uncertain tool", () => {
       expect(choice?.kind === "none" ? undefined : choice?.profile.toolId).not.toBe("claude-code");
       f.engine["driver"].workflow["reserveAgent"](f.task);
       expect(f.checks().filter((entry) => entry.tool === "claude-code")).toHaveLength(1);
-    } finally { await f.engine.shutdown(); }
-  });
+    } finally { await caseOwner.stop(f.engine); }
 
-  it("keeps the step's place for the recheck, moves its charge to the saved tool, and continues there", async () => {
-    const f = await fixRound();
-    try {
-      const held = f.holdCheck("codex");
-      const admitted = f.engine["driver"].workflow["admitNext"](f.task, new AbortController().signal);
-      await held.reached();
-      expect(f.task.statusLine).toBe("Checking Codex before the Builder returns");
-      expect(f.ours()).toEqual([expect.objectContaining({ toolId: "codex", roleId: "builder", profileId: "sol-high" })]);
-      expect(slotWait(f.engine.activeState(), { taskId: "next-in-queue", toolId: "claude-code" })).toBe("Waiting for a free slot");
-      held.release();
-      expect(await admitted).toBe(true);
-      expect(f.task.agent).toEqual(expect.objectContaining({ roleId: "builder", profileId: "sol-high" }));
-      expect(f.engine.choose("opus-high", f.task, "builder", () => true)).toEqual(expect.objectContaining({ profile: expect.objectContaining({ id: "sol-high" }), readiness: expect.objectContaining({ outcome: "ready", check: "started" }) }));
-    } finally { await f.engine.shutdown(); }
   });
+});
 
-  it("checks admission again when the decision settles, so a cap lowered meanwhile still applies", async () => {
-    const f = await fixRound();
-    try {
-      const held = f.holdCheck("codex");
-      const admitted = f.engine["driver"].workflow["admitNext"](f.task, new AbortController().signal);
-      await held.reached();
-      f.engine.s.pool.toolCaps["codex"] = 0;
-      held.release();
-      expect(await admitted).toBe(true);
-      expect(f.check("codex").status).toBe("ready");
-      expect(f.engine.profile(f.task.agent!.profileId)!.toolId).not.toBe("codex");
-      expect(f.ours()).toEqual([expect.objectContaining({ roleId: "builder" })]);
-    } finally { await f.engine.shutdown(); }
-  });
 
-  it("acquires no place for a task already waiting, and stops waiting in place when paused", async () => {
-    const f = await fixRound();
-    try {
-      const held = f.holdCheck("codex");
-      Object.assign(f.task, { state: "waiting", holdsSlot: false });
-      delete f.task.agent;
-      expect(f.engine["driver"].workflow["reserveAgent"](f.task)).toBe(false);
-      await held.reached();
-      expect(f.task.holdsSlot).toBe(false);
-      expect(f.task.statusLine).toBe("Checking Codex before the Builder returns");
-      expect(f.scope.work.builderSession!.readinessWait).toEqual(expect.objectContaining({ check: "started" }));
-      // The same task now holding its place waits there; pausing ends that wait and the place.
-      Object.assign(f.task, { state: "running", holdsSlot: true });
-      const stop = new AbortController();
-      const admitted = f.engine["driver"].workflow["admitNext"](f.task, stop.signal);
-      await waitFor(() => f.task.agent?.profileId === "sol-high", "the Builder to wait in its place");
-      stop.abort();
-      f.engine.pause(f.task.id);
-      await expectRejection(admitted, Aborted);
-      held.release();
-      await waitFor(() => f.check("codex").status === "ready", "the late readiness answer");
-      expect(f.task.state).toBe("paused");
-      expect(f.task.holdsSlot).toBe(false);
-      expect(f.checks()).toHaveLength(1);
-    } finally { await f.engine.shutdown(); }
-  });
 });

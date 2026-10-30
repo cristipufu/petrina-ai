@@ -1,9 +1,13 @@
 import { installPreparedProduct } from "../../fixtures/prepared-product.js";
+import * as gitOps from "@petrina/repositories/git";
+import { installSharedWorkflowFastPaths, materializePreparedWorktree, readWorktreeCommit } from "../../fixtures/shared-preparation.js";
+import { scriptedToolProbe } from "../../scripted-probes.js";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { expect, it } from "bun:test";
 import { directDrivers } from "../../fixtures/direct-drivers.js";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { inflateSync } from "node:zlib";
 import { Engine } from "../../engine.js";
 import { commandInputText } from "../../../src/checks.js";
 import { executionFor, scopesFor } from "@petrina/orchestrator";
@@ -12,25 +16,69 @@ import { Aborted } from "../../../src/kernel.js";
 import { WaitingForUsage } from "../../../src/usage.js";
 import type { CheckVerification } from "../../../src/product-checks.js";
 import { CONFIRM_ADDRESS } from "../../../src/connection.js";
-import { git, makeProduct, tempDir, waitFor } from "../../fixtures.js";
+import { makeProduct, tempDir, waitFor } from "../../fixtures.js";
 
 type Observation = { product: string; title: string; sha: string; tree: string; files: string[] };
+
+const READY_TOOLS = scriptedToolProbe({
+  "claude-code": { status: "ready" }, codex: { status: "ready" }, grok: { status: "ready" },
+  antigravity: { status: "not-installed" }, gh: { status: "ready" }, git: { status: "ready" }, node: { status: "ready" },
+});
+
+function readLooseObject(gitDir: string, sha: string): Buffer {
+  return inflateSync(readFileSync(join(gitDir, "objects", sha.slice(0, 2), sha.slice(2))));
+}
+
+function readBranchSha(repoPath: string, branch = "main"): string {
+  return readFileSync(join(repoPath, ".git", "refs", "heads", branch), "utf8").trim();
+}
+
+function readCommitTree(gitDir: string, commitSha: string): string {
+  const raw = readLooseObject(gitDir, commitSha).toString("utf8");
+  return raw.slice(raw.indexOf("\0") + 1).match(/^tree ([0-9a-f]{40})/m)![1]!;
+}
 
 /** Start at the approved delivery boundary; each fixture owns its repositories, check barriers and saved state. */
 async function fixture(products = ["a"], checkRuns = 2) {
   const root = tempDir("petrina-turn-recovery-"), lifetime = directDrivers(root);
   const data = join(root, "data"), log = join(root, "checks.jsonl"), check = join(root, "check.ts");
-  const program = `import { appendFileSync, existsSync, readdirSync } from "node:fs";
+  const program = `import { appendFileSync, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { inflateSync } from "node:zlib";
 const [log, root, product] = process.argv.slice(2);
-const read = (...args) => Bun.spawnSync(["git", ...args], { stdout: "pipe" }).stdout.toString().trim();
-const title = read("log", "-1", "--format=%s");
-const sha = read("rev-parse", "HEAD"), tree = read("rev-parse", "HEAD^{tree}");
+const dotGit = statSync(".git").isDirectory() ? resolve(".git") : resolve(readFileSync(".git", "utf8").replace(/^gitdir:\\s*/, "").trim());
+const commonDir = existsSync(join(dotGit, "commondir")) ? resolve(dotGit, readFileSync(join(dotGit, "commondir"), "utf8").trim()) : dotGit;
+const headText = readFileSync(join(dotGit, "HEAD"), "utf8").trim();
+const sha = headText.startsWith("ref: ") ? readFileSync(join(commonDir, headText.slice(5)), "utf8").trim() : headText;
+const raw = inflateSync(readFileSync(join(commonDir, "objects", sha.slice(0, 2), sha.slice(2)))).toString("utf8");
+const body = raw.slice(raw.indexOf("\\0") + 1);
+const tree = body.match(/^tree ([0-9a-f]{40})/m)[1];
+const title = body.slice(body.indexOf("\\n\\n") + 2).trim().split("\\n")[0];
 const files = readdirSync(".").filter(file => file.startsWith("feature-")).sort();
 appendFileSync(log, JSON.stringify({ product, title, sha, tree, files }) + "\\n");
 if (existsSync(root + "/hold-" + title)) while (!existsSync(root + "/release-" + title)) await Bun.sleep(10);
 process.exit(existsSync("reject-shared") && existsSync("feature-shared") ? 1 : 0);`;
   const open = () => {
-    const engine = lifetime.open(data, { agentCommand: () => { throw new Error("Approved local delivery needs no agent"); }, terminals: () => [], checkRuns });
+    const engine = lifetime.open(data, {
+      agentCommand: () => { throw new Error("Approved local delivery needs no agent"); },
+      terminals: () => [],
+      toolProbe: READY_TOOLS,
+      checkRuns,
+      runCheckCommand: async (req) => {
+        if (req.argv[0] !== process.execPath || req.argv[1] !== check) return undefined;
+        const [targetLog, targetRoot, product] = req.argv.slice(2);
+        const ver = readWorktreeCommit(req.cwd)!;
+        const title = ver.body.trim().split("\n")[0]!;
+        const files = readdirSync(req.cwd).filter(file => file.startsWith("feature-")).sort();
+        appendFileSync(targetLog!, `${JSON.stringify({ product, title, sha: ver.commit, tree: ver.tree, files })}\n`);
+        if (existsSync(join(targetRoot!, `hold-${title}`))) {
+          while (!existsSync(join(targetRoot!, `release-${title}`)) && !req.signal?.aborted) await Bun.sleep(5);
+        }
+        if (req.signal?.aborted) return { code: 130 };
+        return { code: existsSync(join(req.cwd, "reject-shared")) && existsSync(join(req.cwd, "feature-shared")) ? 1 : 0 };
+      },
+    });
+    installSharedWorkflowFastPaths(engine, { skipDriverPrepare: false, skipUpToDate: true, fastCheckCapture: true, fastCleanup: true, fastCheckpoints: true });
     engine.schedule = () => {};
     return engine;
   };
@@ -47,12 +95,14 @@ process.exit(existsSync("reject-shared") && existsSync("feature-shared") ? 1 : 0
     writeFileSync(check, program);
     engine = open();
     await engine.waitUntilReady(); engine.setPoolPaused(false);
-    const owners: { id: string; path: string; name: string }[] = [];
+    const owners: { id: string; path: string; name: string; baseSha: string; baseTree: string }[] = [];
     for (const name of products) {
       const path = await makeProduct(join(root, name), { origin: "none" });
+      const baseSha = readBranchSha(path, "main");
+      const baseTree = readCommitTree(join(path, ".git"), baseSha);
       const id = installPreparedProduct(engine, { id: ["clone", "clone-2", "clone-3"][owners.length]!, name: name.toUpperCase(), repo: "local/clone", tone: (["blue", "green", "orange"] as const)[owners.length]!, path, defaultBranch: "main", delivery: "local", approveDelivery: true });
       engine.setProductChecks(id, [{ name: "Tests", command: commandInputText([process.execPath, check, log, root, name]) }]);
-      owners.push({ id, path, name });
+      owners.push({ id, path, name, baseSha, baseTree });
     }
     const add = (name: string, indices = [0], branch = "main") => {
       const current = engine;
@@ -70,20 +120,33 @@ process.exit(existsSync("reject-shared") && existsSync("feature-shared") ? 1 : 0
       }
       for (const scope of scopesFor(task)) {
         const work = scope.work;
-        work.source = { ...await current["sources"].resolve(task, { productId: work.productId, delivery: "local", startFrom: { kind: "default" } }), confirmed: true };
+        const owner = owners.find(entry => entry.id === work.productId)!;
         if (branch !== "main") {
-          // Source approval is already settled; the scheduler sees the resolved branch, as it does after a plan check.
-          const owner = owners.find(owner => owner.id === work.productId)!;
-          await git(owner.path, "branch", branch, "main");
-          work.source.start.branch = branch; work.source.destination.branch = branch;
+          const branchRef = join(owner.path, ".git", "refs", "heads", ...branch.split("/"));
+          mkdirSync(dirname(branchRef), { recursive: true });
+          writeFileSync(branchRef, `${owner.baseSha}\n`);
         }
-        await current["driver"]["prepare"](scope, new AbortController().signal);
+        const taskBranch = `petrina/${name}-${task.id}`;
+        const worktree = join(data, "worktrees", owner.id, task.id);
+        work.source = {
+          product: { id: owner.id, name: owner.name.toUpperCase(), path: owner.path, repo: "local/clone", defaultBranch: "main" },
+          start: { kind: "default", branch },
+          destination: { kind: "branch", repo: "local/clone", mode: "local", branch },
+          initialSha: owner.baseSha,
+          confirmed: true,
+        };
+        work.branch = taskBranch;
+        work.worktree = worktree;
+        work.hooking = false;
+        work.base = branch;
+        work.baseSha = owner.baseSha;
+        const seed = await materializePreparedWorktree(current, scope, owner.path, branch, owner.baseSha, `feature-${name}`, `${name}\n`, name);
+        current.log(scope, "milestone", "Set up a fresh working copy");
         if ("completedStages" in work) work.completedStages = ["build"];
         work.report = { title: name, summary: `Deliver ${name}`, changes: [`Added ${name}`] };
-        writeFileSync(join(work.worktree!, `feature-${name}`), `${name}\n`);
-        await git(work.worktree!, "add", "."); await git(work.worktree!, "commit", "-qm", name);
-        work.approvedSha = await git(work.worktree!, "rev-parse", "HEAD"); work.approvedPatch = await current["updates"].patch(scope);
+        work.approvedSha = seed.head; work.approvedPatch = seed.patch;
         work.approvedFor = { by: "coordinator", mode: "local", destination: destination(work, current.repositoryOf(scope)) };
+        current.commit();
       }
       return task;
       });
@@ -118,11 +181,11 @@ it("looks up an interrupted local publication after restart before checking and 
       expect(f.engine()["shipping"].waitingForTurn(first)).toBeUndefined();
       expect(f.engine()["shipping"].waitingForTurn(second)).toContain("first");
       expect((await f.engine()["checks"].failing(firstScope, signal)).kind).toBe("passed");
-      const tested = await git(firstScope.work.worktree!, "rev-parse", "HEAD");
+      const tested = readWorktreeCommit(firstScope.work.worktree!)!.commit;
       // Save exactly the window after an admitted local update reached Git, before its result reached state.
       first.state = "running";
       firstScope.work.shipping = { start: tested, base: firstScope.work.baseSha, prepared: { tested, summary: "Ready" }, step: "update", boot: f.engine().boot, moves: 0, failures: 0 };
-      await git(f.owners[0]!.path, "reset", "--hard", tested);
+      await gitOps.moveTo(f.owners[0]!.path, tested);
       f.engine().commitNow();
       await f.restart();
       const recovered = f.engine().task(first.id)!;
@@ -137,7 +200,7 @@ it("looks up an interrupted local publication after restart before checking and 
       await waitFor(() => next.state === "done" && !f.engine().settling.has(second.id), "the waiting task to finish after restart");
       const runs = f.evidence(); expect(runs.map(run => run.title)).toEqual(["first", "second"]);
       expect(runs[1]!.files).toEqual(["feature-first", "feature-second"]);
-      expect(await git(f.owners[0]!.path, "rev-parse", "main")).toBe(runs[1]!.sha);
+      expect(readBranchSha(f.owners[0]!.path, "main")).toBe(runs[1]!.sha);
     } finally {  }
 
   }), () => f.dispose());
@@ -207,7 +270,7 @@ for (const confirmation of ["own", "peer"] as const) it(`returns admitted check 
     const address = "https://github.com/acme/address.git";
     product.repo = "acme/address"; delete product.remote;
     scope.work.source!.product.repo = product.repo; delete scope.work.source!.product.remote;
-    await git(product.path!, "remote", "add", "origin", address);
+    appendFileSync(join(product.path!, ".git", "config"), `\n[remote "origin"]\n\turl = ${address}\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n`);
     const owner = confirmation === "peer" ? f.engine().task(f.engine().addTask({ productId: product.id, title: "Address owner", backlog: true }))! : task;
     let attempt: Promise<CheckVerification> | undefined, follower: Promise<() => void> | undefined, confirming: Promise<unknown> | undefined;
     try {
@@ -269,9 +332,9 @@ for (const changed of [true]) it(`refreshes all shared products before publishin
     productB.repo = "acme/address"; delete productB.remote; delete productB.remoteRefused;
     b!.work.source!.product.repo = productB.repo;
     delete b!.work.source!.product.remote;
-    await git(productB.path!, "remote", "add", "origin", "https://github.com/acme/address.git");
+    appendFileSync(join(productB.path!, ".git", "config"), `\n[remote "origin"]\n\turl = https://github.com/acme/address.git\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n`);
     if (!changed) {
-      await git(b!.work.worktree!, "reset", "--hard", b!.work.baseSha!);
+      await gitOps.moveTo(b!.work.worktree!, b!.work.baseSha!);
       b!.work.approvedSha = b!.work.baseSha;
       delete b!.work.approvedPatch;
     }
@@ -291,19 +354,19 @@ for (const changed of [true]) it(`refreshes all shared products before publishin
       // A competing approved local task lands while the shared task has yielded its turn.
       expect(await shipping.deliver(second, second.plan!.stages[second.stageIndex]!, signal)).toBe("stop");
       shipping.finishDeliveryTurn(second.id);
-      const secondTip = await git(f.owners[0]!.path, "rev-parse", "main");
+      const secondTip = readBranchSha(f.owners[0]!.path, "main");
       writeFileSync(join(f.owners[2]!.path, "reject-shared"), "The combined shared change must fail\n");
-      await git(f.owners[2]!.path, "add", "."); await git(f.owners[2]!.path, "commit", "-qm", "Reject the combined shared change");
-      const outsideTip = await git(f.owners[2]!.path, "rev-parse", "main");
+      await gitOps.commitChanges(f.owners[2]!.path, "Reject the combined shared change");
+      const outsideTip = readBranchSha(f.owners[2]!.path, "main");
       engine.answer(engine.s.inbox.find(item => item.taskId === shared.id && item.kind === "question")!.id, CONFIRM_ADDRESS);
       expect(await delivery).toBe("continue");
       expect(shared.repositories!.every(work => !work.landed)).toBe(true);
-      expect(await git(f.owners[0]!.path, "rev-parse", "main")).toBe(secondTip);
+      expect(readBranchSha(f.owners[0]!.path, "main")).toBe(secondTip);
       expect(await shipping.deliver(shared, stage, signal)).toBe("continue");
       expect(shared.stageIndex).toBe(0);
       expect(shared.repositories!.every(work => !work.landed)).toBe(true);
-      expect(await git(f.owners[0]!.path, "rev-parse", "main")).toBe(secondTip);
-      expect(await git(f.owners[2]!.path, "rev-parse", "main")).toBe(outsideTip);
+      expect(readBranchSha(f.owners[0]!.path, "main")).toBe(secondTip);
+      expect(readBranchSha(f.owners[2]!.path, "main")).toBe(outsideTip);
       expect(f.evidence().filter(run => run.product === "a").map(run => [run.title, run.files])).toEqual([
         ["shared", ["feature-shared"]], ["second", ["feature-second"]], ["shared", ["feature-second", "feature-shared"]],
       ]);
@@ -350,13 +413,13 @@ it("refreshes saved shared local candidates after shutdown before publishing any
       expect(scopesFor(recovered).every(({ work }) => !!work.shipping?.prepared)).toBe(true);
       for (const owner of f.owners) {
         writeFileSync(join(owner.path, owner.name === "c" ? "reject-shared" : "outside-fix"), "New main after restart\n");
-        await git(owner.path, "add", "."); await git(owner.path, "commit", "-qm", "Advance main before the task resumes");
+        await gitOps.commitChanges(owner.path, "Advance main before the task resumes");
       }
-      const latest = await Promise.all(f.owners.map(owner => git(owner.path, "rev-parse", "main")));
+      const latest = f.owners.map(owner => readBranchSha(owner.path, "main"));
       f.schedule();
       await waitFor(() => recovered.stageIndex === 0 && !f.engine().settling.has(recovered.id), "the restarted task to stop at its failed combined checks");
       expect(recovered.repositories!.every(work => !work.landed)).toBe(true);
-      expect(await Promise.all(f.owners.map(owner => git(owner.path, "rev-parse", "main")))).toEqual(latest);
+      expect(f.owners.map(owner => readBranchSha(owner.path, "main"))).toEqual(latest);
       for (const owner of f.owners) {
         const runs = f.evidence().filter(run => run.product === owner.name);
         expect(runs).toHaveLength(2);

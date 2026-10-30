@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { applyAcceptanceVersions } from "../../../src/acceptance-versions.js";
+import { applyAcceptanceVersions, hasAcceptanceVersionConsumers } from "../../../src/acceptance-versions.js";
 import { stateFixture, taskFixture } from "../../fixtures/state.js";
 
 function accepted() {
@@ -43,4 +43,41 @@ it("treats an unavailable observed version as unverified code rather than a prio
   delete task.brief;
   applyAcceptanceVersions(task, versions);
   expect(task.repositories!.every(work => work.checks!.current)).toBe(true);
+});
+
+it("needs no version observations without shared checks or passing acceptance bound to versions", () => {
+  const { task } = accepted();
+  for (const work of task.repositories!) delete work.checks;
+  const items: (NonNullable<typeof task.brief>["acceptance"][number] | undefined)[] = [undefined, { text: "Unverified" },
+    { text: "Legacy pass", verification: "passed" as const },
+    { text: "Empty pass", verification: "passed" as const, versions: {} },
+    { text: "Failed", verification: "failed" as const, versions: { first: "tree" } },
+    { text: "Stale", verification: "stale" as const, versions: { first: "tree" } },
+  ];
+  for (const item of items) {
+    task.brief!.acceptance = item ? [item] : [];
+    const before = JSON.parse(JSON.stringify(task)) as typeof task;
+    expect(hasAcceptanceVersionConsumers(task)).toBe(false);
+    applyAcceptanceVersions(task, { unrelated: "any observation" });
+    expect(task).toEqual(before);
+  }
+  delete task.brief;
+  expect(hasAcceptanceVersionConsumers(task)).toBe(false);
+});
+
+it("keeps each check and passing acceptance version as a consumer, including unknown products", () => {
+  const { task, first } = accepted();
+  delete task.brief;
+  expect(hasAcceptanceVersionConsumers(task)).toBe(true);
+  for (const work of task.repositories!) delete work.checks;
+  task.brief = { summary: "Together", forUsers: [], areas: [], risks: [], acceptance: [
+    { text: "A previously checked product", verification: "passed", versions: { unknown: "tree" } },
+  ] };
+  expect(hasAcceptanceVersionConsumers(task)).toBe(true);
+  applyAcceptanceVersions(task, { [first]: "tree" });
+  expect(task.brief.acceptance[0]!.verification).toBe("stale");
+  expect(hasAcceptanceVersionConsumers(task)).toBe(false);
+  delete task.repositories;
+  task.brief.acceptance[0]!.verification = "passed";
+  expect(hasAcceptanceVersionConsumers(task)).toBe(false);
 });

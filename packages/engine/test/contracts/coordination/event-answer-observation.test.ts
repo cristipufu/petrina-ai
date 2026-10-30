@@ -1,11 +1,10 @@
 import { afterAll, expect, it } from "bun:test";
 import { createWorkflowEventFixtures, kinds, all } from "../../fixtures/workflow-event-native.js";
-
-const { fixture, close } = createWorkflowEventFixtures();
+const { fixture, close, use } = createWorkflowEventFixtures();
 afterAll(close);
-
 it("observes the actual Engine question answer once after its recorded request", async () => {
-  const { e, events } = fixture();
+  return use("petrina-events-", async caseOwner => {
+  const { e, events } = fixture(caseOwner);
   const taskId = e.addTask({ productId: "product", title: "Actual answer" }), task = e.task(taskId)!;
   const start = await events({ taskIds: [taskId], timeoutMs: 0 });
   task.journey = [{ id: "question-step", kind: "agent", roleId: "builder", profileId: "sol-xhigh", round: 1, sub: 0, startedAt: 1,
@@ -20,4 +19,5 @@ it("observes the actual Engine question answer once after its recorded request",
   expect(all(answered)[0]).toMatchObject({ itemId: "actual-question", how: "answered", answer: "Hello", requestKind: "question" });
   expect(e.s.inbox).toHaveLength(0);
   expect((await events({ taskIds: [taskId], cursor: answered.cursor, timeoutMs: 0 })).events).toEqual([]);
+  });
 });

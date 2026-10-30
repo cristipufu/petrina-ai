@@ -1,3 +1,5 @@
+import { applyAcceptanceVersions } from "@petrina/core";
+import { scopesFor } from "@petrina/orchestrator";
 import { afterAll, describe, expect, it } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -5,6 +7,7 @@ import { ScriptedAgents, scriptedResult } from "../../scripted-agents.js";
 import { answersTo, findingIds } from "../../scripted-findings.js";
 import { coordinator, itemOf, taskOf, until } from "../../support.js";
 import { sharedWorldFixtures } from "../../fixtures/shared-world.js";
+import { installSharedWorkflowFastPaths } from "../../fixtures/shared-preparation.js";
 const fixtures = sharedWorldFixtures();
 afterAll(() => fixtures.close());
 
@@ -34,8 +37,51 @@ describe.concurrent("shared-task repair regressions", () => {
 
 
     const { id } = await withEngine(async engine => {
+      installSharedWorkflowFastPaths(engine, {
+        skipUpToDate: true,
+        skipPrepareChecks: true,
+        skipReviewCopies: true,
+        skipReviewInputDiffs: true,
+      });
+      let revCounter = 0;
+      engine["work"]["buildCompletion"]["effects"].saveChanges = async (scope) => {
+        const rev = (++revCounter).toString(16).padStart(8, "0");
+        scope.work.savedVersion = { commit: `b0000000000000000000000000000000${rev}`, tree: `c0000000000000000000000000000000${rev}` };
+      };
+      engine["updates"].fold = async (scope) => {
+        const saved = scope.work.savedVersion ?? { commit: scope.work.baseSha ?? "", tree: "" };
+        engine["updates"]["observedHeads"].set(scope.work, saved.commit);
+        return { fork: scope.work.baseSha!, version: { head: saved.commit, tree: saved.tree } };
+      };
+      const taskVersions = async (currentTask: Parameters<typeof scopesFor>[0]) => Object.fromEntries(scopesFor(currentTask).map(s => [s.work.productId, s.work.savedVersion?.tree ?? s.work.baseSha ?? ""]));
+      const committedCode = async (currentTask: Parameters<typeof scopesFor>[0]) => {
+        const versions = await taskVersions(currentTask);
+        return { versions, changes: { ...versions } };
+      };
+      const checkpointEffects = engine["driver"]["checkpoint"]["effects"];
+      checkpointEffects.head = async (scope) => scope.work.savedVersion?.commit ?? "";
+      checkpointEffects.patch = async (scope) => scope.work.savedVersion?.tree ?? "patch";
+      checkpointEffects.committedCode = committedCode;
+      checkpointEffects.versions = taskVersions;
+      checkpointEffects.invalidateAcceptance = async (currentTask, versions) => {
+        const current = versions ?? await taskVersions(currentTask);
+        applyAcceptanceVersions(currentTask, current);
+        return current;
+      };
+      checkpointEffects.acceptanceVersion = async (scope, versions) => JSON.stringify(versions ?? await taskVersions(scope.task));
+      checkpointEffects.writeGuide = async () => {};
+      checkpointEffects.writeLearnings = async () => {};
+      checkpointEffects.offerLearnings = async () => {};
+      const acceptanceEffects = engine["work"]["acceptanceStep"]["effects"];
+      acceptanceEffects.committedCode = committedCode;
+      acceptanceEffects.versions = taskVersions;
 
       const first = await shop.preparedProduct(engine), second = await api.preparedProduct(engine);
+      for (const productId of [first, second]) {
+        const product = engine.s.products.find(p => p.id === productId)!;
+        product.checks = [];
+        product.checksBy = "coordinator";
+      }
       owners = [first, second];
       const id = engine.addTask({ productId: first, worksOn: [first, second].map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "pull-request" })), title: "Acceptance needs a decision" });
       const ready = await until(engine, (state) => !!itemOf(state, id, "delivery") || !!taskOf(state, id).error, coordinator(["plan", "design"]));

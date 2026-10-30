@@ -10,7 +10,7 @@ import { addLearnings, keptLearnings, Learnings } from "../../../src/learnings.j
 import * as gitOps from "@petrina/repositories/git";
 import { git, makeProduct } from "../../fixtures.js";
 import { expectRejection } from "@petrina/test-support/rejections";
-import { commit, show, learningReconciliationFixtures } from "../../fixtures/learning-reconciliation.js";
+import { changedFilesBetween, commit, revParse, show, learningReconciliationFixtures } from "../../fixtures/learning-reconciliation.js";
 
 const worlds = learningReconciliationFixtures();
 afterAll(worlds.close);
@@ -68,22 +68,22 @@ async function rewriteHistory(repo: string, how: History, commit: string, parent
 async function toBuilder(f: Fixture, merged: string, files = ["AGENTS.md"], source = "main") {
   expect(await f.update()).toBe("conflict");
   expect(f.scope().work.updating?.files).toEqual(files);
-  expect(await git(f.copy, "rev-parse", "HEAD")).toBe(await git(f.repo, "rev-parse", "main"));
+  expect(await revParse(f.copy, "HEAD")).toBe(await revParse(f.repo, "main"));
   expect(readFileSync(join(f.copy, "AGENTS.md"), "utf8")).toBe(merged);
   expect(f.scope().task.journey!.find((step) => step.work === "update")).toMatchObject({ outcome: `${files.length === 1 ? "1 file conflicts" : `${files.length} files conflict`} with ${source}`, tone: "back" });
 }
 
 /** Petrina kept both sides: AGENTS.md is `expected` in full, the task's one commit sits on main, and no Builder was needed. */
 async function kept(f: Fixture, expected: string) {
-  const main = await git(f.repo, "rev-parse", "main");
+  const main = await revParse(f.repo, "main");
   expect(await f.update()).toBe("moved");
   expect(f.scope().work.updating).toBeUndefined();
-  expect(await f.file()).toBe(expected);
-  expect(f.scope().work.savedVersion).toEqual({ commit: await git(f.copy, "rev-parse", "HEAD"), tree: await git(f.copy, "rev-parse", "HEAD^{tree}") });
-  expect(await git(f.copy, "rev-parse", "HEAD~1")).toBe(main);
-  expect(await git(f.copy, "status", "--porcelain")).toBe("");
+  expect(await show(f.copy, "HEAD:AGENTS.md")).toBe(expected);
+  expect(f.scope().work.savedVersion).toEqual({ commit: await revParse(f.copy, "HEAD"), tree: await revParse(f.copy, "HEAD^{tree}") });
+  expect(await revParse(f.copy, "HEAD~1")).toBe(main);
+  expect(await gitOps.isClean(f.copy)).toBe(true);
   // Every other file is the clean combination: main's, plus the task's own change.
-  const changed = (await git(f.copy, "diff", "--name-only", "HEAD~1", "HEAD")).split("\n");
+  const changed = await changedFilesBetween(f.copy, "HEAD~1", "HEAD");
   expect(changed).toEqual([...(expected === await show(f.repo, "main:AGENTS.md") ? [] : ["AGENTS.md"]), "product-change.txt"]);
   expect(f.scope().task.stageIndex).toBe(0);
   expect(f.scope().task.journey!.filter((step) => step.work === "update").map((step) => [step.outcome, step.tone])).toEqual([[KEPT, undefined]]);
@@ -101,7 +101,7 @@ describe.concurrent("an update where main and the task only added approved learn
         // The task's lesson stays reserved for it, and the next learnings write adds nothing again.
         expect(f.product().learnings!.find((line) => line.text === then)!.writtenOn).toBe(f.id);
         await new Learnings(f.engine).write(f.scope());
-        expect(await f.file()).toBe(`${BASE}- ${first}\n- ${then}\n`);
+        expect(await show(f.copy, "HEAD:AGENTS.md")).toBe(`${BASE}- ${first}\n- ${then}\n`);
         expect(await f.update()).toBe("current");
       });
     } finally { await f.dispose(); }
@@ -144,7 +144,7 @@ describe.concurrent("an update where main and the task only added approved learn
           expect(reads).toBe(1);
           expect(f.product().learnings!.map((line) => [line.text, line.writtenOn])).toEqual([[X1, f.other], [Y1, f.id], [Y3, undefined]]);
           await new Learnings(f.engine).write(f.scope());
-          expect(await f.file()).toBe(`${BASE}- ${X1}\n- ${Y1}\n- ${Y3}\n`);
+          expect(await show(f.copy, "HEAD:AGENTS.md")).toBe(`${BASE}- ${X1}\n- ${Y1}\n- ${Y3}\n`);
           expect(f.product().learnings!.find((line) => line.text === Y3)!.writtenOn).toBe(f.id);
 
         }, () => restore());
@@ -165,11 +165,11 @@ describe.concurrent("an update where main and the task only added approved learn
         await f.own([Y1]);
         await kept(f, `${BASE}- ${X1}\n- ${Y1}\n`);
         await f.restart();
-        const head = await git(f.copy, "rev-parse", "HEAD");
+        const head = await revParse(f.copy, "HEAD");
         expect(await f.update()).toBe("current");
         await new Learnings(f.engine).write(f.scope());
-        expect(await git(f.copy, "rev-parse", "HEAD")).toBe(head);
-        expect(await f.file()).toBe(`${BASE}- ${X1}\n- ${Y1}\n`);
+        expect(await revParse(f.copy, "HEAD")).toBe(head);
+        expect(await show(f.copy, "HEAD:AGENTS.md")).toBe(`${BASE}- ${X1}\n- ${Y1}\n`);
         expect(f.scope().task.journey!.filter((step) => step.work === "update")).toHaveLength(1);
       });
     } finally { await f.dispose(); }
@@ -180,17 +180,17 @@ describe.concurrent("an update where main and the task only added approved learn
     try {
       await f.run(async () => {
         await f.land([X1]);
-        if (reviewed === "before") f.scope().work.reviewedSha = await git(f.copy, "rev-parse", "HEAD");
+        if (reviewed === "before") f.scope().work.reviewedSha = await revParse(f.copy, "HEAD");
         await f.own([Y1]);
-        if (reviewed === "with") f.scope().work.reviewedSha = await git(f.copy, "rev-parse", "HEAD");
+        if (reviewed === "with") f.scope().work.reviewedSha = await revParse(f.copy, "HEAD");
         // A fix after that review: the one change the next round should see, with the lesson if it came later.
         writeFileSync(join(f.copy, "product-change.txt"), "The task's fixed change\n");
         await commit(f.copy, "A fix after the review");
         await kept(f, `${BASE}- ${X1}\n- ${Y1}\n`);
         const carried = f.scope().work.reviewedSha!;
         expect(carried).toBeDefined();
-        expect(await git(f.copy, "rev-parse", `${carried}~1`)).toBe(await git(f.repo, "rev-parse", "main"));
-        expect((await git(f.copy, "diff", "--name-only", carried, "HEAD")).split("\n")).toEqual(reviewed === "with" ? ["product-change.txt"] : ["AGENTS.md", "product-change.txt"]);
+        expect(await revParse(f.copy, `${carried}~1`)).toBe(await revParse(f.repo, "main"));
+        expect(await changedFilesBetween(f.copy, carried, "HEAD")).toEqual(reviewed === "with" ? ["product-change.txt"] : ["AGENTS.md", "product-change.txt"]);
       });
     } finally { await f.dispose(); }
   });
@@ -262,11 +262,11 @@ describe.concurrent("an update that still goes to the Builder", () => {
         await f.land([X1]);
         await f.own([Y1]);
         // The task's own change claims to start after main removed the lesson.
-        await rewriteParent(f.repo, "a forged commit index", await git(f.copy, "rev-parse", "HEAD~1"), removed);
+        await rewriteParent(f.repo, "a forged commit index", await revParse(f.copy, "HEAD~1"), removed);
         expect((await git(f.copy, "rev-list", "HEAD")).split("\n")).toContain(removed);
         await toBuilder(f, await f.gitMerge());
         expect(f.lines().some((line) => line.includes("into the branch itself"))).toBe(false);
-        expect(await git(f.copy, "rev-parse", "HEAD")).toBe(await git(f.repo, "rev-parse", "main"));
+        expect(await revParse(f.copy, "HEAD")).toBe(await revParse(f.repo, "main"));
       });
     } finally { await f.dispose(); }
   });
@@ -280,7 +280,7 @@ describe.concurrent("an update that still goes to the Builder", () => {
         const main = await f.land([X1]);
         await f.own([Y1]);
         // The task's own change claims to start after main removed the lesson.
-        const change = await git(f.copy, "rev-parse", "HEAD~1");
+        const change = await revParse(f.copy, "HEAD~1");
         await rewriteParent(f.repo, "a forged commit index", change, removed);
         expect((await git(f.copy, "rev-list", "HEAD")).split("\n")).toContain(removed);
         const fork = await gitOps.mergeBase(f.copy, "HEAD", main);
@@ -301,7 +301,7 @@ describe.concurrent("an update that still goes to the Builder", () => {
         await f.edit(() => BASE);
         await f.land([X1]);
         await f.own([Y1]);
-        const blob = await git(f.repo, "rev-parse", `${added}:AGENTS.md`);
+        const blob = await revParse(f.repo, `${added}:AGENTS.md`);
         const stored = join(f.repo, ".git", "objects", blob.slice(0, 2), blob.slice(2));
         expect(existsSync(stored)).toBe(true);
         rmSync(stored);
@@ -340,7 +340,9 @@ describe.concurrent("an update that still goes to the Builder", () => {
           destination: { mode: "local", repo: "local/product", branch: "main", kind: "branch" },
           confirmed: true,
         } satisfies TaskSource;
-        await git(f.repo, "update-ref", `refs/petrina/sources/${f.id}`, main);
+        const sourceRef = join(f.repo, ".git", "refs", "petrina", "sources", f.id);
+        mkdirSync(join(f.repo, ".git", "refs", "petrina", "sources"), { recursive: true });
+        writeFileSync(sourceRef, `${main}\n`);
         f.engine["sources"].fetch = async () => ({ ref: "main", sha: main });
         await toBuilder(f, await f.gitMerge(), ["AGENTS.md"], start === "branch" ? "main" : "PR #7");
       });
@@ -386,14 +388,15 @@ describe("main's history of AGENTS.md", () => {
     const f = worlds.history(), root = f.root;
     try {
       await f.run(async () => {
-        const repo = await makeProduct(join(root, "full"));
+        const repo = await makeProduct(join(root, "full"), { origin: "none" });
         writeFileSync(join(repo, "AGENTS.md"), BASE);
         await commit(repo, "Agent instructions");
         addLearnings(repo, [X1]);
         const latest = await commit(repo, "Another delivery");
-        expect(await gitOps.versionsBetween(repo, await git(repo, "rev-parse", "HEAD~1"), latest, "AGENTS.md")).toEqual([BASE, `${BASE}- ${X1}\n`]);
+        const previous = await revParse(repo, "HEAD~1");
+        expect(await gitOps.versionsBetween(repo, previous, latest, "AGENTS.md")).toEqual([BASE, `${BASE}- ${X1}\n`]);
         await git(root, "clone", "-q", "--depth", "2", `file://${repo}`, join(root, "shallow"));
-        await expectRejection(gitOps.versionsBetween(join(root, "shallow"), await git(repo, "rev-parse", "HEAD~1"), latest, "AGENTS.md"), "Part of the history is not in this copy");
+        await expectRejection(gitOps.versionsBetween(join(root, "shallow"), previous, latest, "AGENTS.md"), "Part of the history is not in this copy");
       });
     } finally { await f.dispose(); }
   });

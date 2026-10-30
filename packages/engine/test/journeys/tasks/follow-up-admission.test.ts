@@ -1,16 +1,15 @@
 import { afterAll, expect, it } from "bun:test";
 import { waitFor } from "../../fixtures.js";
 import { createFollowUpFixtures, older, groupByBug, taskOf, finish, cards } from "../../fixtures/follow-up-native.js";
-
-const { open, close, shutdown } = createFollowUpFixtures();
+const { open, close, use } = createFollowUpFixtures();
 afterAll(close);
-
 it("stays in the backlog until the coordinator queues it, then starts", async () => {
-  const world = await open(groupByBug, false, true);
+  return use(async caseOwner => {
+  const world = await open(caseOwner, groupByBug, false, true);
   const { engine } = world;
   try {
     const task = taskOf(engine, world.shop, "Ready footer", [older("ready", "bug-ready: The footer opens a retired page.")]);
-    await finish(engine, task);
+    await finish(caseOwner, engine, task);
     const card = cards(engine)[0]!;
     engine.setPoolPaused(false);
     engine.schedule();
@@ -20,5 +19,6 @@ it("stays in the backlog until the coordinator queues it, then starts", async ()
     engine.queueTask(card.id);
     await waitFor(() => engine.task(card.id)!.startedAt !== undefined, "the queued follow-up to start");
     expect(cards(engine)).toHaveLength(1);
-  } finally { await shutdown(engine); }
+  } finally { await caseOwner.stop(engine); }
+  });
 });

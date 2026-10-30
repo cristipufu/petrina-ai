@@ -7,7 +7,7 @@ import { Engine, writeFixtureEngineOptions } from "../../engine.js";
 import { waitFor } from "../../fixtures.js";
 import { Coordination } from "../../../src/coordination.js";
 import { executionFor } from "@petrina/orchestrator";
-import { extraFixture } from "../../extra-fixtures.js";
+import { extraFixture, preparedServiceExtraFixture as serviceExtraFixture } from "../../extra-fixtures.js";
 import { FileFaults } from "@petrina/test-support/file-faults";
 
 const cases = engineCaseFixtures();
@@ -42,7 +42,7 @@ describe.skipIf(process.platform === "win32")("required extra validation shares 
     const record = await f.submit("crash-running", ["probe", output === "saved output" ? "hold" : "hold-silent"]);
     await owner.stop(f.engine);
     const settings = join(f.root, "settings.json");
-    writeFixtureEngineOptions(settings, f.settings);
+    writeFixtureEngineOptions(settings, f.nativeSettings);
     const folder = join(f.data, "checks", record.taskId);
     if (output === "no log file") {
       mkdirSync(join(f.data, "checks"), { recursive: true });
@@ -126,7 +126,7 @@ describe.skipIf(process.platform === "win32")("required extra validation shares 
 
   for (const phase of ["service inspection", "copying", "copying with held cleanup", "failed service inspection"] as const) it(`preserves never-started requests when force-stopped during ${phase}`, async () => {
   return cases.use("petrina-extra-", async owner => {
-    return await extraFixture(owner, async f => {
+    return await serviceExtraFixture(owner, async f => {
     const record = await f.submit("force-stop-preparing", ["probe", "pass"]);
     const following = await f.submit("after-forced-stop", ["probe", "pass"], (await f.add()).id);
     const container = f.engine.extraValidations["container"];
@@ -181,7 +181,7 @@ describe.skipIf(process.platform === "win32")("required extra validation shares 
       expect(existsSync(following.snapshot)).toBe(false);
     } finally { releasePreparation(); await (stopped ?? owner.stop(f.engine)); }
 
-  });
+  }, {}, { fastClientStop: true, actorLease: false, commandLease: false, scriptedNonHoldRuns: true });
 
   });
 });
@@ -189,7 +189,7 @@ describe.skipIf(process.platform === "win32")("required extra validation shares 
   for (const heldCopy of [false, true]) it(`returns interrupted preparation to its original place${heldCopy ? " after cleanup was held" : ""}`, async () => {
   return cases.use("petrina-extra-", async owner => {
     const faults = new FileFaults();
-    return await extraFixture(owner, async f => {
+    return await serviceExtraFixture(owner, async f => {
     const record = await f.submit("crash-preparing", ["probe", "pass"]);
     const second = await f.add();
     const following = await f.submit("after-preparation", ["probe", "pass"], second.id);
@@ -215,14 +215,14 @@ describe.skipIf(process.platform === "win32")("required extra validation shares 
       expect(calls.map(args => args[args.indexOf("--name") + 1])).toEqual([record.containerName, following.containerName]);
     } finally { allowRemoval(); }
 
-  }, { files: faults.files });
+  }, { files: faults.files }, { fastClientStop: true, actorLease: false, commandLease: false, scriptedNonHoldRuns: true });
 
   });
 });
 
   it("preserves an already completed outcome through held cleanup and restart, and drains only running work", async () => {
   return cases.use("petrina-extra-", async owner => {
-    return await extraFixture(owner, async f => {
+    return await serviceExtraFixture(owner, async f => {
     const record = await f.submit("held-result");
     f.engine.setPoolPaused(false); await f.started(record);
     expect(f.engine.backgroundWork.size).toBeGreaterThan(0);
@@ -248,7 +248,7 @@ describe.skipIf(process.platform === "win32")("required extra validation shares 
 
   it("keeps paused and draining submissions queued without taking capacity; ordinary no-extra evidence is unchanged", async () => {
   return cases.use("petrina-extra-", async owner => {
-    return await extraFixture(owner, async f => {
+    return await serviceExtraFixture(owner, async f => {
     const work = executionFor(f.task).work;
     const checks = JSON.stringify(work.checks);
     const eventsBefore = f.engine.events.log.collect({}, 0, 100).events.filter(event => event.kind.startsWith("check."));
@@ -277,7 +277,7 @@ describe.skipIf(process.platform === "win32")("required extra validation shares 
 
   it("cancelling during preparation keeps ownership and capacity until the admitted work settles", async () => {
   return cases.use("petrina-extra-", async owner => {
-    return await extraFixture(owner, async f => {
+    return await serviceExtraFixture(owner, async f => {
     let entered!: () => void, releasePreparation!: () => void;
     owner.onStop(() => releasePreparation());
     const preparing = new Promise<void>(resolve => { entered = resolve; });
@@ -304,7 +304,7 @@ describe.skipIf(process.platform === "win32")("required extra validation shares 
 
   it("keeps a task cancellation final when Petrina also stops during preparation", async () => {
   return cases.use("petrina-extra-", async owner => {
-    return await extraFixture(owner, async f => {
+    return await serviceExtraFixture(owner, async f => {
     let entered!: () => void, releasePreparation!: () => void;
     owner.onStop(() => releasePreparation());
     const preparing = new Promise<void>(resolve => { entered = resolve; });
@@ -334,7 +334,7 @@ describe.skipIf(process.platform === "win32")("required extra validation shares 
   it("makes copy-cleanup failures visible across restart and retries them without leaking a hidden place", async () => {
   return cases.use("petrina-extra-", async owner => {
     const faults = new FileFaults();
-    return await extraFixture(owner, async f => {
+    return await serviceExtraFixture(owner, async f => {
     const record = await f.submit("copy-cleanup");
     f.engine.setPoolPaused(false); await f.started(record);
     const allowRemoval = faults.blockRemoval(record.snapshot);

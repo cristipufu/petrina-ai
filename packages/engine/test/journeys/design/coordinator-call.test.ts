@@ -1,29 +1,40 @@
 import { engineCaseFixtures, type EngineCaseOwner } from "../../fixtures/engine-cases.js";
 import { FAKE_AGENT } from "../../fixtures.js";
 import { afterAll, describe, expect, it } from "bun:test";
-import { cpSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CALL_WORDS, type InboxKind, type State, type Task } from "@petrina/core";
 import type { Engine } from "../../engine.js";
-import { repositorySeed, SLOW } from "../../fixtures.js";
+import { Fakes, makeProduct, SLOW } from "../../fixtures.js";
+import { designCallAgents } from "../../fixtures/design-call-agents.js";
+import { fakeAgentSessions } from "../../fixtures/fake-agent-sessions.js";
+import { installPreparedProduct } from "../../fixtures/prepared-product.js";
+import { installSharedWorkflowFastPaths } from "../../fixtures/shared-preparation.js";
+import { privateAgentToolProbe } from "../../scripted-probes.js";
 
 const fake = FAKE_AGENT;
 const cases = engineCaseFixtures();
 afterAll(() => cases.close());
 
 /** A private writable copy of the immutable README-only recipe, never another case's repository. */
-async function designCase(owner: EngineCaseOwner) {
+async function designCase(owner: EngineCaseOwner, native = false) {
   const data = join(owner.root, "call-data");
   // While this file exists, the architect stops halfway through following a call.
   const hold = join(owner.root, "hold-call");
   owner.onStop(() => rmSync(hold, { force: true }));
-  const start = () => owner.open(data, { agentCommand: () => [process.execPath, fake, `--hold=${hold}`] });
+  const provider = native ? { agentCommand: () => [process.execPath, fake, `--hold=${hold}`], startAgentSession: fakeAgentSessions(new Fakes(join(owner.root, "fake")), { flags: () => [`--hold=${hold}`] }), toolProbe: privateAgentToolProbe() }
+    : { startAgentSession: designCallAgents(), toolProbe: privateAgentToolProbe(),
+      agentCommand: () => { throw new Error("Design-call decisions require their explicit scripted participant"); } };
+  const start = () => installSharedWorkflowFastPaths(owner.open(data, provider));
   const engine = start();
-  const seed = await owner.prepare(() => repositorySeed(undefined, false, undefined, "none"));
+  const repo = await owner.prepare(() => makeProduct(join(owner.root, "call-repo"), { origin: "none" }));
   owner.check();
-  const repo = join(owner.root, "call-repo");
-  cpSync(seed.clone, repo, { recursive: true });
-  return { engine, start, repo, hold };
+  const productId = await owner.run(engine, async () => {
+    await engine.waitUntilReady(); owner.check(); engine.stopRequested.signal.throwIfAborted();
+    return installPreparedProduct(engine, { id: "call-repo", name: "Call Repo", repo: "local/call-repo", tone: "blue", path: repo,
+      defaultBranch: "main", delivery: "local", approveDelivery: true });
+  });
+  return { engine, start, productId, hold };
 }
 
 /** Wait on this case's actual engine, retaining the original deadline and coordinator behavior. */
@@ -60,11 +71,9 @@ describe("The coordinator's call on a design disagreement", () => {
   it("settles the design: the architect follows the call once, then a design check, with no review round", async () => cases.use("petrina-engine-", async owner => {
     const prepared = await designCase(owner);
     const engine = prepared.engine;
-    const { repo } = prepared;
-    let productId = "";
+    const { productId } = prepared;
     const waitFor = (taskId: string, kind: InboxKind) => until(owner, engine, (state) => !!itemOf(state, taskId, kind) || taskOf(state, taskId).state === "failed", coordinator);
 
-    productId = await owner.run(engine, () => engine.addProduct(repo));
     const taskId = engine.addTask({ productId, title: "Pick a greeting", description: "A greeting file. [disagree]" });
     let state = await waitFor(taskId, "disagreement");
     const before = taskOf(state, taskId);
@@ -150,8 +159,7 @@ describe("The coordinator's call on a design disagreement", () => {
   it("answers the plan's own design check after Screens: no second check, and approving it keeps the call", async () => cases.use("petrina-engine-", async owner => {
     const prepared = await designCase(owner);
     const engine = prepared.engine;
-    const { repo } = prepared;
-    const productId = await owner.run(engine, () => engine.addProduct(repo));
+    const { productId } = prepared;
     const waitFor = (taskId: string, kind: InboxKind) => until(owner, engine, (state) => !!itemOf(state, taskId, kind) || taskOf(state, taskId).state === "failed", coordinator);
 
     const taskId = engine.addTask({ productId, title: "Pick a slogan", description: "A slogan file. [disagree] [screens]" });
@@ -199,8 +207,7 @@ describe("The coordinator's call on a design disagreement", () => {
   it("never lets a later design check reopen the design the call settled", async () => cases.use("petrina-engine-", async owner => {
     const prepared = await designCase(owner);
     const engine = prepared.engine;
-    const { repo } = prepared;
-    const productId = await owner.run(engine, () => engine.addProduct(repo));
+    const { productId } = prepared;
     const waitFor = (taskId: string, kind: InboxKind) => until(owner, engine, (state) => !!itemOf(state, taskId, kind) || taskOf(state, taskId).state === "failed", coordinator);
 
     const taskId = engine.addTask({ productId, title: "Pick a tagline", description: "A tagline file. [disagree] [two-checks]" });
@@ -248,8 +255,7 @@ describe("The coordinator's call on a design disagreement", () => {
   it("keeps a non-blocking point raised as the design settles as an undecided follow-up, never rejected, and hands it to the first Builder as advice", async () => cases.use("petrina-engine-", async owner => {
     const prepared = await designCase(owner);
     const engine = prepared.engine;
-    const { repo } = prepared;
-    const productId = await owner.run(engine, () => engine.addProduct(repo));
+    const { productId } = prepared;
     const waitFor = (taskId: string, kind: InboxKind) => until(owner, engine, (state) => !!itemOf(state, taskId, kind) || taskOf(state, taskId).state === "failed", coordinator);
 
     const taskId = engine.addTask({ productId, title: "Pick a colour", description: "A colour file. [follow-up]" });
@@ -285,8 +291,7 @@ describe("The coordinator's call on a design disagreement", () => {
   it("leaves siding with the architect as it was", async () => cases.use("petrina-engine-", async owner => {
     const prepared = await designCase(owner);
     const engine = prepared.engine;
-    const { repo } = prepared;
-    const productId = await owner.run(engine, () => engine.addProduct(repo));
+    const { productId } = prepared;
     const waitFor = (taskId: string, kind: InboxKind) => until(owner, engine, (state) => !!itemOf(state, taskId, kind) || taskOf(state, taskId).state === "failed", coordinator);
 
     const taskId = engine.addTask({ productId, title: "Pick a welcome", description: "A welcome file. [disagree]" });
@@ -312,8 +317,7 @@ describe("The coordinator's call on a design disagreement", () => {
   it("sends the design back for a full round when changes are asked for at a check with no call", async () => cases.use("petrina-engine-", async owner => {
     const prepared = await designCase(owner);
     const engine = prepared.engine;
-    const { repo } = prepared;
-    const productId = await owner.run(engine, () => engine.addProduct(repo));
+    const { productId } = prepared;
     const waitFor = (taskId: string, kind: InboxKind) => until(owner, engine, (state) => !!itemOf(state, taskId, kind) || taskOf(state, taskId).state === "failed", coordinator);
 
     const taskId = engine.addTask({ productId, title: "Pick a motto", description: "A motto file. [follow-up]" });
@@ -346,10 +350,9 @@ describe("The coordinator's call on a design disagreement", () => {
   }));
 
   it("follows the call after a restart halfway through and a pause, adding the design check the plan did not have", async () => cases.use("petrina-engine-", async owner => {
-    const prepared = await designCase(owner);
+    const prepared = await designCase(owner, true);
     let engine = prepared.engine;
-    const { repo, hold, start } = prepared;
-    const productId = await owner.run(engine, () => engine.addProduct(repo));
+    const { productId, hold, start } = prepared;
     const waitFor = (taskId: string, kind: InboxKind) => until(owner, engine, (state) => !!itemOf(state, taskId, kind) || taskOf(state, taskId).state === "failed", coordinator);
 
     const taskId = engine.addTask({ productId, title: "Pick a farewell", description: "A farewell file. [disagree] [no-check]" });

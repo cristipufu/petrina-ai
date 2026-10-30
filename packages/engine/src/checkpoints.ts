@@ -1,7 +1,7 @@
 // Coordinator checkpoint decisions. Validation precedes removal; state and recovery stay atomic.
-import { acceptanceGap, afterChangesAsked, CALL_WORDS, deliveryDecisionProblem, endYouStep, JOURNEY_WORDS as W, reviewDecisionPending, type AcceptanceGap, type DeepMutable, type Id } from "@petrina/core";
+import { approveAcceptanceGap, afterChangesAsked, CALL_WORDS, endYouStep, JOURNEY_WORDS, reviewDecisionPending, type Id } from "@petrina/core";
 import type { Kernel } from "./kernel.js";
-import { executionFor, scopesFor, prepareDeliveryReturn } from "@petrina/orchestrator";
+import { assertCheckApproval, executionFor, scopesFor, prepareDeliveryReturn } from "@petrina/orchestrator";
 import { destination } from "./shipping.js";
 import type { Sources } from "./sources.js";
 
@@ -15,9 +15,7 @@ export class Checkpoints {
     if (kind && !["plan", "design", "delivery", "disagreement"].includes(kind)) throw new Error(`That is a ${kind} request. Answer it in your inbox; it has not been removed.`);
     const pending = this.k.s.inbox.find((entry) => entry.id === itemId);
     const pendingTask = pending && this.k.task(pending.taskId);
-    if (pending?.kind === "delivery" && pendingTask && !reviewDecisionPending(pendingTask) && deliveryDecisionProblem({ repositories: pendingTask.repositories, journey: pendingTask.journey, ...executionFor(pendingTask).work })) {
-      throw new Error("The product's checks are failing or unverified. Run the checks again or ask for changes; delivery has not been approved.");
-    }
+    if (pending?.kind === "delivery" && pendingTask) assertCheckApproval(pendingTask);
     if (pending?.kind === "plan" && pendingTask) this.sources.confirm(pendingTask);
     const item = this.k.takeItem(itemId);
     const task = item && this.k.task(item.taskId);
@@ -26,12 +24,12 @@ export class Checkpoints {
     switch (item.kind) {
       case "plan":
         this.k.log(task, "you", "You approved the plan");
-        endYouStep(task, { outcome: W.approved, reason: W.youApproved }, Date.now());
+        endYouStep(task, { outcome: JOURNEY_WORDS.approved, reason: JOURNEY_WORDS.youApproved }, Date.now());
         task.stageIndex = 0;
         break;
       case "design":
         this.k.log(task, "you", "You approved the design");
-        endYouStep(task, { outcome: W.approved, reason: W.youApproved }, Date.now());
+        endYouStep(task, { outcome: JOURNEY_WORDS.approved, reason: JOURNEY_WORDS.youApproved }, Date.now());
         task.stageIndex += 1;
         break;
       case "delivery":
@@ -44,10 +42,8 @@ export class Checkpoints {
         this.k.log(task, "you", "You approved the delivery");
         if (task.proofRequests?.length) task.approvedProofDecision = structuredClone(task.checkedProofDecision);
         // Approval covers the required acceptance gap shown here; its items stay unverified.
-        const gap = acceptanceGap(task);
-        if (gap) task.approvedAcceptanceGap = gap as DeepMutable<AcceptanceGap>;
-        else delete task.approvedAcceptanceGap;
-        endYouStep(task, { outcome: W.approved, reason: W.youApproved }, Date.now());
+        approveAcceptanceGap(task);
+        endYouStep(task, { outcome: JOURNEY_WORDS.approved, reason: JOURNEY_WORDS.youApproved }, Date.now());
         for (const scope of scopesFor(task)) {
           scope.work.approvedSha = scope.work.checkedSha;
           scope.work.approvedPatch = scope.work.checkedPatch;
@@ -58,7 +54,7 @@ export class Checkpoints {
         break;
       case "disagreement":
         this.k.log(task, "you", "You sided with the architect");
-        endYouStep(task, { outcome: W.sided, reason: W.youSided }, Date.now());
+        endYouStep(task, { outcome: JOURNEY_WORDS.sided, reason: JOURNEY_WORDS.youSided }, Date.now());
         for (const objection of task.objections) {
           if (objection.status !== "open") continue;
           objection.status = "rejected";
@@ -86,7 +82,7 @@ export class Checkpoints {
     const call = item.kind === "disagreement";
     this.k.log(task, "you", call ? CALL_WORDS.made(note) : `You asked for changes: ${note}`);
     this.k.say(task, "you", note);
-    endYouStep(task, call ? { outcome: W.madeCall, reason: W.yourCall, tone: "back" } : { outcome: W.changes, reason: W.changesAsked, tone: "back" }, Date.now());
+    endYouStep(task, call ? { outcome: JOURNEY_WORDS.madeCall, reason: JOURNEY_WORDS.yourCall, tone: "back" } : { outcome: JOURNEY_WORDS.changes, reason: JOURNEY_WORDS.changesAsked, tone: "back" }, Date.now());
     const id = this.k.id(task.id);
     // A review decision is asked after the flow moved past its review: the note belongs to that review, not the next stage,
     // and so does the same check raised again below. What an older check never recorded stays unknown.

@@ -31,6 +31,11 @@ function startCheckResult(result: RunResult): ToolProbeResult | undefined {
 /** Is the GitHub CLI installed and logged in to github.com, and as whom? */
 export async function checkGh(gh: Gh, timeoutMs = CHECK_TIMEOUT_MS): Promise<ToolProbeResult> {
   const result = await run([...gh, "auth", "status", "--hostname", "github.com"], tmpdir(), undefined, { credentials: true, timeoutMs });
+  return gitHubReadiness(result, timeoutMs);
+}
+
+/** Interpret one CLI observation; transports retain ownership of execution, deadlines and cleanup. */
+export function gitHubReadiness(result: RunResult, timeoutMs = CHECK_TIMEOUT_MS): ToolProbeResult {
   const said = `${result.stdout}\n${result.stderr}`;
   const failedStart = startCheckResult(result);
   if (failedStart) return failedStart;

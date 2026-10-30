@@ -39,12 +39,13 @@ export class EngineLifecycle implements LifecycleControl {
       ...drain,
     };
   }
-  request(name: string, a: Record<string, any>): Promise<Result> {
+  request(name: string, a: Record<string, unknown>): Promise<Result> {
     return serial(this.engine, async () => {
       const e = this.engine;
-      if (e.store.database.query("SELECT id FROM coordination_receipts WHERE id = ?").get(a.requestId))
-        return { outcome: "conflict", requestId: a.requestId, message: "That reference belongs to another coordination request." };
-      const result = this.store.begin(name, a, name === "pause" ? "paused" : name === "resume" ? "running" : e.s.pool.paused ? "paused" : "running", () => {
+      const requestId = String(a.requestId);
+      if (e.store.database.query("SELECT id FROM coordination_receipts WHERE id = ?").get(requestId))
+        return { outcome: "conflict", requestId, message: "That reference belongs to another coordination request." };
+      const result = this.store.begin(name, { requestId }, name === "pause" ? "paused" : name === "resume" ? "running" : e.s.pool.paused ? "paused" : "running", () => {
         if (name === "pause") e.setPoolPaused(true);
         else if (name === "resume") e.setPoolPaused(false);
         else if (name === "stop" || name === "restart") {
@@ -60,14 +61,14 @@ export class EngineLifecycle implements LifecycleControl {
       if (
         result.outcome === "pending" &&
         current &&
-        current.id === a.requestId &&
+        current.id === requestId &&
         current.kind === name &&
         ["resume", "start"].includes(name) &&
         current.phase !== "completed"
       )
         this.store.finish("completed");
       void this.settle();
-      const receipt = this.store.receipt(a.requestId) ?? result;
+      const receipt = this.store.receipt(requestId) ?? result;
       return receipt.outcome === "pending" ? { ...receipt, progress: this.status() } : receipt;
     });
   }

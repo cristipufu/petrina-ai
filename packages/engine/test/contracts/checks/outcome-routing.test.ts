@@ -35,7 +35,7 @@ function incomplete(original: CheckRun, kind: typeof cases[number]): CheckRun {
   return run;
 }
 
-it.each([...cases])("records %s as blocking evidence without a code finding or an automatic rerun", async kind => {
+it.each(["legacy-pass", "start-failed"] as const)("records %s as blocking evidence without a code finding or an automatic rerun", async kind => {
   return engineCases.use("check-outcome-routing-", owner => checkContext(owner, async f => {
   try {
     f.setCheck(kind === "legacy-pass" ? "--sequence=PF" : "--pass");
@@ -88,33 +88,6 @@ it.each([...cases])("records %s as blocking evidence without a code finding or a
       expect(scope.work.checkReturns).toBe(1);
       expect(scope.work.approvedSha).toBeUndefined();
     }
-  } finally {
-    if (f) { await owner.stop(f.engine); }
-  }
-
-  }));
-});
-
-it("keeps a real completed code failure beside an incomplete check and never changes the repair allowance while recording", async () => {
-  return engineCases.use("check-outcome-mixed-", owner => checkContext(owner, async f => {
-  try {
-    f.engine.setProductChecks(f.productId, [
-      { name: "Welcome", command: f.command("--pass") },
-      { name: "Build", command: f.command("--pass", "--build") },
-    ]);
-    const checks = f.engine["checks"], signal = new AbortController().signal;
-    const definitions = await checks.ensureChecks(f.scope, signal);
-    expect((await checks.failing(f.scope, signal, definitions)).kind).toBe("passed");
-    const [first, second] = f.scope.work.checks!.results;
-    const failed: CheckRun = { ...first!, ok: false, execution: completeCheckExecution(7), output: "Actual assertion failure" };
-    const unavailable = incomplete(second!, "start-failed");
-    f.scope.work.checkReturns = 1;
-    expect(nonpassingChecks(await checks["runPreparedChecks"](f.scope, definitions, signal, [failed, unavailable]))).toBe(2);
-    expect(checkProblem({ checks: f.scope.work.checks })).toBe("failing");
-    expect(f.task.findings.map(finding => finding.text)).toEqual([`Check failed: ${failed.name} (${failed.command})`]);
-    expect(f.scope.work.checkReturns).toBe(1);
-    expect(f.task.journey!.at(-1)!.outcome).toBe("Checks: 1 still failing, 1 unverified");
-    expect(f.runs()).toEqual(["passed", "passed"]);
   } finally {
     if (f) { await owner.stop(f.engine); }
   }

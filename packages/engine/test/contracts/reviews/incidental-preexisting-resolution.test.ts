@@ -4,12 +4,11 @@ import { ReviewResult } from "../../../src/roles.js";
 import { checkReviewEvidence } from "@petrina/core";
 import * as gitOps from "@petrina/repositories/git";
 import { createFollowUpFixtures, STEPS, EVIDENCE, STAGE, older, groupByBug, taskOf, finish, cardFor } from "../../fixtures/follow-up-native.js";
-
-const { open, close, shutdown } = createFollowUpFixtures();
+const { open, close, use } = createFollowUpFixtures();
 afterAll(close);
-
 it("settles an incidental older-bug repair only from current explicit proof, retaining unknown and contested reports", async () => {
-  const world = await open(groupByBug, false, true);
+  return use(async caseOwner => {
+  const world = await open(caseOwner, groupByBug, false, true);
   try {
     const engine = world.engine;
     const task = taskOf(engine, world.shop, "Incidental repair", [older("fixed", "bug-fixed: A repaired bug"), older("unknown", "bug-unknown: Not checked"), older("contested", "bug-contested: Still broken")]);
@@ -39,7 +38,7 @@ it("settles an incidental older-bug repair only from current explicit proof, ret
     engine["reviews"]["settleReviews"](task, STAGE);
     expect(task.findings.map(finding => finding.status)).toEqual(["fixed", "open", "open", "open"]);
     expect(task.findings[0]!.resolution).toMatchObject({ by: "opus-high", evidence, versions: { [world.shop]: work.baseSha } });
-    await finish(engine, task);
+    await finish(caseOwner, engine, task);
     expect(task.findings[0]!.tracking).toBeUndefined();
     expect(task.findings[1]!.tracking).toHaveProperty("taskId");
     expect(task.findings[2]!.tracking).toHaveProperty("taskId");
@@ -50,5 +49,6 @@ it("settles an incidental older-bug repair only from current explicit proof, ret
     expect(task.findings[0]!.status).toBe("open");
     expect(task.findings[0]!.resolution).toBeUndefined();
     expect(task.findings[0]!.earlierReviews?.at(-1)?.resolution?.evidence).toBe(evidence);
-  } finally { await shutdown(world.engine); }
+  } finally { await caseOwner.stop(world.engine); }
+  });
 });

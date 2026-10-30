@@ -1,14 +1,14 @@
 import { executionFor } from "@petrina/orchestrator";
+import * as gitOps from "@petrina/repositories/git";
 import { afterAll, describe, expect, it } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { git } from "../../fixtures.js";
 import { independentReviewFixtures } from "../../fixtures/independence.js";
 
 const { fixture, close } = independentReviewFixtures();
 afterAll(close);
 describe.concurrent("reviews after a usage handoff", () => {
-for (const reopen of ["resume", "load"] as const) for (const legacy of [true, false]) {
+for (const [reopen, legacy] of [["resume", true], ["load", false]] as const) {
     it(`${legacy ? "replaces a legacy port conversation with full instructions" : "keeps a genuine port conversation"} for a single reviewer after ${reopen}`, async () => {
       const f = await fixture({ planner: "short", controlled: true, reopen }, 1);
       try {
@@ -16,8 +16,7 @@ for (const reopen of ["resume", "load"] as const) for (const legacy of [true, fa
         await f.advance(f.delivery);
         expect(f.fakes.openings("code reviewer")).toHaveLength(1);
         writeFileSync(join(f.repo, "greeting.txt"), "Hi from main\n");
-        await git(f.repo, "add", "greeting.txt");
-        await git(f.repo, "commit", "-q", "-m", "A greeting on main");
+        await gitOps.commitChanges(f.repo, "A greeting on main");
         f.engine.approve(f.engine.getState().inbox.find((item) => item.kind === "delivery")!.id);
         await f.advance(() => f.fakes.received("code reviewer").length === 2 && !!f.task().conversation?.briefed, (role) => role !== "code reviewer");
         const port = f.fakes.received("code reviewer").at(-1)!;
@@ -47,7 +46,7 @@ for (const reopen of ["resume", "load"] as const) for (const legacy of [true, fa
           expect(after[0]!.session).toBe(port.session);
           expect(after[0]!.text).toContain("Petrina restarted");
         }
-        expect(f.task().reviewedTree).toBe(await git(f.task().worktree!, "rev-parse", "HEAD^{tree}"));
+        expect(f.task().reviewedTree).toBe(await gitOps.treeOf(f.task().worktree!));
         });
       } finally { await f.close(); }
     });

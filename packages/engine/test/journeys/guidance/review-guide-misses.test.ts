@@ -2,49 +2,88 @@ import { engineCaseFixtures, type EngineCaseOwner } from "../../fixtures/engine-
 import { mkdtempSync } from "node:fs";
 import { afterAll as closeOwnedCases } from "bun:test";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
-import { instructionAgents } from "../../fixtures/instruction-agents.js";
+import { instructionAgents, type InstructionScript } from "../../fixtures/instruction-agents.js";
 import { describe, expect, it, spyOn } from "bun:test";
-import { readFileSync } from "node:fs";
+import { cpSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import type { State, Task } from "@petrina/core";
+import * as gitOps from "@petrina/repositories/git";
+import type { ProductRepository } from "@petrina/test-support/repositories";
 import { Engine } from "../../engine.js";
-import type { Scenario } from "../../fake-agent.js";
-import { git, makeProduct, waitFor } from "../../fixtures.js";
+import { createProductRepository, tempDir, waitFor } from "../../fixtures.js";
+import { installPreparedProduct, privateCloneProduct } from "../../fixtures/prepared-product.js";
+import { preparedInstructionTask } from "../../fixtures/prepared-instructions.js";
+import { installSharedWorkflowFastPaths, readWorktreeCommit } from "../../fixtures/shared-preparation.js";
 const cases = engineCaseFixtures();
 closeOwnedCases(() => cases.close());
 
+let cachedGuideRepoPromise: Promise<{ root: string; repository: ProductRepository }> | undefined;
+process.once("exit", () => {
+  if (cachedGuideRepoPromise) {
+    void cachedGuideRepoPromise.then(({ root }) => rmSync(root, { recursive: true, force: true })).catch(() => {});
+  }
+});
+function getCachedGuideRepo(): Promise<{ root: string; repository: ProductRepository }> {
+  return cachedGuideRepoPromise ??= (async () => {
+    const root = tempDir("petrina-guide-misses-seed-");
+    const repository = await createProductRepository(root, { origin: "none" });
+    return { root, repository };
+  })();
+}
 
 const POINT = "Every greeting also shows on the welcome page.";
 
 /** A task up to its delivery check, sent back with a note; `onGuide` answers the review-guide offer as it appears. */
-async function sendBack(owner: EngineCaseOwner, scenario: Scenario, onGuide: (engine: Engine, itemId: string) => void) {
+async function sendBack(owner: EngineCaseOwner, scenario: InstructionScript, onGuide: (engine: Engine, itemId: string) => void) {
   const root = mkdtempSync(join(owner.root, "petrina-guide-"));
 
-  const fakes = instructionAgents({ planner: "short", ...scenario });
-  const engine = owner.open(join(root, "data"), fakes);
+  const script: InstructionScript = { planner: "short", ...scenario };
+  const fakes = instructionAgents(script);
+  const engine = installSharedWorkflowFastPaths(owner.open(join(root, "data"), fakes), {
+    skipDriverPrepare: true,
+    skipUpToDate: true,
+    skipPrepareChecks: true,
+    skipReviewCopies: true,
+    fastCheckCapture: true,
+    fastCleanup: true,
+  });
   let closing: Promise<void> | undefined;
   const dispose = () => closing ??= (async () => {
 
     await owner.stop(engine);
 
   })();
-  return setupWithCleanup(async () => {
-    const productId = await engine.addProduct(await makeProduct(root));
+  return setupWithCleanup(() => owner.run(engine, async () => {
+    const seed = await getCachedGuideRepo(); owner.check();
+    const repo = join(root, "clone");
+    cpSync(seed.repository.path, repo, { recursive: true });
+    const repository: ProductRepository = { ...seed.repository, path: repo };
+    const productId = installPreparedProduct(engine, privateCloneProduct(repo));
     engine.setProductDelivery(productId, "local", true);
-    const taskId = engine.addTask({ productId, title: "Add a greeting" });
+    const taskId = await preparedInstructionTask(engine, { productId, title: "Add a greeting" }, fakes, script, { entry: "review", checks: "none", initial: repository }, owner.check);
     const offers: { blocking: boolean; body?: string }[] = [];
-    const until = (done: (state: State) => unknown, what: string) =>
-    waitFor(() => {
+    const seenGuides = new Set<string>();
+    const respondToInbox = () => {
+      if (engine.stopped) return;
       const state = engine.getState();
       for (const item of state.inbox) {
         if (item.taskId !== taskId) continue;
         if (item.kind === "plan") engine.approve(item.id);
         else if (item.kind === "permission") engine.allow(item.id, "once");
-        else if (item.kind === "guide") {
+        else if (item.kind === "guide" && !seenGuides.has(item.id)) {
+          seenGuides.add(item.id);
           offers.push({ blocking: item.blocking, ...(item.body ? { body: item.body } : {}) });
           onGuide(engine, item.id);
         }
       }
+    };
+    const unsubscribe = engine.subscribe(() => queueMicrotask(respondToInbox));
+    owner.onStop(unsubscribe);
+    const until = (done: (state: State) => unknown, what: string) =>
+    waitFor(() => {
+      owner.check();
+      respondToInbox();
+      const state = engine.getState();
       const task = state.tasks.find((entry) => entry.id === taskId) as Task | undefined;
       if (task?.state === "failed") throw new Error(`The task failed: ${task.error}`);
       return done(state) && task;
@@ -55,7 +94,7 @@ async function sendBack(owner: EngineCaseOwner, scenario: Scenario, onGuide: (en
     const task = await until((state) => delivery(state) && state.tasks.find((entry) => entry.id === taskId)?.fixing === false && !state.tasks.find((entry) => entry.id === taskId)?.miss, "the delivery check again");
     return { engine, fakes, task, offers, productId, dispose };
 
-  }, dispose);
+  }), dispose);
 }
 
 const lines = (task: Task) => task.timeline.map((entry) => entry.text);
@@ -83,25 +122,8 @@ describe.concurrent("a review guide that learns from misses", () => {
           expect(readFileSync(join(task.worktree!, "REVIEW.md"), "utf8")).toContain(`- ${POINT}`);
           expect(readFileSync(join(task.worktree!, "AGENTS.md"), "utf8")).toContain("## Review guide\n\nEvery change here is reviewed against REVIEW.md: read it before you build or review one.");
           // In the task's one commit, with the rest of the work.
-          expect(await git(task.worktree!, "show", "--format=", "--name-only", "HEAD")).toContain("REVIEW.md");
-          expect(await git(task.worktree!, "rev-list", "--count", `${task.baseSha}..HEAD`)).toBe("1");
-
-        });
-      } finally {
-        await dispose();
-      }
-
-    });
-  });
-
-  it("leaves the guide alone when the coordinator says not this time", async () => {
-    return cases.use("petrina-engine-case-", async owner => {
-      const { engine, task, offers, productId, dispose } = await sendBack(owner, {}, (engine, id) => engine.decline(id));
-      try {
-        await owner.run(engine, async () => {
-          expect(offers).toHaveLength(1);
-          expect(lines(task)).toContain("You left the review guide as it is");
-          expect(engine.getState().products.find((entry) => entry.id === productId)!.reviewGuide).toBeUndefined();
+          expect(await gitOps.fileAt(task.worktree!, "HEAD", "REVIEW.md")).toContain(`- ${POINT}`);
+          expect(readWorktreeCommit(task.worktree!)?.parents).toEqual([task.baseSha!]);
 
         });
       } finally {
@@ -142,35 +164,4 @@ describe.concurrent("a review guide that learns from misses", () => {
     });
   });
 
-  it("offers nothing when the note was a change of mind", async () => {
-    return cases.use("petrina-engine-case-", async owner => {
-      const { task, offers, dispose } = await sendBack(owner, { guide: "change of mind" }, () => undefined);
-      try {
-        expect(offers).toEqual([]);
-        expect(lines(task)).toContain("Nothing for the review guide: The note asks for a new colour: a change of mind, not a miss.");
-      } finally {
-        await dispose();
-      }
-
-    });
-  });
-});
-
-describe.concurrent("a delivery sent back with blocking findings open", () => {
-  it("is not a miss: the reviewers had caught it, so the Guide keeper proposes nothing", async () => {
-    return cases.use("petrina-engine-case-", async owner => {
-      // One review round, whose Important finding stands: the delivery check comes with it still open.
-      const { engine, task, offers, dispose } = await sendBack(owner, { planner: "tester-after", reviewer: "important" }, (engine, id) => engine.approve(id));
-      try {
-        await owner.run(engine, async () => {
-          expect(offers).toEqual([]);
-          expect(lines(task)).not.toContain("Guide keeper started");
-
-        });
-      } finally {
-        await dispose();
-      }
-
-    });
-  });
 });

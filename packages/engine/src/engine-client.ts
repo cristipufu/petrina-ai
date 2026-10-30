@@ -127,19 +127,20 @@ export class EngineClient {
             operation: current ?? null,
             scheduling,
           };
-        const known = store.receipt(String(args.requestId));
+        const request = { requestId: String(args.requestId) };
+        const known = store.receipt(request.requestId);
         // A known lifecycle receipt is authoritative during handoff, even while the old
         // task database is closing its WAL. Do not turn a saved effect into "not submitted".
-        const coordinated = known ? false : coordinationReceipt(this.home, String(args.requestId));
+        const coordinated = known ? false : coordinationReceipt(this.home, request.requestId);
         if (coordinated === undefined) return { outcome: "failed", message: "Saved request references could not be read. No lifecycle change was submitted." };
         if (coordinated) return { outcome: "conflict", requestId: args.requestId, message: "That reference belongs to another coordination request." };
-        if (known) result = store.begin(name.slice(7), args, scheduling);
+        if (known) result = store.begin(name.slice(7), request, scheduling);
         else if (!lock) {
           // Only the engine can apply scheduling and admission changes. A lost reply may
           // leave its request queued: reserving a receipt here would make that queued request
           // skip its effects. Following an existing restart/pause has no new engine effect.
           if (current && !["completed", "failed"].includes(current.phase) && current.kind === name.slice(7) && ["restart", "pause"].includes(current.kind))
-            result = store.follow(name.slice(7), args, current);
+            result = store.follow(name.slice(7), request, current);
           else
             return {
               outcome: "disconnected",
@@ -154,14 +155,14 @@ export class EngineClient {
           if (current && !["starting", "completed", "failed"].includes(current.phase))
             return { outcome: "disconnected", requestId: args.requestId, status: "unresponsive", operation: current, message: "The previous engine process is still alive. Its lifecycle change cannot be confirmed; no replacement was started." };
           // Reserve the spawning caller before it can be interrupted without a connection.
-          result = store.begin(name.slice(7), args, scheduling, undefined, process.pid);
+          result = store.begin(name.slice(7), request, scheduling, undefined, process.pid);
           if ((result.operation as { id?: string })?.id === args.requestId) {
             try {
               const pid = this.start();
               if (pid) store.noteLauncher(pid);
             } catch {
               store.finish("failed", "The engine launcher could not start. Saved work is unchanged.");
-              result = store.receipt(String(args.requestId))!;
+              result = store.receipt(request.requestId)!;
             }
           }
         }

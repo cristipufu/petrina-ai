@@ -1,9 +1,37 @@
 import { expect, it } from "vitest";
 import { onScreen, screenOn } from "@petrina/core";
 import { savedScreenTurn, screenFixture, screenGroup } from "../../fixtures/screen.js";
+import { executionFor } from "../../../src/repository-context.js";
 
 const REASON = "Check that the quick note window opens from the menu bar";
 const NEEDS = `Needs the screen for: ${REASON}`;
+
+it("saves the member's own copy and a detached conversation, checkpointing its repository scope", () => {
+  const f = screenFixture(1), task = f.task(), scope = executionFor(task);
+  const note = savedScreenTurn(task, "first", 12).conversation;
+  delete task.hunt!.screenTurns;
+  f.state.pool.screen = { mode: "on" };
+  let checkpoint: unknown;
+  f.host.checkpoint = target => { checkpoint = target; };
+  expect(f.controller.saveTurn(scope, "code-reviewer", "first", "first", "opaque:copy", note, REASON)).toBe(true);
+  const saved = task.hunt!.screenTurns!.first!;
+  expect(saved).toEqual({ reason: REASON, at: f.clock.now(), copy: "opaque:copy", conversation: note });
+  expect(saved.conversation).not.toBe(note); expect(scope.work.conversation).toBe(saved.conversation);
+  note.sessionId = "mutated-after-save";
+  expect(saved.conversation.sessionId).toBe("session-first"); expect(checkpoint).toBe(scope);
+  expect(task.screen).toMatchObject({ member: "first", granted: true });
+});
+
+it("does not save a screen turn without a conversation or after its review has disappeared", () => {
+  const f = screenFixture(1), task = f.task(), scope = executionFor(task);
+  const note = savedScreenTurn(task, "first", 12).conversation;
+  delete task.hunt!.screenTurns;
+  expect(f.controller.saveTurn(scope, "reviewer", "first", "first", "copy", undefined, REASON)).toBe(false);
+  expect(task.hunt!.screenTurns).toBeUndefined();
+  delete task.hunt;
+  expect(f.controller.saveTurn(scope, "reviewer", "first", "first", "copy", note, REASON)).toBe(false);
+  expect(task.screen).toBeUndefined(); expect(f.checkpoints).toEqual([]);
+});
 
 it("constructs without reading a state the host may not have loaded yet", () => {
   const f = screenFixture(); expect(f.reads()).toBe(0);

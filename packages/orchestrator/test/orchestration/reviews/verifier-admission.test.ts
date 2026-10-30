@@ -1,7 +1,8 @@
 import { expect, it } from "vitest";
-import { independentVotes, slotUses } from "@petrina/core";
+import { independentVotes, recordBuilderFindingAnswers, slotUses } from "@petrina/core";
 import { verifierAdmissionFixture, VerifierWait } from "../../fixtures/verifier-admission.js";
 import { ReleaseEvents } from "../../fixtures/release-events.js";
+import { report } from "../../fixtures/continued-review.js";
 
 it("starts two fresh verifiers instead of one per ready tool, avoiding the reporting tool", async () => {
   const f = verifierAdmissionFixture({ limit: 4, limited: [], antigravity: true });
@@ -79,7 +80,8 @@ it("leaves a finding unresolved when no ready tool can give its third answer, an
     f.state.setup!.checks.find(check => check.id === "claude-code")!.status = "logged-out";
     gate.release("answers"); await phase;
     expect(f.next()!.voters).toEqual([]);
-    const outcome = f.finishBallot();
+    const input = structuredClone(f.task.hunt!.input!);
+    expect(await f.completeReview()).toBe("continue");
     expect(f.attempts).toHaveLength(2);
     expect(f.finding.verification).toBeUndefined();
     expect(f.finding.unresolved?.reason).toContain("no ready independent tool can give the required third answer");
@@ -87,9 +89,23 @@ it("leaves a finding unresolved when no ready tool can give its third answer, an
     expect(f.finding.unresolved?.trees).toEqual({ p: f.tree });
     expect(f.finding.severity).toBe("blocking");
     expect(f.finding.status).toBe("open");
-    expect(outcome).toBe("1 checked: 1 unresolved");
-    await f.completeRound(outcome, 2);
-    expect(f.ended).toEqual(["rounds-used"]);
+    const step = f.task.journey!.filter(step => step.roleId === "verifier")[0]!;
+    expect(step.outcome).toBe("1 checked: 1 unresolved");
+    expect(step.result).toEqual({ findings: [f.finding], findingsSettled: true });
+    expect(f.task.fixing).toBe(true);
+    recordBuilderFindingAnswers(f.task, [f.finding], [{ id: f.finding.id, fixed: false, text: "It is not broken." }], { productId: "p", shared: false, at: f.now() });
+    const { answer, ...reviewed } = f.finding;
+    expect(answer).toEqual({ fixed: false, text: "It is not broken.", at: f.now() });
+    expect(step.result).toEqual({ findings: [reviewed], findingsSettled: true });
+    // A later completed review of the supplied same input cannot request another ballot.
+    f.task.stageIndex = 1;
+    f.task.hunt = { stageId: f.stage.id, round: 2, reported: {}, findings: 1, input };
+    for (const [index, profileId] of f.stage.profileIds.entries()) {
+      f.reports.apply(f.task, f.stage, report(), profileId, f.stage.roleId, String(index));
+      f.task.hunt.reported[String(index)] = true;
+    }
+    expect(await f.completeReview()).toBe("stop");
+    expect(f.ended).toEqual(["sent-back", "rounds-used"]);
     expect(f.decisions).toEqual([f.task.id]);
     expect(f.notes.some(text => text.startsWith("Review rounds used up"))).toBe(true);
     expect(f.next()?.voters ?? []).toEqual([]);

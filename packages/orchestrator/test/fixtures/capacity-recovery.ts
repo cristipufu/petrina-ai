@@ -7,6 +7,7 @@ import { waitForAgentUsage } from "../../src/agent-step-state.js";
 import { profileSelectionFixture } from "./profile-selection.js";
 import { ControlledClock } from "./clock.js";
 import { ScriptedAgents, type ScriptedPrompt } from "./scripted-agents.js";
+import type { RuntimeTask } from "../../src/model.js";
 
 export const CAPACITY = "The selected model is at capacity";
 export class FullModel extends Error implements CapacityRefusal {
@@ -32,9 +33,11 @@ export interface CapacityAttempt {
 }
 
 /** Actual recovery/selection/state owners; provider replies are the only scripted attempt effect. */
-export function capacityFixture(respond: (prompt: ScriptedPrompt, signal: AbortSignal) => string | Promise<string> = () => "Completed") {
-  const f = profileSelectionFixture(), { state, task, profile } = f, scope = executionFor(task);
-  const clock = new ControlledClock(); clock.at = f.now();
+export function capacityFixture(respond: (prompt: ScriptedPrompt, signal: AbortSignal) => string | Promise<string> = () => "Completed",
+  bound?: { selection: ReturnType<typeof profileSelectionFixture>; task: RuntimeTask; clock: ControlledClock }) {
+  const f = bound ? { ...bound.selection, task: bound.task } : profileSelectionFixture(), { state, task, profile } = f, scope = executionFor(task);
+  const clock = bound?.clock ?? new ControlledClock();
+  if (!bound) clock.at = f.now();
   f.host.now = clock.now;
   f.host.awayFromBuilder = () => undefined;
   f.host.capacityWaiting = (until, now) => capacityWaitingWords(until, now, CAPACITY);

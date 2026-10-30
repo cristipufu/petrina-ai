@@ -478,8 +478,20 @@ const COMPLETE_CHECKS_RULE = "Where the repository defines a full local check, s
 /** The contract follows the result, so a coordinator's added reviewer works like a built-in reviewer. */
 export function contractFor(role: Role): RoleContract {
   const builtIn = BUILT_IN_ROLES.find((entry) => entry.id === role.id);
-  const contract = ROLE_CONTRACTS[role.id] ?? ROLE_CONTRACTS[role.result === "build" ? "builder" : role.result === "checks" ? "tester" : role.result === "findings" ? "code-reviewer" : role.result === "votes" ? "verifier" : role.result === "brief" ? "architect" : role.result === "objections" ? "design-reviewer" : "researcher"]!;
-  if (role.id === "release-manager") return contract;
+  const contract = ROLE_CONTRACTS[role.id] ?? ROLE_CONTRACTS[
+    role.result === "build" ? "builder"
+      : role.result === "checks" ? "tester"
+      : role.result === "findings" ? "code-reviewer"
+      : role.result === "votes" ? "verifier"
+      : role.result === "brief" ? "architect"
+      : role.result === "objections" ? "design-reviewer"
+      : role.result === "plan" ? "planner"
+      : role.result === "delivery" ? "release-manager"
+      : role.result === "check-discovery" ? "check-finder"
+      : role.result === "guide" ? "guide-keeper"
+      : "researcher"
+  ]!;
+  if (role.result === "delivery") return contract;
   const instructions = (ctx: PromptContext): string => {
     const original = contract.instructions(ctx);
     if (builtIn && role.instructions === builtIn.instructions) return original;

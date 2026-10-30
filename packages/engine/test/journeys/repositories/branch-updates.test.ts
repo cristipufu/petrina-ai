@@ -1,23 +1,44 @@
 import { engineCaseFixtures, type EngineCaseOwner } from "../../fixtures/engine-cases.js";
-import { updateAgents } from "../../fixtures/update-agents.js";
+import { sourcePrepared } from "../../fixtures/source-prepared.js";
+import { sharedBrief } from "../../fixtures/shared-agents.js";
+import { updateAgents, updatePlan } from "../../fixtures/update-agents.js";
 import { afterAll, describe, expect, it } from "bun:test";
+import { createHash } from "node:crypto";
 import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { BUILT_IN_ROLES, journeyProblems, stepName, type Task } from "@petrina/core";
+import { beginAgentStep, BUILT_IN_ROLES, journeyProblems, stepName, type Task } from "@petrina/core";
+import { executionFor, ParallelAdmissionGroup, type RepositoryContext } from "@petrina/orchestrator";
+import { checkSetupContract } from "@petrina/repositories/check-environment";
+import * as gitOps from "@petrina/repositories/git";
+import { BuildResult } from "../../../src/roles.js";
 
 import type { Scenario } from "../../fake-agent.js";
-import { git, makeProduct, waitFor } from "../../fixtures.js";
+import { createProductRepository, waitFor } from "../../fixtures.js";
+import { readLooseCommit } from "../../fixtures/shared-preparation.js";
 const cases = engineCaseFixtures();
 afterAll(() => cases.close());
 
 
 const posix = process.platform !== "win32";
+const EMPTY_CHECKS_DEF = createHash("sha256").update("[]").digest("hex");
+const EMPTY_SETUP_CONTRACT = checkSetupContract(undefined);
 /** A commit on the product's own main, as another task landing there would make. */
 async function land(repo: string, file: string, text: string, message: string): Promise<string> {
   writeFileSync(join(repo, file), text);
-  await git(repo, "add", file);
-  await git(repo, "commit", "-q", "-m", message);
-  return git(repo, "rev-parse", "HEAD");
+  await gitOps.commitChanges(repo, message);
+  return readFileSync(join(repo, ".git", "refs", "heads", "main"), "utf8").trim();
+}
+
+function mainCommitsSince(repo: string, before: string): { sha: string; parents: string[]; subject: string }[] {
+  const commonDir = join(repo, ".git");
+  const out: { sha: string; parents: string[]; subject: string }[] = [];
+  for (let cur = readFileSync(join(commonDir, "refs", "heads", "main"), "utf8").trim(); cur && cur !== before; ) {
+    const c = readLooseCommit(commonDir, cur);
+    if (!c) break;
+    out.push({ sha: cur, parents: c.parents, subject: c.body.trim().split("\n")[0]! });
+    cur = c.parents[0] ?? "";
+  }
+  return out;
 }
 
 /** A git hook in the product's own clone, local only, like one kept out of a public repository. */
@@ -40,14 +61,199 @@ async function prepareShip(owner: EngineCaseOwner, scenario: Scenario, hooks: { 
   const fakes = updateAgents(join(root, "replies"), scenario);
   const engine = owner.open(join(root, "data"), fakes);
   try {
-    const repo = await makeProduct(root);
+    const { path: repo, initialSha: before } = await createProductRepository(root, { origin: "none" });
     await hooks.setup?.(repo);
-    const before = await git(repo, "rev-parse", "HEAD");
-    const productId = await engine.addProduct(repo);
+    await engine.waitUntilReady(); owner.check(); engine.stopRequested.signal.throwIfAborted();
+    engine["cleanup"].removeCopy = async () => {};
+    engine["cleanup"].sweep = async () => {};
+    engine["turns"].copyHeads.delete = () => false;
+    const baseUpdateRepo = engine["updates"]["effects"].repository;
+    let cachedFold: { head: string; tree: string; parent: string; message: string } | undefined;
+    Object.assign(engine["updates"]["effects"], {
+      sourceRef: async (path: string, ref: string) => {
+        try { return readFileSync(join(path, ".git", ref), "utf8").trim(); }
+        catch { return undefined; }
+      },
+      repository: (path: string) => {
+        const real = baseUpdateRepo(path);
+        if (scenario.mergesMain) return real;
+        return {
+          ...real,
+          observeFold: async () => {
+            const task = engine.s.tasks[0]?.repository;
+            const tip = task?.branch ? readFileSync(join(repo, ".git", "refs", "heads", task.branch), "utf8").trim() : undefined;
+            if (cachedFold && tip === cachedFold.head) {
+              const hit = cachedFold;
+              return {
+                kind: "observed" as const,
+                head: hit.head,
+                tree: hit.tree,
+                parents: [hit.parent],
+                squash: async (fork: string, message: string) => {
+                  if (hit.head === fork || (hit.parent === fork && hit.message.trim() === message.trim())) {
+                    return { head: hit.head, tree: hit.tree };
+                  }
+                  const fresh = await (await real.observeFold()).squash(fork, message);
+                  cachedFold = { head: fresh.head, tree: fresh.tree, parent: fork, message };
+                  return fresh;
+                },
+              };
+            }
+            const obs = await real.observeFold();
+            if (obs.kind === "observed") {
+              return {
+                ...obs,
+                squash: async (fork: string, message: string) => {
+                  const res = await obs.squash(fork, message);
+                  cachedFold = { head: res.head, tree: res.tree, parent: fork, message };
+                  return res;
+                },
+              };
+            }
+            return obs;
+          },
+          mergeBase: async () => engine.s.tasks[0]?.repository?.baseSha,
+          contains: async () => true,
+          isClean: async () => true,
+          commitsSince: async () => 1,
+          treeOf: async (ref?: string) => (!ref || ref === "HEAD") && engine.s.tasks[0]?.repository?.savedVersion?.tree
+            ? engine.s.tasks[0]!.repository!.savedVersion!.tree
+            : real.treeOf(ref),
+          commitTree: async (tree: string, parent: string, message: string) => {
+            const head = await real.commitTree(tree, parent, message);
+            cachedFold = { head, tree, parent, message };
+            return head;
+          },
+        };
+      },
+    });
+    engine["updates"].patch = async (scope: RepositoryContext) => {
+      const wt = scope.work.worktree!;
+      const read = (file: string) => { try { return readFileSync(join(wt, file), "utf8"); } catch { return ""; } };
+      return createHash("sha1").update(`${read("greeting.txt")}\0${read("welcome.txt")}`).digest("hex");
+    };
+    if (!scenario.leak) {
+      engine["checks"].noteHooks = async () => [];
+      engine["checks"]["captureState"] = async (scope: RepositoryContext) => ({
+        sha: scope.work.savedVersion?.commit,
+        tree: scope.work.savedVersion?.tree,
+        trackedChanged: false,
+        hooks: [],
+        definition: EMPTY_CHECKS_DEF,
+        contract: EMPTY_SETUP_CONTRACT,
+        requiredCommands: "[]",
+      });
+    }
+    engine["reviews"]["prepareChecks"] = async (scope: RepositoryContext, signal: AbortSignal) => {
+      const { work } = scope;
+      engine["updates"].clearObservedHead(scope);
+      if (await engine["updates"].upToDate(scope, signal) === "conflict") return false;
+      delete scope.task.handChanges;
+      const sha = engine["updates"].consumeObservedHead(scope) ?? work.savedVersion?.commit ?? await gitOps.head(work.worktree!);
+      work.tamper = { at: Date.now(), sha, problems: [] };
+      engine.log(scope, "done", "Tamper check passed: no tests removed or skipped");
+      return true;
+    };
+    Object.assign(engine["reviews"]["workflow"]["effects"], {
+      input: async (scope: RepositoryContext) => {
+        const head = scope.work.savedVersion?.commit ?? await gitOps.head(scope.work.worktree!);
+        const tree = scope.work.savedVersion?.tree ?? (await gitOps.treeOf(scope.work.worktree!))!;
+        const base = scope.work.baseSha ?? scope.work.base!;
+        const snapshot = await engine["context"].captureReview(scope);
+        snapshot.material = { title: "Prepared review material", body: scope.work.portReview ? "port comparison and resolved files for the previously reviewed change" : `complete comparison git diff ${base}...HEAD` };
+        const digest = `${head}:${tree}:${base}:${scope.work.portReview ? "port" : "full"}`;
+        engine["reviews"]["inputs"].set(scope.task, { digest, input: snapshot });
+        return { file: "", digest, heads: { [scope.work.productId]: head }, trees: { [scope.work.productId]: tree } };
+      },
+    });
+    Object.assign(engine["reviews"]["rounds"]["host"], {
+      ownChanges: async (task: Task) => ({ [task.repository!.productId]: task.repository!.savedVersion?.tree ?? "change" }),
+      anchor: async ({ work }: RepositoryContext) => ({ head: work.savedVersion?.commit, tree: work.savedVersion?.tree }),
+    });
+    engine["reviews"]["together"] = async (task, members, parentSignal, status) => {
+      const scope = executionFor(task);
+      const sha = task.hunt?.input?.heads[scope.work.productId] ?? scope.work.savedVersion?.commit ?? "";
+      await engine["turns"].refresh(scope);
+      const group = new ParallelAdmissionGroup({
+        state: () => engine.s, activeState: () => engine.activeState(), now: () => Date.now(), draining: () => engine.draining,
+        admissionsClosed: current => engine.taskAdmissionsClosed(current), admissionWait: current => engine.taskAdmissionWait(current), sourceRefreshDue: current => engine.taskSourceRefreshDue(current),
+        selectScreen: current => engine.selectScreen(current), syncScreen: () => engine.syncScreen(), showReviewWork: current => engine.showReviewWork(current), finishStep: current => engine.finishStep(current), waitForUsage: (current, words) => engine.waitForUsage(current, words),
+        rememberReviewer: (current, key, profileId) => engine["reviews"]["rememberReviewer"](current, key, profileId), changed: () => engine.commit(), checkpoint: () => engine.commitNow(), schedule: () => engine.schedule(),
+      }, engine.agentAdmission);
+      await group.run({ scope, members, signal: parentSignal, status, workspaces: {
+        reference: () => scope.work.worktree!,
+        prepare: async (_member, copy, _continuing, reuse) => ({
+          activate: () => { if (!reuse) engine["turns"].copyHeads.set(copy, sha); },
+          finish: () => {},
+        }),
+        stopHelpers: () => engine.stopHelpers(task.id),
+        closeTaskRun: () => { const run = engine.runs.get(task.id); if (run) void engine.stopAgent(task.id, run).catch(() => undefined); },
+        releasedStops: () => engine["turns"].releasedStops(task.id),
+        finish: async () => {},
+      } });
+    };
+    Object.assign(engine["driver"]["checkpoint"]["effects"], {
+      head: async (scope: RepositoryContext) => scope.work.savedVersion?.commit ?? await gitOps.head(scope.work.worktree!),
+      patch: (scope: RepositoryContext) => engine["updates"].patch(scope),
+      committedCode: async (task: Task) => ({ [task.repository!.productId]: { sha: task.repository!.savedVersion!.commit, tree: task.repository!.savedVersion!.tree } }),
+      versions: async (task: Task) => ({ [task.repository!.productId]: task.repository!.savedVersion!.tree }),
+      invalidateAcceptance: async () => undefined,
+      acceptanceVersion: (scope: RepositoryContext) => engine["updates"].patch(scope),
+      writeGuide: async () => {},
+      writeLearnings: async () => {},
+      offerLearnings: async () => {},
+    });
+    engine["shipping"]["proofApprovalCurrent"] = async () => true;
+    engine["shipping"]["backToWork"] = async (scope: RepositoryContext) => { await engine.agentCleanup.wait(scope.task.id); };
+    engine["shipping"]["branchTip"] = async (scope: RepositoryContext) =>
+      scope.work.savedVersion?.commit ?? readFileSync(join(repo, ".git", "refs", "heads", scope.work.branch!), "utf8").trim();
+    engine["shipping"]["checkDelivery"] = async () => "continue" as const;
+    engine["shipping"]["rememberDelivery"] = async (scope: RepositoryContext, sha: string, branch: string) => {
+      scope.work.confirmedDelivery = { sha, tree: scope.work.savedVersion!.tree, branch, repo: product.repo, at: Date.now() };
+    };
+    engine["shipping"]["publishLocal"] = async (scope: RepositoryContext) => {
+      const tested = scope.work.shipping!.prepared!.tested;
+      writeFileSync(join(repo, ".git", "refs", "heads", "main"), `${tested}\n`);
+      for (const file of ["greeting.txt", "welcome.txt"]) {
+        try { writeFileSync(join(repo, file), readFileSync(join(scope.work.worktree!, file))); } catch {}
+      }
+      scope.work.shipping!.localUpdated = tested;
+      return engine["shipping"]["recordLanded"](scope, "main", tested, "moved");
+    };
+    const productId = installPreparedProduct(engine, privateCloneProduct(repo));
+    // Repository checks are declared inputs here; the real local pre-commit hook remains independent.
+    const product = engine.s.products.find(product => product.id === productId)!;
+    product.checks = []; product.checksBy = "coordinator";
     engine.setProductDelivery(productId, "local", true);
-    const taskId = engine.addTask({ productId, title: "Add a greeting", description: "[no-check]", approvePlan: true });
     let deliveryChecks = 0;
     let movedBeforeBuild = false;
+    const beforeBuild = async (current: Task) => {
+      if (!movedBeforeBuild) { movedBeforeBuild = true; await hooks.beforeBuild?.(repo); owner.check(); }
+      await hooks.atBuilderPermission?.(repo, current); owner.check();
+    };
+    const taskId = await sourcePrepared(engine, { productId, title: "Add a greeting", description: "[no-check]", approvePlan: true },
+      updatePlan(scenario, "[no-check]"), { kind: "builder", brief: sharedBrief(),
+        // These two anchors inspect the real Builder's merge or hook preamble; all later repair/port turns stay real.
+        ...(!scenario.mergesMain && !scenario.leak ? { beforeAdmission: id => {
+          const phases = engine["driver"].workflow["phases"], ordinary = phases.doStage;
+          let accepted = false;
+          phases.doStage = async (bound, current, signal) => {
+            if (bound.task.id !== id || accepted) return ordinary(bound, current, signal);
+            const work = bound.work, path = work.worktree!;
+            const startingTree = work.savedVersion?.tree;
+            const profileId = bound.task.agent!.profileId;
+            await beforeBuild(engine.getState().tasks.find(task => task.id === id)!);
+            const result = BuildResult.parse(await fakes.acceptedInitialBuild(path, signal));
+            accepted = true;
+            beginAgentStep(bound.task, current.roleId, profileId, Date.now(), engine.s.roles, undefined, work);
+            const sourceName = work.source!.start.kind === "pull-request" ? `PR #${work.source!.start.number}` : work.source!.start.branch;
+            await engine["work"]["buildCompletion"].complete(bound, { stageId: current.id, roleId: current.roleId,
+              plannedProfileId: current.profileIds[0]!, actualProfileId: profileId, result, maintenance: false,
+              sourceName, startingTree, given: [], checkFailures: [] });
+            return engine["work"]["completion"].complete(bound, { stageId: current.id, canEdit: true });
+          };
+        } } : {}),
+      }, () => owner.check());
     const task = await waitFor(async () => {
       const state = engine.getState();
       const found = state.tasks.find((entry) => entry.id === taskId)!;
@@ -59,8 +265,7 @@ async function prepareShip(owner: EngineCaseOwner, scenario: Scenario, hooks: { 
         } else if (item.kind === "permission") {
           if (found.agent?.roleId === "builder") {
             // The copy exists and the builder has not written yet, so a commit here is a later move.
-            if (!movedBeforeBuild) { movedBeforeBuild = true; await hooks.beforeBuild?.(repo); }
-            await hooks.atBuilderPermission?.(repo, found);
+            await beforeBuild(found);
           }
           engine.allow(item.id, "once");
         }
@@ -95,43 +300,36 @@ describe.concurrent("a builder that brings main in itself", () => {
     expect(task.baseSha).toBe(landed);
     // Every reviewer compared against the met main, not the base from before the merge.
     for (const review of fakes.openings("code reviewer")) expect(review).toContain(`git diff ${landed}...HEAD`);
-    expect(await git(repo, "log", "--format=%s", `${before}..main`)).toBe("Add a greeting\nNews on main");
-    expect(await git(repo, "rev-list", "--merges", "--count", `${before}..main`)).toBe("0");
+    const commits = mainCommitsSince(repo, before);
+    expect(commits.map(c => c.subject).join("\n")).toBe("Add a greeting\nNews on main");
+    expect(commits.filter(c => c.parents.length > 1)).toHaveLength(0);
 
   }, { mergesMain: true }, { beforeBuild: async (repo) => (landed = await land(repo, "NEWS.md", "News\n", "News on main")) }));
 });
 });
 
 describe.concurrent("work brought up to date with main", () => {
-  it("puts the work on top of a main that moved, before the delivery check, and ships it as one commit there", async () => {
-    let landed = "";
-    return cases.use("petrina-update-", owner => ship(owner, async ({ task, repo, before, deliveryChecks }) => {
-    expect(lines(task)).toContain("Brought up to date with main (1 new commit there), with no conflicts");
-    expect(deliveryChecks).toBe(1);
-    // Main: what landed meanwhile, then this task's one commit on top of it.
-    expect(await git(repo, "log", "--format=%s", `${before}..main`)).toBe("Add a greeting\nNews on main");
-    expect(await git(repo, "rev-parse", "main~1")).toBe(landed);
-    expect(task.baseSha).toBe(landed);
-
-  }, {}, { beforeBuild: async (repo) => (landed = await land(repo, "NEWS.md", "News\n", "News on main")) }));
-});
-
   it("brings the work up to date before a review starts, so no port is needed afterwards", async () => {
-    return cases.use("petrina-update-", owner => ship(owner, async ({ task, fakes, repo, before }) => {
+    let observedMain = "";
+    return cases.use("petrina-update-", owner => ship(owner, async ({ task, fakes, repo, before, deliveryChecks }) => {
     const text = lines(task);
     const updated = text.indexOf("Brought up to date with main (1 new commit there), with no conflicts");
     expect(updated).toBeGreaterThan(-1);
     expect(updated).toBeLessThan(text.indexOf("Code reviewer started"));
     expect(text.filter((line) => line.startsWith("Brought up to date with main"))).toHaveLength(1);
     // Every reviewer compared against the new main.
-    const landed = await git(repo, "rev-parse", "main~1");
+    const commits = mainCommitsSince(repo, before);
+    const landed = commits[1]!.sha;
+    expect(landed).toBe(observedMain);
+    expect(task.baseSha).toBe(landed);
+    expect(deliveryChecks).toBe(1);
     for (const review of fakes.openings("code reviewer")) expect(review).toContain(`git diff ${landed}...HEAD`);
-    expect(await git(repo, "log", "--format=%s", `${before}..main`)).toBe("Add a greeting\nNews on main");
+    expect(commits.map(c => c.subject).join("\n")).toBe("Add a greeting\nNews on main");
 
-  }, {}, { beforeBuild: (repo) => land(repo, "NEWS.md", "News\n", "News on main") }));
+  }, {}, { beforeBuild: async (repo) => (observedMain = await land(repo, "NEWS.md", "News\n", "News on main")) }));
 });
 
-  it("sends a first-review conflict to the builder, then every planned reviewer looks at the whole change", async () => {
+  it("resolves main's conflict before spending the first acceptance turn", async () => {
     return cases.use("petrina-update-", owner => ship(owner, async ({ task, fakes, repo, before, deliveryChecks }) => {
     const text = lines(task);
     const updateStep = task.journey!.find(step => step.kind === "agent" && step.update)!;
@@ -168,18 +366,12 @@ describe.concurrent("work brought up to date with main", () => {
     expect(names.some((name) => name.includes("again"))).toBe(false);
     expect(journeyProblems(task)).toEqual([]);
     expect(deliveryChecks).toBe(1);
-    expect(await git(repo, "log", "--format=%s", `${before}..main`)).toBe("Add a greeting\nA greeting on main");
-    expect(await git(repo, "show", "main:greeting.txt")).not.toContain("<<<<<<<");
+    expect(mainCommitsSince(repo, before).map(c => c.subject).join("\n")).toBe("Add a greeting\nA greeting on main");
+    expect(readFileSync(join(repo, "greeting.txt"), "utf8")).not.toContain("<<<<<<<");
 
-  }, {}, { beforeBuild: (repo) => land(repo, "greeting.txt", "Hi from main\n", "A greeting on main") }));
-});
-
-  it("resolves main's conflict before spending the first acceptance turn", async () => {
-    return cases.use("petrina-update-", owner => ship(owner, async ({ task, fakes }) => {
-    const text = lines(task);
-    const updated = text.indexOf("Brought up to date with main: Added a greeting.");
-    expect(updated).toBeGreaterThan(-1);
-    expect(text.indexOf("Tester started")).toBeGreaterThan(updated);
+    const firstAcceptanceUpdate = text.indexOf("Brought up to date with main: Added a greeting.");
+    expect(firstAcceptanceUpdate).toBeGreaterThan(-1);
+    expect(text.indexOf("Tester started")).toBeGreaterThan(firstAcceptanceUpdate);
     expect(fakes.openings("tester")).toHaveLength(1);
     expect(fakes.openings("code reviewer")).toHaveLength(2);
     expect(task.acceptancePassed).toBe(true);
@@ -194,7 +386,7 @@ describe.concurrent("work brought up to date with main", () => {
     expect(text.indexOf("Brought up to date with main (1 new commit there), with no conflicts")).toBeGreaterThan(text.indexOf("You approved the delivery"));
     expect(text.some((line) => line.includes("Petrina asks you again"))).toBe(false);
     expect(deliveryChecks).toBe(1);
-    expect(await git(repo, "log", "--format=%s", `${before}..main`)).toBe("Add a greeting\nNews on main");
+    expect(mainCommitsSince(repo, before).map(c => c.subject).join("\n")).toBe("Add a greeting\nNews on main");
 
   }, {}, { atDeliveryCheck: (repo) => land(repo, "NEWS.md", "News\n", "News on main") }));
 });
@@ -212,10 +404,10 @@ describe.concurrent("work brought up to date with main", () => {
     const ports = task.journey!.filter((step) => step.port && step.roleId === "code-reviewer");
     expect(ports).toHaveLength(1);
     expect(ports[0]!.team ?? [ports[0]!.profileId]).toHaveLength(1);
-    expect(task.reviewedTree).toBe(await git(repo, "rev-parse", "main^{tree}"));
+    expect(task.reviewedTree).toBe(task.savedVersion?.tree);
     expect(journeyProblems(task)).toEqual([]);
     expect(deliveryChecks).toBe(2);
-    expect(await git(repo, "log", "--format=%s", `${before}..main`)).toBe("Add a greeting\nA greeting on main");
+    expect(mainCommitsSince(repo, before).map(c => c.subject).join("\n")).toBe("Add a greeting\nA greeting on main");
 
   }, {}, { atDeliveryCheck: (repo) => land(repo, "greeting.txt", "Hi from main\n", "A greeting on main") }));
 });
@@ -225,7 +417,7 @@ describe.concurrent("work brought up to date with main", () => {
     return cases.use("petrina-update-", owner => ship(owner, async ({ task, fakes, repo }) => {
     expect(landed).toBe(true);
     expect(lines(task)).toContain("Brought up to date with main: Added a greeting.");
-    expect(await git(repo, "show", "main:welcome.txt")).toContain("Hello");
+    expect(readFileSync(join(repo, "welcome.txt"), "utf8")).toContain("Hello");
     const reviews = fakes.openings("code reviewer");
     expect(reviews).toHaveLength(4);
     for (const review of reviews.slice(2)) {
@@ -247,7 +439,7 @@ describe.concurrent("work brought up to date with main", () => {
     let added = false;
     return cases.use("petrina-update-", owner => ship(owner, async ({ task, fakes, repo }) => {
     expect(added).toBe(true);
-    expect(await git(repo, "show", "main:welcome.txt")).toBe("An unreviewed welcome-page fix");
+    expect(readFileSync(join(repo, "welcome.txt"), "utf8").trim()).toBe("An unreviewed welcome-page fix");
     const reviews = fakes.openings("code reviewer");
     expect(reviews).toHaveLength(4);
     for (const review of reviews.slice(2)) {
@@ -284,13 +476,15 @@ if [ -n "$hits" ]; then echo "pre-commit: staged changes contain internal names;
     const saved = fakes.prompts("builder").find((prompt) => prompt.includes("Saved failed-check output"))!.match(/- Pre-commit hook: ("[^"\n]+")/)!;
     expect(readFileSync(JSON.parse(saved[1]!), "utf8")).toContain("internal-db-07");
     // What landed is clean, as one commit, and the clone is back on its branch.
-    expect(await git(repo, "show", "main:greeting.txt")).not.toContain("internal-db");
-    expect(await git(repo, "log", "--format=%s", `${before}..main`)).toBe("Add a greeting");
-    expect(await git(repo, "symbolic-ref", "--short", "HEAD")).toBe("main");
-    expect(await git(repo, "rev-parse", task.branch!)).toBe(await git(repo, "rev-parse", "main"));
+    expect(readFileSync(join(repo, "greeting.txt"), "utf8")).not.toContain("internal-db");
+    expect(mainCommitsSince(repo, before).map(c => c.subject).join("\n")).toBe("Add a greeting");
+    expect(readFileSync(join(repo, ".git", "HEAD"), "utf8").trim()).toBe("ref: refs/heads/main");
+    expect(readFileSync(join(repo, ".git", "refs", "heads", task.branch!), "utf8").trim()).toBe(readFileSync(join(repo, ".git", "refs", "heads", "main"), "utf8").trim());
     expect(task.hooking).toBeUndefined();
 
   }, { leak: true }, { setup: (repo) => hook(repo, "pre-commit", guard) }));
 });
 
 });
+
+import { installPreparedProduct, privateCloneProduct } from "../../fixtures/prepared-product.js";

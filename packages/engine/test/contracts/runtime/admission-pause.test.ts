@@ -93,6 +93,8 @@ it("releases the agent reservation when pause arrives during check preparation, 
     if (++captures === 1) { preparing(); await hold; }
     return state;
   };
+  e.options.runCheckCommand = async req =>
+    req.argv[0] === process.execPath && req.argv[1] === "-e" ? { code: 0, stdout: "prepared check passed\n" } : undefined;
   e["work"].runDo = async (scope, _stage, signal) => {
     attempts++;
     await checks.runProductChecks(scope, [{ name: "Prepared check", argv: [process.execPath, "-e", "console.log('prepared check passed')"] }], signal);

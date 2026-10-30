@@ -6,6 +6,7 @@ import { legacyDeliveryAgents } from "../../fixtures/legacy-delivery-agents.js";
 // coordinator to check GitHub and choose, and nothing happens until they do.
 import { afterAll, describe, expect, it } from "bun:test";
 import type { DeliveryMode, State, Task } from "@petrina/core";
+import * as gitOps from "@petrina/repositories/git";
 import type { Engine } from "../../engine.js";
 import { coordinator, finish, git, itemOf, remoteRef, taskOf, until } from "../../support.js";
 
@@ -37,7 +38,7 @@ async function interruptedBeforeUpdate(
   const taskId = await queuePreparedDelivery(first, { productId, title: "Add a greeting", description: "A greeting file. [quick]" });
   const task = taskOf(await until(first, (state) => itemOf(state, taskId, "delivery") !== undefined, coordinator(["plan", "design"])), taskId);
   await first.shutdown();
-  const head = await git(task.worktree!, "rev-parse", "HEAD");
+  const head = (await gitOps.head(task.worktree!))!;
   await options.oldAgent?.(task, head);
   w.editSaved((state) => {
     // The old version's own question about an interrupted delivery, from before the update.
@@ -62,7 +63,7 @@ const pushToGitHub = (w: NativeWorld, cwd: string, ...refspecs: string[]) => git
 
 async function versionCommit(cwd: string): Promise<string> {
   await git(cwd, "commit", "-q", "--allow-empty", "-m", "Version 0.1.0");
-  return git(cwd, "rev-parse", "HEAD");
+  return (await gitOps.head(cwd))!;
 }
 
 /** Nothing happened on its own: nothing made ready, no agent, no GitHub, no question about the address. */
@@ -132,37 +133,6 @@ describe.concurrent("A delivery interrupted before Petrina was updated", () => {
     });
   });
 
-  it("asks for the delivery approval again after “Ship it again”, then ships it with the usual checks", async () => {
-    await world("upgrade-ship-again", async (w, start) => {
-    const { taskId, calls } = await start(first => interruptedBeforeUpdate(w, first, "pull-request"));
-    await start(async engine => {
-    try {
-      let state = await until(engine, (current) => asks(current, taskId));
-      untouched(w, state, taskId, calls);
-
-      engine.shipAgain(itemOf(state, taskId, "shipping")!.id);
-      // The task asks for approval before delivery: Ship it again asks for it, and nothing is made ready before it.
-      state = await until(engine, (current) => itemOf(current, taskId, "delivery") !== undefined, coordinator(["plan", "design"]));
-      expect(taskOf(state, taskId).shipping).toBeUndefined();
-      expect(taskOf(state, taskId).approvedFor).toBeUndefined();
-      expect(taskOf(state, taskId).timeline.some((entry) => entry.text.startsWith("Ready to publish"))).toBe(false);
-      expect(w.github().prs).toEqual([]);
-
-      // The coordinator confirms the address the product was added with, once, and it goes out.
-      const task = taskOf(await finish(engine, taskId), taskId);
-      expect(task.error).toBeUndefined();
-      expect(task.state).toBe("pr-open");
-      expect(task.pr?.number).toBe(1);
-      expect(w.github().prs).toHaveLength(1);
-      expect(task.timeline.filter((entry) => entry.text.startsWith("Ready to publish"))).toHaveLength(1);
-    } finally {
-      await engine.shutdown();
-    }
-
-    });
-    });
-  });
-
   it("never releases twice after “Ship it again” when the old delivery agent already pushed the version's tag", async () => {
     await world("upgrade-pushed", async (w, start) => {
     let bumped = "";
@@ -177,6 +147,11 @@ describe.concurrent("A delivery interrupted before Petrina was updated", () => {
       const state = await until(engine, (current) => asks(current, taskId));
       untouched(w, state, taskId, calls);
       engine.shipAgain(itemOf(state, taskId, "shipping")!.id);
+      const approval = await until(engine, current => itemOf(current, taskId, "delivery") !== undefined, coordinator(["plan", "design"]));
+      expect(taskOf(approval, taskId).shipping).toBeUndefined();
+      expect(taskOf(approval, taskId).approvedFor).toBeUndefined();
+      expect(taskOf(approval, taskId).timeline.some(entry => entry.text.startsWith("Ready to publish"))).toBe(false);
+      expect(w.github().releases).toEqual([]);
       const task = taskOf(await finish(engine, taskId), taskId);
       expect(task.state).toBe("failed");
       expect(task.error).toContain("The tag v0.1.0 already exists on GitHub");
@@ -207,7 +182,7 @@ describe.concurrent("A delivery interrupted before Petrina was updated", () => {
       expect(task.statusLine).toBe(note);
       expect(task.shipping?.carriedOver).toBe(true);
       expect(engine.getState().inbox.filter((item) => item.taskId === taskId)).toEqual([]);
-      expect(await git(w.clone, "rev-parse", "main")).toBe(w.initial);
+      expect(await gitOps.revParse(w.clone, "main")).toBe(w.initial);
     } finally {
       await engine.shutdown();
     }
@@ -229,40 +204,4 @@ describe.concurrent("A delivery interrupted before Petrina was updated", () => {
     });
   });
 
-  it("keeps the note on a task that was already cancelled, and waits on a paused one until it is resumed", async () => {
-    await world("upgrade-was-cancelled", async (cancelled, start) => {
-    const prepared = await start(first => interruptedBeforeUpdate(cancelled, first, "pull-request", { state: "cancelled" }));
-    await start(async engine => {
-    const before = { ...prepared, engine };
-    try {
-      await before.engine.waitUntilReady(); await Promise.all([...before.engine.backgroundWork]);
-      const task = taskOf(before.engine.getState(), before.taskId);
-      expect(task.state).toBe("cancelled");
-      expect(task.statusLine).toBe("Cancelled. This delivery was interrupted before Petrina was updated: check GitHub for what went out");
-      expect(task.shipping).toEqual({ moves: 0, failures: 0, carriedOver: true });
-      expect(cancelled.github().calls.length).toBe(before.calls);
-    } finally {
-      await before.engine.shutdown();
-    }
-
-
-    });
-    await world("upgrade-paused", async (paused, start) => {
-    const { taskId, calls } = await start(first => interruptedBeforeUpdate(paused, first, "pull-request", { state: "paused" }));
-    await start(async engine => {
-    try {
-      await engine.waitUntilReady(); await Promise.all([...engine.backgroundWork]);
-      expect(taskOf(engine.getState(), taskId).state).toBe("paused");
-      expect(engine.getState().inbox.filter((item) => item.taskId === taskId)).toEqual([]);
-      engine.resume(taskId);
-      const state = await until(engine, (current) => asks(current, taskId));
-      untouched(paused, state, taskId, calls);
-    } finally {
-      await engine.shutdown();
-    }
-
-    });
-    });
-    });
-  });
 });

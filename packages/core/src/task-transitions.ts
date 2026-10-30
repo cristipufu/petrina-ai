@@ -2,13 +2,15 @@
 // transitions only validate and change the supplied records, with an explicit time.
 import type { NewTaskInput } from "./commands.js";
 import type { DeepMutable } from "./flow.js";
-import { endOpenStep, JOURNEY_WORDS as W, openStep, stopCheckProgress } from "./journey.js";
+import { endOpenStep, openStep, stopCheckProgress } from "./journey-recording.js";
+import { JOURNEY_WORDS } from "./journey-words.js";
 import type { AgentProfile, Id, Product, RepositoryState, Stage, TaskState } from "./model.js";
 import type { WorkChoice } from "./source.js";
 import { blocksDependents } from "./repositories.js";
 import { reviewerAt } from "./roles.js";
 import { clearRunningTools, MAX_STEP_RECORDS, stepRecord } from "./summary.js";
-import { cancelRuntimeWait, runtimeWaitHolds, type DependencyNode } from "./runtime-wait.js";
+import { cancelRuntimeWait, validateTaskDependencies, type DependencyNode } from "./runtime-wait.js";
+export { validateTaskDependencies } from "./runtime-wait.js";
 
 type MutableTask = DeepMutable<TaskState>;
 type Execution = DeepMutable<Pick<RepositoryState, "stepAttempts" | "editAttempt" | "conversation" | "sideStep">>;
@@ -79,28 +81,6 @@ export function canEditTaskDependencies(task: Pick<TaskState, "state" | "started
 export function assertTaskDependenciesEditable(task: Pick<TaskState, "state" | "startedAt"> | undefined): asserts task is Pick<TaskState, "state" | "startedAt"> {
   if (!task) throw new Error("This task is unavailable. Return to the board and choose another task.");
   if (!canEditTaskDependencies(task)) throw new Error("This task has already started or finished. Prerequisites can only change in Backlog or before queued work starts.");
-}
-
-/** Validate the complete dependency graph before changing the task. Archived records can be looked up lazily. */
-export function validateTaskDependencies(taskId: Id, after: readonly Id[], find: (id: Id) => DependencyNode | undefined): Id[] {
-  if (!find(taskId)) throw new Error("Unknown task");
-  const ids = [...new Set(after)];
-  if (ids.length > 20) throw new Error("Choose up to 20 prerequisites. Remove a task before adding another.");
-  for (const id of ids) {
-    if (id === taskId) throw new Error("A task cannot wait for itself. Remove it from the prerequisites.");
-    if (!find(id)) throw new Error("Unknown task. Remove the unavailable prerequisite and choose another task.");
-  }
-  const reaches = (from: Id, seen = new Set<Id>()): boolean => {
-    if (from === taskId) return true;
-    if (seen.has(from)) return false;
-    seen.add(from);
-    const task = find(from);
-    if (task?.state === "done" || task?.state === "cancelled") return false;
-    const runtime = task && runtimeWaitHolds(task) ? task.runtimeWait!.after : [];
-    return [...(task?.after ?? []), ...runtime].some((next) => reaches(next, seen));
-  };
-  if (ids.some((id) => reaches(id))) throw new Error("Those tasks would wait for each other. Remove a prerequisite that already waits on this task.");
-  return ids;
 }
 
 export function blockingDependencies<T extends TaskState>(task: Pick<TaskState, "after">, find: (id: Id) => T | undefined): T[] {
@@ -175,5 +155,5 @@ export function cancelTaskState(task: MutableTask, execution: Execution, now: nu
   delete execution.sideStep;
   delete execution.editAttempt;
   stopTaskActivity(task); stopCheckProgress(task, now);
-  endOpenStep(task, { outcome: openStep(task)?.kind === "agent" ? W.stopped : W.cancelled, end: "cancelled" }, now);
+  endOpenStep(task, { outcome: openStep(task)?.kind === "agent" ? JOURNEY_WORDS.stopped : JOURNEY_WORDS.cancelled, end: "cancelled" }, now);
 }

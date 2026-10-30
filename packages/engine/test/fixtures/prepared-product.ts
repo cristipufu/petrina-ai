@@ -1,3 +1,4 @@
+import { dirname, join } from "node:path";
 import type { Product } from "@petrina/core";
 import { fixtureFiles } from "@petrina/test-support/fixture-files";
 import type { Engine } from "../engine.js";
@@ -15,6 +16,12 @@ export type PreparedProduct = Pick<Product, "id" | "name" | "repo" | "tone"> & {
 export function acmeDemoProduct(path: string): PreparedProduct {
   return { id: "demo", name: "Clone", repo: "acme/demo", tone: "blue", path,
     remote: "https://github.com/acme/demo.git", defaultBranch: "main", delivery: "pull-request", approveDelivery: true };
+}
+
+/** The makeProduct default: a private bare origin and its clone, with local delivery. */
+export function privateCloneProduct(path: string): PreparedProduct {
+  return { id: "clone", name: "Clone", repo: "local/clone", tone: "blue", path,
+    remote: join(dirname(path), "origin.git"), defaultBranch: "main", delivery: "local", approveDelivery: true };
 }
 
 /** Known private repository recipes skip discovery; identity choices stay explicit at each fixture owner. */

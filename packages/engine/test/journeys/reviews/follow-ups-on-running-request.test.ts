@@ -2,13 +2,12 @@ import { afterAll, expect, it } from "bun:test";
 import { join } from "node:path";
 import { Fakes, waitFor } from "../../fixtures.js";
 import { createFollowUpFixtures, STEPS, EVIDENCE, older, groupByBug, taskOf, finish, cards, cardFor, plant } from "../../fixtures/follow-up-native.js";
-
-const { open, close, shutdown } = createFollowUpFixtures();
+const { open, close, use } = createFollowUpFixtures();
 afterAll(close);
-
 it("reuses an already queued manual bug and a running one held mid-turn, leaving their live work and other requests alone", async () => {
+  return use(async caseOwner => {
   let mode: "down" | "same" = "down";
-  const world = await open(prompt => mode === "down" ? "unavailable" : groupByBug(prompt), true, true);
+  const world = await open(caseOwner, prompt => mode === "down" ? "unavailable" : groupByBug(prompt), true, true);
   const { engine } = world;
   try {
     const fakes = new Fakes(join(world.root, "agents"));
@@ -20,7 +19,7 @@ it("reuses an already queued manual bug and a running one held mid-turn, leaving
       engine.addTask({ productId: world.shop, kind: "bug", title: "bug-queued: A finished earlier fix", backlog: true }),
       engine.addTask({ productId: world.shop, kind: "bug", title: "bug-queued: A cancelled request", backlog: true }),
     ];
-    const holds = controls.slice(2).map(id => engine.holdFollowUp(id));
+    const holds = controls.slice(2).map(id => { const release = engine.holdFollowUp(id); caseOwner.onStop(release); return release; });
     Object.assign(engine.task(controls[2]!)!, { state: "done", column: "done", finishedAt: Date.now() });
     engine.cancel(controls[3]!);
     const runningId = engine.addTask({ productId: world.shop, kind: "bug", title: "bug-running: Keep the publication check", description: "The coordinator's running request", backlog: true });
@@ -43,7 +42,7 @@ it("reuses an already queued manual bug and a running one held mid-turn, leaving
       older("unsure", "Possibly the same publication problem"),
     ]);
     plant(engine, source.id, source.findings[1]!.text);
-    await finish(engine, source);
+    await finish(caseOwner, engine, source);
     // Matching needs a free agent slot. Until it can run, nothing is linked, even though the fix is already active.
     const findings = () => engine.task(source.id)!.findings;
     expect(findings().map(finding => finding.tracking)).toEqual(Array(4).fill({ reason: "unavailable", retry: true }));
@@ -73,5 +72,6 @@ it("reuses an already queued manual bug and a running one held mid-turn, leaving
     await engine["followUps"].catchUp();
     expect([world.prompts.length, running.followUp!.reports.length, queued.followUp!.reports.length, running.session.length, cards(engine).length]).toEqual([asked, 1, 1, before.running.session.length + 1, 3]);
     holds.forEach(release => release());
-  } finally { await shutdown(world.engine); }
+  } finally { await caseOwner.stop(world.engine); }
+  });
 });

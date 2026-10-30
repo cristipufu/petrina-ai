@@ -1,7 +1,13 @@
 import { afterAll } from "bun:test";
 import { engineProcessCases } from "../../support.js";
 import { directDrivers } from "../../fixtures/direct-drivers.js";
+import { fakeAgentSessions } from "../../fixtures/fake-agent-sessions.js";
+import { installPreparedProduct, privateCloneProduct } from "../../fixtures/prepared-product.js";
+import { installSharedWorkflowFastPaths } from "../../fixtures/shared-preparation.js";
+import { privateAgentToolProbe } from "../../scripted-probes.js";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
+import { AgentRun } from "@petrina/agent-runtime/acp-run";
+import { agentEnv } from "@petrina/platform/process-environment";
 import { FAKE_AGENT } from "../../fixtures.js";
 import { describe, expect, it } from "bun:test";
 import { existsSync, rmSync, writeFileSync } from "node:fs";
@@ -11,7 +17,8 @@ import { EARLIER_ATTEMPT, WHERE_YOU_WERE } from "../../../src/prompts.js";
 import { claudeSandbox } from "@petrina/agent-runtime/sandbox";
 import { Store } from "@petrina/storage/store";
 import type { Scenario } from "../../fake-agent.js";
-import { EngineProcess, Fakes, git, makeProduct, makeWorld, remoteRef, SLOW, tempDir, traceTaskWait, waitFor } from "../../support.js";
+import * as gitOps from "@petrina/repositories/git";
+import { EngineProcess, Fakes, makeProduct, makeWorld, remoteRef, SLOW, tempDir, traceTaskWait, waitFor } from "../../support.js";
 
 const cases = engineProcessCases();
 afterAll(() => cases.close());
@@ -31,7 +38,7 @@ async function start(scenario: Scenario, description = "", holdBuilder = false) 
   const hold = holdBuilder ? join(root, "hold-builder") : undefined;
   const owners = cases.open(root, { stopPeers() { if (hold) rmSync(hold, { force: true }); } });
   return setupWithCleanup(() => owners.prepare(async () => {
-  const product = await makeProduct(root);
+  const product = await makeProduct(root, { origin: "none" });
   const home = join(root, "home");
   const fakes = new Fakes(join(root, "fake"));
   fakes.scenario(scenario);
@@ -40,7 +47,7 @@ async function start(scenario: Scenario, description = "", holdBuilder = false) 
     writeFileSync(join(fakes.dir, "agents.json"), JSON.stringify({ hold: { title: "Add a greeting", file: hold } }));
   }
   const close = () => owners.close();
-  const reopen = () => owners.prepare(() => owners.harness(home, fakes.dir));
+  const reopen = () => owners.prepare(() => owners.harness(home, fakes.dir, undefined, { extra: ["--fast-workflow"] }));
     const engine = await reopen();
     // These tests assert exact tools and saved conversation identities. A still-checking Codex may
     // otherwise be replaced by the first ready peer before the scenario even starts.
@@ -166,7 +173,7 @@ describe.concurrent("a builder working when Petrina restarts", () => {
         // Noted the moment the conversation opened: the step, the role, the tool and model, the conversation and the commit.
         const before = run.find(await engine.state());
         const session = run.fakes.received("builder")[0]!.session;
-        const note = { step: `${run.taskId}:s0 round 1 position 0`, roleId: "builder", profileId: "sol-xhigh", toolId: "codex", model: "gpt-6.1-sol", sessionId: session, head: await git(before.worktree!, "rev-parse", "HEAD") };
+        const note = { step: `${run.taskId}:s0 round 1 position 0`, roleId: "builder", profileId: "sol-xhigh", toolId: "codex", model: "gpt-6.1-sol", sessionId: session, head: await gitOps.head(before.worktree!) };
         expect(before.conversation).toMatchObject(note);
         if (stop === "kill") {
           await engine.kill();
@@ -212,9 +219,9 @@ describe.concurrent("a builder working when Petrina restarts", () => {
           expect(fresh).toContain(EARLIER_ATTEMPT);
           expect(done.timeline.some((entry) => entry.text === "Started this step again: Codex cannot reopen conversations")).toBe(true);
           // The new conversation's note replaced the old one, and the build built on the draft.
-          expect(await git(run.product, "show", "main:notes.txt")).toBe("A first draft");
+          expect((await gitOps.fileAt(run.product, "main", "notes.txt"))?.trim()).toBe("A first draft");
         }
-        expect(await git(run.product, "show", "main:greeting.txt")).toBe("Hello (with left-pad)");
+        expect((await gitOps.fileAt(run.product, "main", "greeting.txt"))?.trim()).toBe("Hello (with left-pad)");
         await engine.quit();
 
 
@@ -402,7 +409,7 @@ describe.concurrent("a permission request open when Petrina restarts", () => {
         await engine.act("allow", again.inbox[0]!.id, "once");
         const done = await run.finished(engine);
         expect(done.timeline.filter((entry) => entry.text.startsWith("You allowed"))).toHaveLength(1);
-        expect(await git(run.product, "show", "main:greeting.txt")).toBe("Hello (with left-pad)");
+        expect((await gitOps.fileAt(run.product, "main", "greeting.txt"))?.trim()).toBe("Hello (with left-pad)");
         await engine.quit();
 
 
@@ -420,13 +427,13 @@ describe.concurrent("a read-only agent that committed before a restart", () => {
       const result = await setupWithCleanup(() => run.owners.prepare(async () => {
         await waitFor(() => run.fakes.marked("reviewer-committed"), "the reviewer to commit");
         const before = run.find(await run.engine.state());
-        const built = await git(before.worktree!, "rev-parse", "HEAD~1");
+        const built = (await gitOps.parents(before.worktree!, (await gitOps.head(before.worktree!))!))[0];
         expect(before.conversation?.head).toBe(built);
         // Killed: nothing is cleaned up on the way out.
         const engine = await run.restart(run.engine, "kill");
         const done = await run.finished(engine);
         expect(done.timeline.some((entry) => entry.text === "Undid commits from Code reviewer, which is read-only")).toBe(true);
-        expect(await git(run.product, "log", "--format=%s", "main")).not.toContain("A stray commit");
+        expect((await gitOps.commitMessages(run.product, "main", 20)).map((entry) => entry.message)).not.toContain("A stray commit");
         if (!reopen) expect(run.fakes.openings("code reviewer")[1]).toContain("- added: stray.txt");
         await engine.quit();
 
@@ -447,7 +454,7 @@ describe.concurrent("a Release Manager interrupted by a restart", () => {
     const home = join(w.dir, "home");
     const fakes = new Fakes(w.dir);
     fakes.scenario({ planner: "short", builder: "plain", releaseManager: "hang", reopen: "resume" });
-    let engine = await owners.harness(home, w.dir, w.remote);
+    let engine = await owners.harness(home, w.dir, w.remote, { extra: ["--fast-workflow"] });
     try {
       const productId = (await engine.act("addProduct", w.clone)) as string;
       await engine.act("setProductDelivery", productId, "release", false);
@@ -458,10 +465,10 @@ describe.concurrent("a Release Manager interrupted by a restart", () => {
       expect(find(await engine.state()).conversation).toBeUndefined();
       await engine.kill();
       await owners.stop(engine);
-      engine = await owners.harness(home, w.dir, w.remote);
+      engine = await owners.harness(home, w.dir, w.remote, { extra: ["--fast-workflow"] });
       const done = find(await engine.until((state) => find(state).state === "done", "the release", 60_000));
       expect(done.release?.tag).toBe("v0.1.0");
-      expect(await remoteRef(w.remote, "refs/tags/v0.1.0")).toBe(await git(w.clone, "rev-parse", done.branch!));
+      expect(await remoteRef(w.remote, "refs/tags/v0.1.0")).toBe(await gitOps.revParse(w.clone, done.branch!));
       expect(fakes.openings("release manager")).toHaveLength(2);
       expect(fakes.opens().some((open) => open.how !== "new")).toBe(false);
       await engine.quit();
@@ -479,7 +486,7 @@ describe.concurrent("a tool that cannot reopen the conversation after all", () =
       const owners = directDrivers(root);
       const caseOwner = cases.open(root, { stopPeers: () => owners.close() });
       const result = await setupWithCleanup(() => owners.prepare(async () => {
-      const product = await makeProduct(root);
+      const product = await makeProduct(root, { origin: "none" });
       const fakes = new Fakes(join(root, "fake"));
       fakes.scenario({ planner: "short", builder: "work", reopen: "resume" });
       // "no answer at all": the reopen process never answers its handshake, whenever it is killed.
@@ -491,10 +498,27 @@ describe.concurrent("a tool that cannot reopen the conversation after all", () =
       };
       // The missing-conversation case must hear the agent's error before the deadline; the two
       // silent-agent cases deliberately exercise the short deadline itself.
-      const options = { agentCommand, reopenTimeoutMs: trouble === "conversation gone" ? 12_000 * SLOW : 1500 };
-      let engine = owners.open(join(root, "data"), options);
+      const scriptedSessions = fakeAgentSessions(fakes);
+      const options = {
+        agentCommand,
+        startAgentSession: (launch: Parameters<typeof scriptedSessions>[0], role: Parameters<typeof scriptedSessions>[1]) =>
+          launch.reopen !== undefined
+            ? AgentRun.start({ ...launch, command: agentCommand(), env: agentEnv(process.env) })
+            : scriptedSessions(launch, role),
+        toolProbe: privateAgentToolProbe(),
+        reopenTimeoutMs: trouble === "conversation gone" ? 12_000 * SLOW : 1500,
+      };
+      const fastWorkflow = { skipDriverPrepare: false, skipUpToDate: true, skipPrepareChecks: true, skipReviewCopies: true, skipReviewInputDiffs: true, fastCheckCapture: true, fastCleanup: true, fastCheckpoints: true } as const;
+      let engine = installSharedWorkflowFastPaths(owners.open(join(root, "data"), options), fastWorkflow);
       try {
-        const productId = await engine.addProduct(product);
+        const productId = await owners.run(engine, async () => {
+          await engine.waitUntilReady();
+          engine.stopRequested.signal.throwIfAborted();
+          return installPreparedProduct(engine, privateCloneProduct(product));
+        });
+        const installed = engine.s.products.find((entry) => entry.id === productId)!;
+        installed.checks = [];
+        installed.checksBy = "coordinator";
         engine.setProductDelivery(productId, "local", false);
         const taskId = engine.addTask({ productId, title: "Add a greeting" });
         await waitFor(() => fakes.marked("builder-working"), "the builder to start working");
@@ -502,11 +526,11 @@ describe.concurrent("a tool that cannot reopen the conversation after all", () =
         await engine.shutdown();
 
         if (trouble === "no answer") fakes.scenario({ planner: "short", builder: "work", reopen: "stall" });
-        // The new engine checks the saved Builder's login first, then tries reopening it.
-        else if (trouble === "no answer at all") silentAfter = 1;
+        // With privateAgentToolProbe, the first native launch on reopen is the saved Builder itself.
+        else if (trouble === "no answer at all") silentAfter = 0;
         else fakes.forgetConversations();
         await owners.stop(engine);
-        engine = owners.open(join(root, "data"), options);
+        engine = installSharedWorkflowFastPaths(owners.open(join(root, "data"), options), fastWorkflow);
         const done = await waitFor(() => {
           const task = engine.getState().tasks.find((entry) => entry.id === taskId);
           return task?.state === "done" && task;

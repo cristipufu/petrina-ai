@@ -1,59 +1,67 @@
+import { engineCaseFixtures, type EngineCaseOwner } from "../../fixtures/engine-cases.js";
 import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { BUILT_IN_ROLES, type ConversationNote, type Stage } from "@petrina/core";
-import { Engine } from "../../engine.js";
+
 import { Coordination } from "../../../src/coordination.js";
 import { AgentBrowser } from "@petrina/agent-runtime/browser";
 import { executionFor } from "@petrina/orchestrator";
 import { BuildResult, NotesResult, ReviewResult } from "../../../src/roles.js";
-import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "../../fixtures.js";
-
+import { Fakes, createProductRepository, waitFor } from "../../fixtures.js";
+import { fakeAgentSessions } from "../../fixtures/fake-agent-sessions.js";
+import { privateAgentToolProbe } from "../../scripted-probes.js";
+const engineCases = engineCaseFixtures();
+afterAll(() => engineCases.close());
 const ASSIGNMENT = "Current step assignment";
 const RESEARCH = "Research how agent hosts handle long waits";
 const REQUEST = "Complete product request: improve monitoring and establish host wait behavior.";
 const BRIEF = "Approved brief: retain every monitoring requirement.";
 const stage = { id: "research", kind: "do", title: RESEARCH, roleId: "researcher", profileIds: ["opus-high"], assignments: [{ profileId: "opus-high", by: "planner", reason: "PRIVATE-SELECTION-REASON", changeReason: "PRIVATE-READINESS-REASON" }] } satisfies Stage;
-
 // Native ACP still receives the prompts; this contract does not need a browser server.
 let browser: ReturnType<typeof spyOn<typeof AgentBrowser, "start">>;
-beforeAll(() => { browser = spyOn(AgentBrowser, "start").mockResolvedValue(undefined as never); });
+beforeAll(() => { browser = spyOn(AgentBrowser, "start"); browser.mockResolvedValue(undefined as never); });
 afterAll(() => browser.mockRestore());
-
 describe("current planned contribution", () => {
-
 });
-
 /** Exercise native prompts directly; planning, design and check discovery are unrelated to this contract. */
-async function fixture() {
-  const root = tempDir("petrina-step-assignment-");
-  const repo = await makeProduct(root);
+async function fixture(caseOwner: EngineCaseOwner) {
+  const root = caseOwner.root;
+  const { path: repo, initialSha: baseSha } = await createProductRepository(root); caseOwner.check();
   const fakes = new Fakes(join(root, "fake"));
   fakes.scenario({ builder: "plain", reopen: "resume" });
-  const engine = new Engine(join(root, "data"), {
+  const engine = caseOwner.open(join(root, "data"), {
     agentCommand: () => [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), fakes.dir],
+    startAgentSession: fakeAgentSessions(fakes),
+    toolProbe: privateAgentToolProbe(),
     toolPath: () => process.execPath, usageCommands: { codex: null, grok: null, antigravity: null },
   });
+  return caseOwner.run(engine, async () => {
   engine.schedule = () => {};
   engine.setPoolPaused(true);
-  await engine.checkTools();
+  await engine.waitUntilReady(); caseOwner.check();
+  await engine.checkTools(); caseOwner.check();
   engine.s.products.push({ id: "product", name: "Product", repo: "local/product", path: repo, defaultBranch: "main", tone: "blue" });
   const task = engine.task(engine.addTask({ productId: "product", title: "Improve long waits", description: REQUEST, backlog: true }))!;
   const scope = executionFor(task);
-  Object.assign(scope.work, { worktree: repo, branch: "main", base: "main", baseSha: await git(repo, "rev-parse", "HEAD") });
+  caseOwner.check();
+  Object.assign(scope.work, { worktree: repo, branch: "main", base: "main", baseSha });
   task.plan = { stages: [structuredClone(stage)], rationale: "PRIVATE-PLAN-RATIONALE", plannerProfileId: "opus-high" };
   task.stageIndex = 0;
   engine.s.pool.paused = false;
   const sections = () => [{ title: "Design brief", body: BRIEF }];
   const inputs = () => task.journey!.flatMap(step => step.agentInputs ?? []);
-  const close = async () => { await engine.shutdown(); removeDir(root); };
+  const close = async () => { await caseOwner.stop(engine);  };
   return { engine, task, scope, fakes, repo, sections, inputs, close };
-}
 
+  });
+}
 describe.concurrent("assignment in native and saved input", () => {
   it("reports a lone Builder's takeover with the previous participant and its own saved input", async () => {
-    const f = await fixture();
+  return engineCases.use("petrina-step-assignment-", async caseOwner => {
+    const f = await fixture(caseOwner);
     try {
+    await caseOwner.run(f.engine, async () => {
       f.fakes.scenario({ builder: "plain", limited: [{ model: "opus", role: "builder", spendCap: true }] });
       f.task.plan!.stages[0]!.roleId = "builder";
       await f.engine["turns"].turn(f.scope, "builder", "opus-high", f.sections, BuildResult, new AbortController().signal);
@@ -68,12 +76,16 @@ describe.concurrent("assignment in native and saved input", () => {
       const replaced = events.find(event => event.kind === "profile.replaced")!;
       expect(await c.call("journey.input", replaced.refs.previousInput)).toMatchObject({ outcome: "completed", conversation: inputs[0]!.sessionId, profileId: "opus-high", evidence: "exact" });
       expect(events.filter(event => event.kind === "seat.started")[1]).toMatchObject({ replaced: { previousProfileId: "opus-high", nodeId: nodes[0]!.id, conversation: inputs[0]!.sessionId } });
-    } finally { await f.close(); }
-  });
 
+    });
+} finally { await f.close(); }
+  });
+});
   it("records the bound product before a shared agent starts, independently of the selected product", async () => {
-    const f = await fixture();
+  return engineCases.use("petrina-step-assignment-", async caseOwner => {
+    const f = await fixture(caseOwner);
     try {
+    await caseOwner.run(f.engine, async () => {
       const base = f.scope.work.baseSha!;
       f.task.repositories = [{ ...f.scope.work, productId: "first", completedStages: [], baseSha: "first-base", stepAttempts: 1 }, { ...f.scope.work, completedStages: [], stepAttempts: 6 }];
       delete f.task.repository;
@@ -83,12 +95,16 @@ describe.concurrent("assignment in native and saved input", () => {
       expect(f.inputs()[0]).toMatchObject({ productId: "product", stepAttempts: 7, versions: { base } });
       const page = await new Coordination(f.engine).call("watch.events", { taskIds: [f.task.id], from: "oldest", kinds: ["seat.started"], timeoutMs: 0 });
       expect(page.events).toContainEqual(expect.objectContaining({ productId: "product", stepAttempts: 7, versions: { base } }));
-    } finally { await f.close(); }
-  });
 
+    });
+} finally { await f.close(); }
+  });
+});
   it("sends a fresh supporting role its specific contribution and preserves the exact section", async () => {
-    const f = await fixture();
+  return engineCases.use("petrina-step-assignment-", async caseOwner => {
+    const f = await fixture(caseOwner);
     try {
+    await caseOwner.run(f.engine, async () => {
       const roleId = f.engine.addRole({ ...BUILT_IN_ROLES.find(role => role.id === "researcher")!, name: "Host researcher" });
       f.task.plan!.stages[0]!.roleId = roleId;
       await f.engine["turns"].turn(f.scope, roleId, "opus-high", f.sections, NotesResult, new AbortController().signal);
@@ -104,12 +120,16 @@ describe.concurrent("assignment in native and saved input", () => {
       expect(saved.taskDescription).toBe(REQUEST);
       expect(readFileSync(saved.exact!.file, "utf8")).toBe(sent);
       expect(saved.manifest).toContainEqual(expect.objectContaining({ name: ASSIGNMENT, kind: "text", size: section.body.length }));
-    } finally { await f.close(); }
-  });
 
+    });
+} finally { await f.close(); }
+  });
+});
   it("updates a Builder's edited assignment on return, while retaining unchanged background in its packet", async () => {
-    const f = await fixture();
+  return engineCases.use("petrina-step-assignment-", async caseOwner => {
+    const f = await fixture(caseOwner);
     try {
+    await caseOwner.run(f.engine, async () => {
       Object.assign(f.task.plan!.stages[0]!, { roleId: "builder", title: "Build" });
       const turn = async (resume?: ConversationNote) => {
         let completed!: ConversationNote;
@@ -132,12 +152,16 @@ describe.concurrent("assignment in native and saved input", () => {
       expect(readFileSync(third.context!.file, "utf8")).toContain("Planned step: Implement host wait monitoring");
       expect(readFileSync(third.context!.file, "utf8")).toContain(BRIEF);
       expect(f.inputs()[2]!.manifest).toContainEqual(expect.objectContaining({ name: ASSIGNMENT, kind: "omitted" }));
-    } finally { await f.close(); }
-  });
 
+    });
+} finally { await f.close(); }
+  });
+});
   it("sends ordinary single and parallel reviewers the current planned step", async () => {
-    const f = await fixture();
+  return engineCases.use("petrina-step-assignment-", async caseOwner => {
+    const f = await fixture(caseOwner);
     try {
+    await caseOwner.run(f.engine, async () => {
       Object.assign(f.task.plan!.stages[0]!, { kind: "review-chain", roleId: "code-reviewer", title: "Review", profileIds: ["opus-high"] });
       await f.engine["turns"].turn(f.scope, "code-reviewer", "opus-high", f.sections, ReviewResult, new AbortController().signal, { reviewerKey: "0" });
       delete f.scope.work.conversation;
@@ -177,21 +201,26 @@ describe.concurrent("assignment in native and saved input", () => {
       expect(events.events).toContainEqual(expect.objectContaining({ seat: "reviewer:0", attempt: 4, mode: "resumed", conversation: completed.sessionId }));
       expect(await c.call("journey.input", { taskId: f.task.id, nodeId: f.task.journey!.at(-1)!.id, seat: "reviewer:0", index: 3 })).toMatchObject({ mode: "resumed", evidence: "exact", text: retry.text });
       expect(f.task.journey!.at(-1)!.agentResults!.map(result => result.inputIndex)).toEqual([0, 1, 2, 3]);
-    } finally { await f.close(); }
-  });
 
+    });
+} finally { await f.close(); }
+  });
+});
   for (const reopen of ["resume", undefined] as const) it(`refreshes an interrupted supporting assignment with ${reopen ?? "fresh fallback"} and saves the input actually sent`, async () => {
-    const f = await fixture();
+  return engineCases.use("petrina-step-assignment-", async caseOwner => {
+    const f = await fixture(caseOwner);
     const abort = new AbortController();
+    caseOwner.onStop(() => abort.abort());
     let running: Promise<unknown> | undefined;
     let failure: unknown;
     try {
+    await caseOwner.run(f.engine, async () => {
       f.fakes.scenario({ controlled: true, cancelHeld: true, reopen });
-      running = f.engine["turns"].turn(f.scope, "researcher", "opus-high", f.sections, NotesResult, abort.signal).catch(error => { failure = error; return error; });
+      running = caseOwner.prepare(() => f.engine["turns"].turn(f.scope, "researcher", "opus-high", f.sections, NotesResult, abort.signal).catch(error => { failure = error; return error; }));
       await waitFor(() => {
         if (failure) throw failure;
         return f.fakes.received("researcher").length && f.scope.work.conversation?.briefed;
-      }, "the supporting role to receive its assignment");
+      }, "the supporting role to receive its assignment", undefined, { during: running });
       abort.abort(); expect(await running).toBeInstanceOf(Error);
       const original = f.fakes.received("researcher")[0]!;
       expect(original.text).toContain(`Planned step: ${RESEARCH}`);
@@ -215,6 +244,9 @@ describe.concurrent("assignment in native and saved input", () => {
         expect(f.inputs().at(-1)!.resumed).toBeUndefined();
       }
       expect(readFileSync(f.inputs().at(-1)!.exact!.file, "utf8")).toBe(sent.text);
-    } finally { abort.abort(); await running; await f.close(); }
+
+    });
+} finally { abort.abort(); await running; await f.close(); }
   });
+});
 });

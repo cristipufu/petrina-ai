@@ -16,11 +16,12 @@ const posix = process.platform !== "win32";
 
 describe.skipIf(!posix)("take over a builder in the terminal, then hand back", () => {
   it("lets the fake terminal app exit when its test worker is gone", async () => {
-    const control = await heldLauncherCleanup();
+  let run: Awaited<ReturnType<typeof start>> | undefined, closing: Promise<void> | undefined;
+  await fixtures.use(async caseOwner => {
+    const control = await heldLauncherCleanup(caseOwner);
     const observed: { pid: number; state: string }[] = [];
-    let run: Awaited<ReturnType<typeof start>> | undefined, closing: Promise<void> | undefined;
     try {
-      run = await start({ planner: "short", builder: "work", reopen: "resume" }, "", {
+      run = await start(caseOwner, { planner: "short", builder: "work", reopen: "resume" }, "", {
         launcherEnv: control.launcherEnv,
         observeLauncher(pid, state) { observed.push({ pid, state }); },
       });
@@ -52,7 +53,6 @@ describe.skipIf(!posix)("take over a builder in the terminal, then hand back", (
       control.release();
       await closing;
       expect(await childState(launcher.childPid)).toBe("ended");
-      expect(existsSync(run.root)).toBe(false);
     } finally {
       // This lease/gate is independent: fixture.close cannot release it and make the pending proof vacuous.
       const releaseErrors: unknown[] = [];
@@ -61,5 +61,9 @@ describe.skipIf(!posix)("take over a builder in the terminal, then hand back", (
       const errors = [...releaseErrors, ...stopped.flatMap(result => result.status === "rejected" ? [result.reason] : [])];
       if (errors.length) throw new AggregateError(errors, "The launcher completion counterexample could not clean up");
     }
+
   });
+  if (!run) throw new Error("The native takeover fixture was not handed out");
+  expect(existsSync(run.root)).toBe(false);
+});
 });

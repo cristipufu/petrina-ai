@@ -10,7 +10,7 @@ import { executionOf, type RepositoryContext } from "@petrina/orchestrator";
 import { randomUUID } from "node:crypto";
 import { continuingAgentTurn, askMomentId, turnTokens, usageView, type AgentProfile, type AskAnswer, type DeepMutable, type Id, type InboxItem, type MomentOutcome, type UsageReport, type TurnReason, type UsageRequest, type UsageViewFor, type WorkMoment, type WorkStageKind } from "@petrina/core";
 import type { TurnNotes, TurnResult, AgentSession } from "@petrina/orchestrator";
-import type { Kernel, MStage, MTask } from "./kernel.js";
+import type { Kernel, MutableStage, RuntimeTask } from "./kernel.js";
 import { WaitClock, WorkLog } from "@petrina/storage/worklog";
 
 /** A stage that started and hasn't ended: kept in the work log, mirrored here. */
@@ -111,7 +111,7 @@ export class Tracking {
   // ── Moments ────────────────────────────────────────────────────────────
 
   /** The task went out (or the coordinator marked it done): its last stage ends, and the task with it. */
-  delivered(target: MTask | RepositoryContext): void {
+  delivered(target: RuntimeTask | RepositoryContext): void {
     const scope = executionOf(target);
     const { task } = scope;
     if (task.state === "done" || task.state === "pr-open" || task.state === "cancelled") return;
@@ -121,7 +121,7 @@ export class Tracking {
   }
 
   /** The coordinator cancelled a task still under way. */
-  cancelled(target: MTask | RepositoryContext): void {
+  cancelled(target: RuntimeTask | RepositoryContext): void {
     const scope = executionOf(target);
     const { task } = scope;
     if (task.state === "done" || task.state === "cancelled") return;
@@ -131,14 +131,14 @@ export class Tracking {
   }
 
   /** The pull request was merged or closed on GitHub. */
-  prSettled(target: MTask | RepositoryContext, state: "merged" | "closed"): void {
+  prSettled(target: RuntimeTask | RepositoryContext, state: "merged" | "closed"): void {
     const scope = executionOf(target);
 
     this.moment(scope, { kind: "task-end", outcome: state });
   }
 
   /** An agent ran out of usage: one failure. The same error failing the task later is not a second one. */
-  limitHit(target: MTask | RepositoryContext, roleId: Id, profileId: Id, error?: unknown): void {
+  limitHit(target: RuntimeTask | RepositoryContext, roleId: Id, profileId: Id, error?: unknown): void {
     const scope = executionOf(target);
 
     if (error && typeof error === "object") this.counted.add(error);
@@ -146,7 +146,7 @@ export class Tracking {
   }
 
   /** The coordinator tried a failed task again. Whatever a limit had left owed for it is this retry. */
-  retried(target: MTask | RepositoryContext): void {
+  retried(target: RuntimeTask | RepositoryContext): void {
     const scope = executionOf(target);
     const { task } = scope;
     this.forgetRetries(task.id);
@@ -157,7 +157,7 @@ export class Tracking {
    * A usage limit stopped this step's agent, and whoever takes over has to wait for the reset or a free slot.
    * The step starts again later, from the beginning: that attempt is the retry.
    */
-  owesRetry(target: MTask | RepositoryContext, roleId: Id, plannedId: Id): void {
+  owesRetry(target: RuntimeTask | RepositoryContext, roleId: Id, plannedId: Id): void {
     const scope = executionOf(target);
     const { task } = scope;
     if (this.k.stopped) return;
@@ -167,7 +167,7 @@ export class Tracking {
   }
 
   /** An agent starts on a step: a retry when a limit stopped the one before it, just now or before a wait. */
-  attempt(target: MTask | RepositoryContext, roleId: Id, plannedId: Id, profile: AgentProfile, afterLimit: boolean): void {
+  attempt(target: RuntimeTask | RepositoryContext, roleId: Id, plannedId: Id, profile: AgentProfile, afterLimit: boolean): void {
     const scope = executionOf(target);
     const { task } = scope;
     const key = retryKey(task.id, roleId, plannedId);
@@ -188,7 +188,7 @@ export class Tracking {
    * (the Check finder or the Guide keeper could not finish). `by`: the agent that failed, when it is not the
    * task's current one. Each error counts once, however many places see it.
    */
-  failed(target: MTask | RepositoryContext, error: unknown, by?: { roleId: Id; profileId?: Id }): void {
+  failed(target: RuntimeTask | RepositoryContext, error: unknown, by?: { roleId: Id; profileId?: Id }): void {
     const scope = executionOf(target);
     const { task } = scope;
     if (error && typeof error === "object") {
@@ -201,14 +201,14 @@ export class Tracking {
   }
 
   /** An agent's result was unusable, and it is asked to redo it. */
-  redo(target: MTask | RepositoryContext, roleId: Id, profile: AgentProfile): void {
+  redo(target: RuntimeTask | RepositoryContext, roleId: Id, profile: AgentProfile): void {
     const scope = executionOf(target);
 
     this.moment(scope, { kind: "redo", roleId, toolId: profile.toolId, profileId: profile.id });
   }
 
   /** Record the request immediately: cancelling or pausing must never erase that an agent needed help. */
-  asked(target: MTask | RepositoryContext, item: DeepMutable<InboxItem>, answer?: AskAnswer): void {
+  asked(target: RuntimeTask | RepositoryContext, item: DeepMutable<InboxItem>, answer?: AskAnswer): void {
     const scope = executionOf(target);
     const { task } = scope;
     if (!["question", "permission", "plan", "design", "delivery", "disagreement"].includes(item.kind)) return;
@@ -217,7 +217,7 @@ export class Tracking {
   }
 
   /** Complete the saved request, including late answers after its inbox item disappeared. */
-  answered(target: MTask | RepositoryContext, item: DeepMutable<InboxItem> | Id, answer: AskAnswer): void {
+  answered(target: RuntimeTask | RepositoryContext, item: DeepMutable<InboxItem> | Id, answer: AskAnswer): void {
     const scope = executionOf(target);
     const { task } = scope;
     if (this.k.stopped) return;
@@ -233,14 +233,14 @@ export class Tracking {
   }
 
   /** One design round: the architect (`stage`'s author), the design reviewer, and what it raised. */
-  designRound(target: MTask | RepositoryContext, stage: MStage, reviewer: { roleId: Id; profileId: Id }, round: number, count: number, blocking: number): void {
+  designRound(target: RuntimeTask | RepositoryContext, stage: MutableStage, reviewer: { roleId: Id; profileId: Id }, round: number, count: number, blocking: number): void {
     const scope = executionOf(target);
     const { task } = scope;
     this.moment(scope, { kind: "design-round", ...this.author(task, stage, round), peerRoleId: reviewer.roleId, peerProfileId: reviewer.profileId, round, count, blocking });
   }
 
   /** How a design ended: settled, or with the coordinator. Its stage ends with it. */
-  designEnd(target: MTask | RepositoryContext, stage: MStage, round: number, outcome: "settled" | "to-you"): void {
+  designEnd(target: RuntimeTask | RepositoryContext, stage: MutableStage, round: number, outcome: "settled" | "to-you"): void {
     const scope = executionOf(target);
     const { task } = scope;
     this.moment(scope, { kind: "design-end", ...this.author(task, stage, round), round, outcome, rounds: round });
@@ -248,34 +248,34 @@ export class Tracking {
   }
 
   /** One reviewer's verdict: how many findings, how many of them blocking. */
-  verdict(target: MTask | RepositoryContext, roleId: Id, profileId: Id, round: number, verdict: "pass" | "fail", count: number, blocking: number): void {
+  verdict(target: RuntimeTask | RepositoryContext, roleId: Id, profileId: Id, round: number, verdict: "pass" | "fail", count: number, blocking: number): void {
     const scope = executionOf(target);
 
     this.moment(scope, { kind: "verdict", roleId, profileId, round, verdict, count, blocking });
   }
 
   /** How a review round ended. Its stage ends with it. */
-  reviewEnd(target: MTask | RepositoryContext, round: number, outcome: "passed" | "sent-back" | "rounds-used"): void {
+  reviewEnd(target: RuntimeTask | RepositoryContext, round: number, outcome: "passed" | "sent-back" | "rounds-used"): void {
     const scope = executionOf(target);
 
     this.moment(scope, { kind: "review-end", round, outcome });
     this.endStage(scope, outcome);
   }
 
-  private author(task: MTask, stage: MStage, round: number): { roleId: Id; profileId?: Id } {
+  private author(task: RuntimeTask, stage: MutableStage, round: number): { roleId: Id; profileId?: Id } {
     return authorFor(this.log, task, stage, round);
   }
 
   // ── Stages ─────────────────────────────────────────────────────────────
 
-  private stageNow(task: MTask): { stageId: Id; title: string; kind: WorkStageKind; roleId: Id } {
+  private stageNow(task: RuntimeTask): { stageId: Id; title: string; kind: WorkStageKind; roleId: Id } {
     const stage = task.stageIndex >= 0 ? task.plan?.stages[task.stageIndex] : undefined;
     if (!stage) return { stageId: `${task.id}:plan`, title: "Planning", kind: "plan", roleId: "planner" };
     return { stageId: stage.id, title: stage.title, kind: stage.kind, roleId: stage.roleId };
   }
 
   /** The open stage run of a task, from memory or, after a restart, from the log. */
-  private openStage(task: MTask): OpenStage | undefined {
+  private openStage(task: RuntimeTask): OpenStage | undefined {
     const known = this.openStages.get(task.id);
     if (known) return known;
     const logged = this.log.openStage(task.id);
@@ -286,7 +286,7 @@ export class Tracking {
   }
 
   /** The task's current stage (or planning) is under way: it starts now unless it already has. */
-  beginStage(target: MTask | RepositoryContext): void {
+  beginStage(target: RuntimeTask | RepositoryContext): void {
     const scope = executionOf(target);
     const { task } = scope;
     if (this.k.stopped) return;
@@ -301,7 +301,7 @@ export class Tracking {
   }
 
   /** The open stage ends: how it ended, its time from start to finish and its agent time. */
-  endStage(target: MTask | RepositoryContext, outcome: MomentOutcome): void {
+  endStage(target: RuntimeTask | RepositoryContext, outcome: MomentOutcome): void {
     const scope = executionOf(target);
     const { task } = scope;
     if (this.k.stopped) return;
@@ -313,13 +313,13 @@ export class Tracking {
   }
 
   /** The round a turn belongs to: the stage's round, or which run of a do stage this is. */
-  private roundOf(task: MTask): number {
+  private roundOf(task: RuntimeTask): number {
     const now = this.stageNow(task);
     if (now.kind === "converge" || now.kind === "review-chain") return task.rounds[now.stageId] ?? 1;
     return this.openStage(task)?.run ?? 1;
   }
 
-  private moment(target: MTask | RepositoryContext, moment: Omit<WorkMoment, "id" | "at" | "taskId" | "productId">, when: { id?: Id; at?: number } = {}): void {
+  private moment(target: RuntimeTask | RepositoryContext, moment: Omit<WorkMoment, "id" | "at" | "taskId" | "productId">, when: { id?: Id; at?: number } = {}): void {
     const scope = executionOf(target);
     const { task } = scope;
     // Stopped: the log is closed, and work cut off by the stop changes nothing.
@@ -346,7 +346,7 @@ export class Tracking {
   // ── Turns ──────────────────────────────────────────────────────────────
 
   /** One message to an agent and the reply it waits for: one entry in the work log. */
-  async turn(target: MTask | RepositoryContext, agent: TurnAgent, run: AgentSession, text: string, reason: TurnReason, signal: AbortSignal): Promise<TurnResult> {
+  async turn(target: RuntimeTask | RepositoryContext, agent: TurnAgent, run: AgentSession, text: string, reason: TurnReason, signal: AbortSignal): Promise<TurnResult> {
     const scope = executionOf(target);
     const { task } = scope;
     const { profile, roleId, waits } = agent;
@@ -436,7 +436,7 @@ export class Tracking {
 const retryKey = (taskId: Id, roleId: Id, plannedId: Id) => `${taskId}|${roleId}|${plannedId}`;
 
 /** Indexed history plus last completed participant, independent of the live Engine. */
-export function authorFor(log: Pick<WorkLog, "turns">, task: Pick<MTask, "id">, stage: Pick<MStage, "id" | "roleId">, round: number): { roleId: Id; profileId?: Id } {
+export function authorFor(log: Pick<WorkLog, "turns">, task: Pick<RuntimeTask, "id">, stage: Pick<MutableStage, "id" | "roleId">, round: number): { roleId: Id; profileId?: Id } {
     // The last completed turn in this round produced the brief, including after a restart or a handover.
     const author = log.turns({ taskId: task.id, stageId: stage.id, round }).filter((turn) => turn.roleId === stage.roleId && turn.end === "finished").at(-1);
     return { roleId: stage.roleId, ...(author ? { profileId: author.profileId } : {}) };

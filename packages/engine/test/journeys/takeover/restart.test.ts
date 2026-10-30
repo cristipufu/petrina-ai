@@ -15,7 +15,8 @@ const posix = process.platform !== "win32";
 
 describe.skipIf(!posix)("take over, copy the command, and restart Petrina", () => {
   it("keeps the task in the coordinator's hands with its seat, and offers Hand back anyway only when it cannot tell", async () => {
-    const run = await start({ planner: "short", builder: "work", reopen: "resume" });
+  return fixtures.use(async caseOwner => {
+    const run = await start(caseOwner, { planner: "short", builder: "work", reopen: "resume" });
     try {
       await waitFor(() => run.fakes.marked("builder-working"), "the builder to draft");
       await run.working("builder");
@@ -60,5 +61,7 @@ describe.skipIf(!posix)("take over, copy the command, and restart Petrina", () =
       expect(done.steps!.filter((step) => step.roleId === "builder")).toHaveLength(0);
 
     } finally { await run.close(); }
+
   });
+});
 });

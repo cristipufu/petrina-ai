@@ -1,6 +1,6 @@
 import { mkdir } from "node:fs/promises";
+import { DEFAULT_PROFILES as ENGINE_PROFILES } from "@petrina/core";
 import { AgentRun } from "./acp-run.js";
-import { ENGINE_PROFILES } from "./tools.js";
 import type { ReadOptions } from "./codex-usage.js";
 import type { UsageInfo } from "./failures.js";
 import { UsageReader } from "./usage-reader.js";

@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { currentSlow, waitFor } from "../../fixtures.js";
 
 
-import { extraFixture } from "../../extra-fixtures.js";
+import { preparedServiceExtraFixture } from "../../extra-fixtures.js";
 
 const cases = engineCaseFixtures();
 afterAll(() => cases.close());
@@ -16,7 +16,7 @@ afterAll(() => cases.close());
 describe.skipIf(process.platform === "win32")("required extra validation shares the host check queue", () => {
 for (const observed of [false, true]) it(`stops the labelled workload but keeps capacity for a local child that outlives its client ${observed ? "after observing its identity" : "without observing its identity"}`, async () => {
   return cases.use("petrina-extra-", async owner => {
-    return await extraFixture(owner, async f => { f.engine.setPoolPaused(false);
+    return await preparedServiceExtraFixture(owner, async f => { f.engine.setPoolPaused(false);
     const record = await f.submit("client-child", ["probe", "hold-child"]); await f.started(record);
     const started = JSON.parse(readFileSync(join(f.service, "started", record.id), "utf8"));
     try {
@@ -56,14 +56,14 @@ for (const observed of [false, true]) it(`stops the labelled workload but keeps 
       expect(existsSync(record.snapshot)).toBe(false);
     } finally { await owner.stop(f.engine); }
 
-  });
+  }, {}, { fastClientStop: false, actorLease: true });
 
   });
 });
 
 for (const stalled of [false, true]) it(`${stalled ? "holds boundedly unconfirmed removal" : "confirms removal in progress without a false held state"} before handing off capacity`, async () => {
   return cases.use("petrina-extra-", async owner => {
-    return await extraFixture(owner, async f => {
+    return await preparedServiceExtraFixture(owner, async f => {
     const record = await f.submit("removal-in-progress");
     f.engine.setPoolPaused(false); await f.started(record);
     writeFileSync(join(f.service, "removal-pending"), "service is removing the stopped container");
@@ -102,7 +102,7 @@ for (const stalled of [false, true]) it(`${stalled ? "holds boundedly unconfirme
 
 it("a time limit stops the workload before releasing the next place", async () => {
   return cases.use("petrina-extra-", async owner => {
-    return await extraFixture(owner, async f => { f.engine.setPoolPaused(false);
+    return await preparedServiceExtraFixture(owner, async f => { f.engine.setPoolPaused(false);
     const record = await f.submit("deadline"); await f.started(record);
     const next = f.engine.checkQueue.acquire(new AbortController().signal);
     const release = await next;
@@ -118,7 +118,7 @@ it("a time limit stops the workload before releasing the next place", async () =
 
 it("cancels queued work without execution and running work with confirmed cleanup", async () => {
   return cases.use("petrina-extra-", async owner => {
-    return await extraFixture(owner, async f => {
+    return await preparedServiceExtraFixture(owner, async f => {
     const queued = await f.submit("queued-cancel");
     f.engine.cancel(f.task.id);
     expect((await f.finished(queued)).result).toBe("stopped");

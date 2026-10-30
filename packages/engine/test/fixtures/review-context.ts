@@ -1,15 +1,81 @@
+import { installPreparedProduct, privateCloneProduct } from "./prepared-product.js";
+import * as gitOps from "@petrina/repositories/git";
+import { headNow } from "@petrina/test-support/repository-head";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { writeFixtureJson } from "@petrina/test-support/fixture-json";
 import { registerFixtureRoot } from "@petrina/test-support/fixture-retention";
-import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { type DeepMutable, type Finding } from "@petrina/core";
 import { Context } from "../../src/context.js";
 import { Engine } from "../engine.js";
 import { executionFor } from "@petrina/orchestrator";
-import { Fakes, git, makeProduct, tempDir, testBrowserRoot, waitFor } from "../fixtures.js";
+import { createProductRepository, Fakes, makeProduct, tempDir, testBrowserRoot, waitFor } from "../fixtures.js";
 import { closeDirectDrivers, directDrivers, removeFixtureRoot } from "./direct-drivers.js";
+import { fakeAgentSessions } from "./fake-agent-sessions.js";
 import type { Scenario } from "../fake-agent.js";
+import { privateAgentToolProbe } from "../scripted-probes.js";
+
+interface FileSnapshot {
+  rel: string;
+  mode: number;
+  data: Buffer;
+}
+
+function captureDirectory(dir: string, prefix = ""): FileSnapshot[] {
+  const out: FileSnapshot[] = [];
+  for (const entry of readdirSync(join(dir, prefix), { withFileTypes: true })) {
+    const rel = prefix ? join(prefix, entry.name) : entry.name;
+    if (entry.isDirectory()) out.push(...captureDirectory(dir, rel));
+    else if (entry.isFile()) {
+      const full = join(dir, rel);
+      out.push({ rel, mode: lstatSync(full).mode, data: readFileSync(full) });
+    }
+  }
+  return out;
+}
+
+function applyDirectorySnapshot(dir: string, files: readonly FileSnapshot[]): void {
+  for (const file of files) {
+    const target = join(dir, file.rel);
+    mkdirSync(dirname(target), { recursive: true });
+    rmSync(target, { force: true });
+    writeFileSync(target, file.data, { mode: file.mode });
+  }
+}
+
+const headCheckScript = (failPath: string) => [
+  'const fs = require("node:fs"), p = require("node:path");',
+  'const dot = p.join(process.cwd(), ".git");',
+  'const gitdir = fs.statSync(dot).isDirectory() ? dot : p.resolve(process.cwd(), fs.readFileSync(dot, "utf8").replace(/^gitdir:\\s*/, "").trim());',
+  'const commondir = fs.existsSync(p.join(gitdir, "commondir")) ? p.resolve(gitdir, fs.readFileSync(p.join(gitdir, "commondir"), "utf8").trim()) : gitdir;',
+  'const head = fs.readFileSync(p.join(gitdir, "HEAD"), "utf8").trim();',
+  'const sha = head.startsWith("ref: ") ? fs.readFileSync(p.join(commondir, head.slice(5)), "utf8").trim() : head;',
+  'console.log("CHECKED-CODE:" + sha);',
+  `if (fs.existsSync(${JSON.stringify(failPath)})) process.exit(1);`,
+].join(" ");
+
+let bareSeedPromise: Promise<{ files: readonly FileSnapshot[]; base: string; first: string }> | undefined;
+
+function getBareSeed() {
+  bareSeedPromise ??= (async () => {
+    const seedTemp = tempDir("petrina-review-bare-seed-");
+    try {
+      const { path: seedRepo } = await createProductRepository(seedTemp, { origin: "none" });
+      writeFileSync(join(seedRepo, "REVIEW.md"), "# Rules\nPreserve the original rule.\n");
+      await gitOps.commitChanges(seedRepo, "Record the original review guide");
+      const base = headNow(seedRepo);
+      writeFileSync(join(seedRepo, "REVIEW.md"), "# Rules\nA change cannot replace the original rule.\n");
+      writeFileSync(join(seedRepo, "greeting.txt"), "FIRST-CHANGE\n");
+      await gitOps.commitChanges(seedRepo, "Add the greeting");
+      const first = headNow(seedRepo);
+      return { files: captureDirectory(seedRepo), base, first };
+    } finally {
+      rmSync(seedTemp, { recursive: true, force: true });
+    }
+  })();
+  return bareSeedPromise;
+}
 
 export function reviewContextFixtures() {
 interface RootOwner { root: string; browsers?: string; lifetime: ReturnType<typeof directDrivers> }
@@ -50,15 +116,12 @@ async function bare<T>(body: (world: Awaited<ReturnType<typeof prepareBare>>) =>
 
 async function prepareBare(owner: RootOwner) {
   const { root } = owner;
-  const repo = await makeProduct(root);
-  writeFileSync(join(repo, "REVIEW.md"), "# Rules\nPreserve the original rule.\n");
-  await git(repo, "add", "REVIEW.md"); await git(repo, "commit", "-qm", "Record the original review guide");
-  const base = await git(repo, "rev-parse", "HEAD");
-  writeFileSync(join(repo, "REVIEW.md"), "# Rules\nA change cannot replace the original rule.\n");
-  writeFileSync(join(repo, "greeting.txt"), "FIRST-CHANGE\n");
-  await git(repo, "add", "."); await git(repo, "commit", "-qm", "Add the greeting");
-  const first = await git(repo, "rev-parse", "HEAD");
-  const engine = openEngine(owner, join(root, "data"), { admissionsClosed: true, agentCommand: () => undefined, usageCommands: { codex: null, grok: null, antigravity: null }, terminals: () => [] });
+  const [repo, seed] = await Promise.all([makeProduct(root), getBareSeed()]);
+  const configBytes = readFileSync(join(repo, ".git", "config"));
+  applyDirectorySnapshot(repo, seed.files);
+  writeFileSync(join(repo, ".git", "config"), configBytes);
+  const { base, first } = seed;
+  const engine = openEngine(owner, join(root, "data"), { admissionsClosed: true, agentCommand: () => undefined, toolProbe: privateAgentToolProbe(), usageCommands: { codex: null, grok: null, antigravity: null }, terminals: () => [] });
   engine.schedule = () => {}; engine.setPoolPaused(true);
   engine.s.products.push({ id: "p", name: "Product", path: repo, repo: "local/product", tone: "blue" });
   const id = engine.addTask({ productId: "p", title: "A precise review", backlog: true });
@@ -90,29 +153,49 @@ async function prepareRun(owner: RootOwner, reopen: Scenario["reopen"], options:
   const scenario: Scenario = { planner: options.single ? "short" : "pair", builder: "plain", reviewer: options.reviewer ?? "important", fixes: "change", controlled: true, reopen, limited: options.limited };
   fakes.scenario(scenario);
   const data = join(root, "data");
-  const hold = join(root, "hold-fixes"), script = join(root, "script.json");
+  const hold = join(root, "hold-fixes"), script = join(root, "script.json"), failCheck = join(root, "fail-check");
+  const expectedHeadScript = headCheckScript(failCheck);
   if (options.advance) {
     writeFileSync(hold, "");
     writeFixtureJson(script, { hold: { title: "You are fixing the review findings", file: hold } });
   }
-  const engineOptions = { agentCommand: () => [process.execPath, join(import.meta.dir, "../fake-agent.ts"), fakes.dir, `--script=${script}`], toolPath: () => process.execPath, usageCommands: { codex: null, grok: null, antigravity: null }, browser: options.browser ?? false, ...(browsers ? { browserTempRoot: browsers } : {}) };
+  const engineOptions = {
+    agentCommand: () => [process.execPath, join(import.meta.dir, "../fake-agent.ts"), fakes.dir, `--script=${script}`],
+    ...(options.browser ? {} : { startAgentSession: fakeAgentSessions(fakes, { scriptPath: script }) }),
+    runCheckCommand: (req: { argv: readonly string[]; cwd: string }) => {
+      if (req.argv.length === 3 && req.argv[0] === process.execPath && req.argv[1] === "-e" && req.argv[2] === expectedHeadScript) {
+        return { code: existsSync(failCheck) ? 1 : 0, stdout: `CHECKED-CODE:${headNow(req.cwd)}\n` };
+      }
+      return undefined;
+    },
+    toolProbe: privateAgentToolProbe(),
+    toolPath: () => process.execPath,
+    usageCommands: { codex: null, grok: null, antigravity: null },
+    browser: options.browser ?? false,
+    ...(browsers ? { browserTempRoot: browsers } : {}),
+  };
   let engine = openEngine(owner, data, engineOptions);
-  engine.setPoolPaused(true); await engine.checkTools(); engine.setPoolLimit(options.limit ?? 2);
-  const productId = await engine.addProduct(await makeProduct(root)); engine.setProductDelivery(productId, "local", true);
+  engine.setPoolPaused(true);
+  await engine.waitUntilReady(); engine.stopRequested.signal.throwIfAborted();
+  await engine.checkTools(); engine.stopRequested.signal.throwIfAborted();
+  engine.setPoolLimit(options.limit ?? 2);
+  const repo = await makeProduct(root); engine.stopRequested.signal.throwIfAborted();
+  const productId = installPreparedProduct(engine, privateCloneProduct(repo)); engine.setProductDelivery(productId, "local", true);
   let second: string | undefined;
   if (options.shared) {
     const copy = await makeProduct(join(root, "second")), named = join(root, "second", "api");
+    engine.stopRequested.signal.throwIfAborted();
     renameSync(copy, named);
-    second = await engine.addProduct(named, "Second");
+    second = installPreparedProduct(engine, { ...privateCloneProduct(named), id: "api", name: "Second", repo: "local/api", tone: "green" });
     fakes.scenario({ ...scenario, affectedProducts: [productId, second] });
   }
   if (options.advance) for (const product of engine.s.products) {
     writeFileSync(join(product.path!, "REVIEW.md"), "OLD-BASE-GUIDE\n");
     writeFileSync(join(product.path!, "overlap.txt"), originalLines);
-    await git(product.path!, "add", "."); await git(product.path!, "commit", "-qm", "Set the original review context");
+    await gitOps.commitChanges(product.path!, "Set the original review context"); engine.stopRequested.signal.throwIfAborted();
     product.checksBy = "coordinator";
     // A product check: the engine's check runner bounds this program and stops its whole process group.
-    product.checks = [{ name: "Exact code", argv: [process.execPath, "-e", `import { git } from ${JSON.stringify(import.meta.resolve("@petrina/test-support/commands"))}; console.log('CHECKED-CODE:' + await git(process.cwd(), 'rev-parse', 'HEAD')); if (require('node:fs').existsSync(${JSON.stringify(join(root, "fail-check"))})) process.exit(1);`], why: "Prove checks run on the current code" }];
+    product.checks = [{ name: "Exact code", argv: [process.execPath, "-e", headCheckScript(join(root, "fail-check"))], why: "Prove checks run on the current code" }];
   }
   const taskId = engine.addTask({ productId, title: "Reuse independent reviewers", description: "ORIGINAL-REVIEW-REQUEST [no-check]", approvePlan: true, ...(second ? { worksOn: [productId, second].map((productId) => ({ productId, startFrom: { kind: "default" as const }, delivery: "local" as const })) } : {}) });
   const task = () => engine.task(taskId)!;
@@ -143,12 +226,12 @@ async function prepareRun(owner: RootOwner, reopen: Scenario["reopen"], options:
   const beforeFix = () => waitFor(() => { tick(); return existsSync(`${hold}.reached`); }, "the controlled Builder fix");
   const advanceMain = async (id = second ?? productId, conflict = false) => {
     const product = engine.s.products.find((product) => product.id === id)!;
-    const before = await git(product.path!, "rev-parse", "HEAD");
+    const before = headNow(product.path!);
     writeFileSync(join(product.path!, "REVIEW.md"), "NEW-BASE-GUIDE\n");
     writeFileSync(join(product.path!, "overlap.txt"), originalLines.replace("Original line 59\n", "Main changes the last line\n"));
     if (conflict) writeFileSync(join(product.path!, "greeting.txt"), "Main's incompatible greeting\n");
-    await git(product.path!, "add", "."); await git(product.path!, "commit", "-qm", "Advance main independently");
-    return { productId: id, before, base: await git(product.path!, "rev-parse", "HEAD") };
+    await gitOps.commitChanges(product.path!, "Advance main independently");
+    return { productId: id, before, base: headNow(product.path!) };
   };
   const done = () => { rmSync(hold, { force: true }); return waitFor(() => { tick(); return engine.getState().inbox.some((item) => item.kind === "delivery") && task(); }, "the reviewed delivery"); };
   const restart = () => owner.lifetime.prepare(async () => {

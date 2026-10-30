@@ -1,15 +1,18 @@
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import * as operations from "../../../src/git.js";
 import { commitAll, commitTree, contains, mergeTree, moveTo, patchId } from "../../../src/git.js";
 import { expectRejection } from "@petrina/test-support/rejections";
-import { removeDir } from "@petrina/test-support/fixtures";
+import { tempDir } from "@petrina/test-support/fixtures";
+import { headNow } from "@petrina/test-support/repository-head";
+import { committedRepositoryFixtures } from "../../fixtures/committed-repositories.js";
 import { git } from "@petrina/test-support/commands";
 
-const temp = mkdtempSync(join(tmpdir(), "petrina-git-"));
+const temp = tempDir("petrina-git-");
+const repositories = committedRepositoryFixtures(temp);
+afterAll(() => repositories.close());
 
 /** A file as checked out, in one line-ending style: git on Windows writes CRLF. */
 const checkedOut = (path: string) => readFileSync(path, "utf8").replace(/\r\n/g, "\n");
@@ -21,13 +24,10 @@ async function currentVersion(repo: string): Promise<{ head: string; tree: strin
 }
 
 describe("Petrina's own git steps", () => {
-  afterAll(() => removeDir(temp));
 
-  for (const format of ["sha1", "sha256"] as const) it(`commits ${format} changes without an unused HEAD read, retaining the SHA-returning API`, async () => {
+  for (const format of ["sha1", "sha256"] as const) it(`commits ${format} changes without an unused HEAD read, retaining the SHA-returning API`, () => repositories.run(async () => {
     const repo = join(temp, `commit-changes-${format}`); mkdirSync(repo);
-    await git(repo, "init", "-q", "-b", "main", `--object-format=${format}`);
-    writeFileSync(join(repo, "README.md"), "Initial\n");
-    await commitAll(repo, "Initial");
+    await repositories.copy(repo, { contents: "Initial\n", message: "Initial", format });
     const initial = await operations.head(repo);
     writeFileSync(join(repo, "README.md"), "Changed without inspecting HEAD\n");
     const native = Bun.spawn;
@@ -64,12 +64,11 @@ describe("Petrina's own git steps", () => {
     finally { rmSync(join(repo, ".git", "index.lock")); }
     expect(await operations.head(repo)).toBe(named!);
     expect(checkedOut(join(repo, "README.md"))).toBe("Blocked by the real index lock\n");
-  });
+  }));
 
-  for (const format of ["sha1", "sha256"] as const) it(`folds ${format} task commits from one observation, preserving edits and returning the exact version`, async () => {
+  for (const format of ["sha1", "sha256"] as const) it(`folds ${format} task commits from one observation, preserving edits and returning the exact version`, () => repositories.run(async () => {
     const repo = join(temp, `fold-${format}`); mkdirSync(repo);
-    await git(repo, "init", "-q", "-b", "main", `--object-format=${format}`);
-    writeFileSync(join(repo, "README.md"), "Initial\n"); await commitAll(repo, "Initial");
+    await repositories.copy(repo, { contents: "Initial\n", message: "Initial", format });
     const baseVersion = await currentVersion(repo), base = baseVersion.head;
     expect(await operations.squash(repo, base, "No empty task commit")).toEqual(baseVersion);
     expect(await operations.head(repo)).toBe(base);
@@ -115,14 +114,11 @@ describe("Petrina's own git steps", () => {
     await expectRejection(operations.squash(repo, "f".repeat(base.length), "Cannot fold"));
     expect(await operations.head(repo)).toBe(folded.head);
     expect(await git(repo, "status", "--porcelain")).toBe(status);
-  });
+  }));
 
-  for (const format of ["sha1", "sha256"] as const) it(`compares and restores ${format} versions without treating an invalid version as unchanged`, async () => {
+  for (const format of ["sha1", "sha256"] as const) it(`compares and restores ${format} versions without treating an invalid version as unchanged`, () => repositories.run(async () => {
     const repo = join(temp, `maintenance-${format}`); mkdirSync(repo);
-    await git(repo, "init", "-q", "-b", "main", `--object-format=${format}`);
-    await git(repo, "config", "user.email", "test@example.com"); await git(repo, "config", "user.name", "Test");
-    writeFileSync(join(repo, "README.md"), "Initial\n");
-    await commitAll(repo, "Initial");
+    await repositories.copy(repo, { contents: "Initial\n", message: "Initial", format });
     const initial = await operations.head(repo), first = await operations.commitVersion(repo);
     expect(initial).toHaveLength(format === "sha256" ? 64 : 40);
     expect(first).toEqual({ head: initial, tree: await git(repo, "rev-parse", "HEAD^{tree}") });
@@ -146,26 +142,25 @@ describe("Petrina's own git steps", () => {
     await operations.resetTo(repo, initial);
     expect(await operations.head(repo)).toBe(initial); expect(existsSync(join(repo, "maintenance.txt"))).toBe(false);
     expect(await operations.worktreeStatus(repo)).toEqual({ head: initial, clean: true, trackedChanged: false });
-  });
+  }));
 
-  it("checks ancestry from HEAD directly while preserving hash validation for other inputs", async () => {
-    const repo = join(temp, "head-ancestry"); mkdirSync(repo);
-    await git(repo, "init", "-q", "-b", "main"); await git(repo, "config", "user.email", "test@example.com"); await git(repo, "config", "user.name", "Test");
-    writeFileSync(join(repo, "README.md"), "First\n"); await git(repo, "add", "."); await git(repo, "commit", "-qm", "First");
-    const base = await git(repo, "rev-parse", "HEAD");
-    writeFileSync(join(repo, "README.md"), "Second\n"); await git(repo, "add", "."); await git(repo, "commit", "-qm", "Second");
-    const head = await git(repo, "rev-parse", "HEAD");
+  it("checks ancestry from HEAD directly while preserving hash validation for other inputs", () => repositories.run(async () => {
+    const repo = join(temp, "head-ancestry");
+    mkdirSync(repo);
+    await repositories.copy(repo, { contents: "First\n", message: "First" });
+    const base = headNow(repo);
+    writeFileSync(join(repo, "README.md"), "Second\n");
+    const head = (await commitAll(repo, "Second"))!;
     expect(await contains(repo, "HEAD", base)).toBe(true);
     expect(await contains(repo, head, base)).toBe(true);
     expect(await contains(repo, base, head)).toBe(false);
     expect(await contains(repo, "other-reference", base)).toBe(false);
     expect(await contains(repo, "HEAD", "invalid-ancestor")).toBe(false);
-  });
+  }));
 
-  for (const format of ["sha1", "sha256"] as const) it(`owns one ${format} fold observation and observes each later operation afresh`, async () => {
+  for (const format of ["sha1", "sha256"] as const) it(`owns one ${format} fold observation and observes each later operation afresh`, () => repositories.run(async () => {
     const repo = join(temp, `observed-fold-${format}`); mkdirSync(repo);
-    await git(repo, "init", "-q", "-b", "main", `--object-format=${format}`);
-    writeFileSync(join(repo, "README.md"), "Initial\n"); await commitAll(repo, "Initial");
+    await repositories.copy(repo, { contents: "Initial\n", message: "Initial", format });
     const base = await operations.head(repo);
     writeFileSync(join(repo, "README.md"), "Actual task contents\n"); await commitAll(repo, "Task");
     const first = await operations.observeFold(repo);
@@ -186,49 +181,96 @@ describe("Petrina's own git steps", () => {
     expect(result).toEqual({ head: await operations.head(repo), tree: later.tree });
     expect(await git(repo, "show", "-s", "--format=%P", "HEAD")).toBe(base);
     expect(await git(repo, "show", "HEAD:later.txt")).toBe("A later mutation");
-  });
+  }));
+
+  for (const format of ["sha1", "sha256"] as const) it(`detaches for hooks, reattaches restoring tracked edits, and opens merged trees on ${format}`, () => repositories.run(async () => {
+    const repo = join(temp, `detach-open-${format}`); mkdirSync(repo);
+    await repositories.copy(repo, { contents: "Base\n", message: "Base", format });
+    const base = await operations.head(repo);
+    writeFileSync(join(repo, "README.md"), "Task change\n");
+    const taskSha = (await commitAll(repo, "Task"))!;
+    writeFileSync(join(repo, ".git", "HEAD.lock"), "Blocked HEAD\n");
+    try { await expectRejection(operations.detachAt(repo, base)); }
+    finally { rmSync(join(repo, ".git", "HEAD.lock")); }
+    await operations.detachAt(repo, base);
+    expect(await operations.currentBranch(repo)).toBeUndefined();
+    expect(await git(repo, "rev-parse", "HEAD")).toBe(base);
+    writeFileSync(join(repo, "README.md"), "Hook dirtied tracked file\n");
+    writeFileSync(join(repo, "untracked-hook.txt"), "Untracked stays\n");
+    await operations.reattach(repo, "main");
+    expect(await git(repo, "symbolic-ref", "HEAD")).toBe("refs/heads/main");
+    expect(await git(repo, "rev-parse", "HEAD")).toBe(taskSha);
+    expect(checkedOut(join(repo, "README.md"))).toBe("Task change\n");
+    expect(checkedOut(join(repo, "untracked-hook.txt"))).toBe("Untracked stays\n");
+    rmSync(join(repo, "untracked-hook.txt"));
+    expect(await git(repo, "status", "--porcelain")).toBe("");
+    const taskTree = await git(repo, "rev-parse", `${taskSha}^{tree}`);
+    writeFileSync(join(repo, ".git", "index.lock"), "Blocked index\n");
+    try { await expectRejection(operations.openOn(repo, base, taskTree)); }
+    finally { rmSync(join(repo, ".git", "index.lock")); }
+    await operations.openOn(repo, base, taskTree);
+    expect(await git(repo, "symbolic-ref", "HEAD")).toBe("refs/heads/main");
+    expect(await git(repo, "rev-parse", "HEAD")).toBe(base);
+    expect(checkedOut(join(repo, "README.md"))).toBe("Task change\n");
+    expect(await git(repo, "diff", "--name-only")).toBe("");
+    expect(await git(repo, "diff", "--cached", "--name-only")).toBe("README.md");
+  }));
 });
 
 describe("the change's fingerprint", () => {
-  const folder = mkdtempSync(join(tmpdir(), "petrina-patch-"));
-  afterAll(() => removeDir(folder));
+  const folder = join(temp, "fingerprints");
+  mkdirSync(folder);
+
+  let seedPromise: Promise<{ seedPath: string; mainSha: string }> | undefined;
+  const ensureSeed = () => {
+    seedPromise ??= (async () => {
+      const seedPath = join(folder, "_seed");
+      mkdirSync(seedPath);
+      const run = (...args: string[]) => git(seedPath, ...args);
+      await run("init", "-q", "-b", "main");
+      await run("config", "user.email", "t@example.com");
+      await run("config", "user.name", "T");
+      writeFileSync(join(seedPath, "app.py"), "def a():\n    return 1\n\n\ndef b():\n    return 2\n");
+      await run("add", ".");
+      await run("commit", "-q", "-m", "init");
+      const mainSha = headNow(seedPath);
+      await run("checkout", "-q", "-b", "task");
+      writeFileSync(join(seedPath, "app.py"), "def a():\n    return 1\n\n\ndef b():\n    return 3\n");
+      await run("commit", "-qam", "task");
+      return { seedPath, mainSha };
+    })();
+    return seedPromise;
+  };
 
   /** A repository with a task branch that changes one line in the middle of a file. */
-  async function repo(): Promise<{ path: string; run: (...args: string[]) => Promise<string> }> {
+  async function repo(): Promise<{ path: string; mainSha: string; run: (...args: string[]) => Promise<string> }> {
+    const seed = await ensureSeed();
     const path = mkdtempSync(join(folder, "repo-"));
-    const run = (...args: string[]) => git(path, ...args);
-    await run("init", "-q", "-b", "main");
-    await run("config", "user.email", "t@example.com");
-    await run("config", "user.name", "T");
-    writeFileSync(join(path, "app.py"), "def a():\n    return 1\n\n\ndef b():\n    return 2\n");
-    await run("add", ".");
-    await run("commit", "-q", "-m", "init");
-    await run("checkout", "-q", "-b", "task");
-    writeFileSync(join(path, "app.py"), "def a():\n    return 1\n\n\ndef b():\n    return 3\n");
-    await run("commit", "-qam", "task");
-    return { path, run };
+    cpSync(seed.seedPath, path, { recursive: true });
+    return { path, mainSha: seed.mainSha, run: (...args: string[]) => git(path, ...args) };
   }
 
-  it("stays the same when the change lands lower in a file that grew above it", async () => {
-    const { path, run } = await repo();
-    const before = await patchId(path, await run("rev-parse", "main"), "HEAD");
+  it("stays the same when the change lands lower in a file that grew above it", () => repositories.run(async () => {
+    const { path, mainSha, run } = await repo();
+    const before = await patchId(path, mainSha, "HEAD");
     await run("checkout", "-q", "main");
     writeFileSync(join(path, "NEWS.md"), "News\n");
     writeFileSync(join(path, "app.py"), "import os\n\n\ndef a():\n    return 1\n\n\ndef b():\n    return 2\n");
     await run("add", ".");
     await run("commit", "-q", "-m", "main moved");
+    const movedMain = headNow(path);
     await run("checkout", "-q", "task");
-    const merged = await mergeTree(path, await run("rev-parse", "main"));
+    const merged = await mergeTree(path, movedMain);
     expect(merged?.conflicts).toEqual([]);
-    await moveTo(path, await commitTree(path, merged!.tree, await run("rev-parse", "main"), "task"));
-    expect(await patchId(path, await run("rev-parse", "main"), "HEAD")).toBe(before!);
-  });
+    await moveTo(path, await commitTree(path, merged!.tree, movedMain, "task"));
+    expect(await patchId(path, movedMain, "HEAD")).toBe(before!);
+  }));
 
-  it("changes when only whitespace differs, which is meaning in Python", async () => {
-    const { path, run } = await repo();
-    const before = await patchId(path, await run("rev-parse", "main"), "HEAD");
+  it("changes when only whitespace differs, which is meaning in Python", () => repositories.run(async () => {
+    const { path, mainSha, run } = await repo();
+    const before = await patchId(path, mainSha, "HEAD");
     writeFileSync(join(path, "app.py"), "def a():\n    return 1\n\n\ndef b():\n        return 3\n");
     await run("commit", "-qam", "indented");
-    expect(await patchId(path, await run("rev-parse", "main"), "HEAD")).not.toBe(before!);
-  });
+    expect(await patchId(path, mainSha, "HEAD")).not.toBe(before!);
+  }));
 });

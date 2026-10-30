@@ -17,6 +17,7 @@ import { browserProcesses } from "@petrina/platform/browser-processes";
 import { connectionPath } from "../../../src/instance.js";
 import { LifecycleStore } from "@petrina/storage/lifecycle-store";
 import { Fakes, FAKE_AGENT, makeProduct, removeDir, tempDir, testBrowserRoot, waitFor } from "../../support.js";
+import { privateAgentToolProbe } from "../../scripted-probes.js";
 import { expectRejection } from "@petrina/test-support/rejections";
 
 const cases = engineProcessCases();
@@ -148,7 +149,7 @@ async function withPendingBrowserRecovery(
       await releaseRecovery.promise;
     };
     // The actual generation is registered before any asynchronous startup can settle.
-    const engine = owner.open(data, { agentCommand: () => [process.execPath, FAKE_AGENT, fakes.dir], browser: true, browserTempRoot: browsers, ...(options.bypassHold ? {} : { browserRecovery: scopedRecovery }) });
+    const engine = owner.open(data, { agentCommand: () => [process.execPath, FAKE_AGENT, fakes.dir], toolProbe: privateAgentToolProbe(), browser: true, browserTempRoot: browsers, ...(options.bypassHold ? {} : { browserRecovery: scopedRecovery }) });
     const starting = engine.waitUntilReady(); startup = starting;
     void starting.then(() => { ready = true; settled = true; }, error => { failure = { error }; settled = true; });
     // In bypass mode the kernel's default native recovery is the operation under test.

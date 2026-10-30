@@ -6,13 +6,12 @@ import { Coordination } from "../../../src/coordination.js";
 import { ADAPTERS } from "@petrina/agent-runtime/tools";
 import { SLOW } from "../../support.js";
 import { createWorkflowEventFixtures, all } from "../../fixtures/workflow-event-native.js";
-
-const { setup, close } = createWorkflowEventFixtures();
+const { setup, close, use } = createWorkflowEventFixtures();
 afterAll(close);
-
 describe("a planned reviewer that never starts", () => {
 it("stays an expected seat on the step, so a review stopped while it waits for usage is no completed examination", async () => {
-    const { engine, productId, fakes } = await setup({ planner: "parallel", builder: "plain", controlled: true });
+  return use("petrina-events-flow-", async caseOwner => {
+    const { engine, productId, fakes } = await setup(caseOwner, { planner: "parallel", builder: "plain", controlled: true });
     // One agent at a time: the second reviewer cannot start beside the first.
     engine.setPoolLimit(1);
     const c = new Coordination(engine);
@@ -31,6 +30,7 @@ it("stays an expected seat on the step, so a review stopped while it waits for u
     // The agent publishes its prompt before its progress update. Release on that
     // actual progress, even when the compact event feed has no new transition.
     const unsubscribe = engine.subscribe(releasePending);
+    caseOwner.onStop(unsubscribe);
     try {
       for (;;) {
         const page = await c.call("watch.events", { taskIds: [taskId], cursor, timeoutMs: 2_000 * SLOW });
@@ -80,4 +80,5 @@ it("stays an expected seat on the step, so a review stopped while it waits for u
       expect(observed.at(-1)).toMatchObject({ kind: "task.finished", state: "cancelled" });
     } finally { unsubscribe(); }
   });
+});
 });

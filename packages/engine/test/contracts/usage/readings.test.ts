@@ -1,15 +1,21 @@
+import { afterAll } from "bun:test";
+import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
 import { expectRejection } from "@petrina/test-support/rejections";
 import { codexLimits, limitBuckets, limitsOverTime, type ReadingsView } from "@petrina/core";
 import { grokReports } from "@petrina/agent-runtime/grok-report";
 import { expect, it, spyOn } from "bun:test";
 import { dispatch } from "../../../src/server.js";
-import { Engine } from "../../engine.js";
-import { removeDir, tempDir } from "../../fixtures.js";
+
+const engineCases = engineCaseFixtures();
+afterAll(() => engineCases.close());
+
 
 it("strictly checks readings requests, bounds their pages, freezes them and never refreshes accounts", async () => {
-  const dir = tempDir("limit-readings-");
-  const engine = new Engine(dir);
+  return engineCases.use("limit-readings-", async caseOwner => {
+  const dir = caseOwner.root;
+  const engine = caseOwner.open(dir, {});
   const refresh = spyOn(engine, "readUsage");
+  caseOwner.onStop(() => refresh.mockRestore());
   const now = Date.now();
   try {
     for (let index = 0; index < 45; index++) engine.tracking.usageReported({ toolId: "codex", kind: "five_hour", utilization: index / 100, status: "allowed", at: now - 50000 + index * 1000 });
@@ -29,12 +35,15 @@ it("strictly checks readings requests, bounds their pages, freezes them and neve
       await expectRejection(dispatch(engine, { name: "usage", args: [{ ...request, ...extra }] }));
     }
     expect(refresh).not.toHaveBeenCalled();
-  } finally { refresh.mockRestore(); await engine.shutdown(); removeDir(dir); }
+  } finally { refresh.mockRestore(); await caseOwner.stop(engine);  }
+
+  });
 });
 
 it.each(["grok", "codex"])("opens %s readings for both ordinary and above-scale percentages without changing the source", async toolId => {
-  const dir = tempDir("limit-reading-scale-");
-  const engine = new Engine(dir);
+  return engineCases.use("limit-reading-scale-", async caseOwner => {
+  const dir = caseOwner.root;
+  const engine = caseOwner.open(dir, {});
   const now = Date.now();
   try {
     for (const percent of [85, 105]) {
@@ -48,5 +57,7 @@ it.each(["grok", "codex"])("opens %s readings for both ordinary and above-scale 
       expect(page.rows[0]!.report.utilization).toBe(percent / 100);
       expect(engine.tracking.log.usageHistory({}).at(-1)!.utilization).toBe(percent / 100);
     }
-  } finally { await engine.shutdown(); removeDir(dir); }
+  } finally { await caseOwner.stop(engine);  }
+
+  });
 });

@@ -1,7 +1,20 @@
 import { describe, expect, it } from "bun:test";
 import { setupFixtures } from "../../fixtures/setup.js";
+import { checkOf } from "@petrina/core";
+import type { Engine } from "../../engine.js";
+import { privateAgentToolProbe } from "../../scripted-probes.js";
 
 const { until, status, taskOf, toolsUsed, run } = setupFixtures();
+
+/** These existing native login journeys also calibrate the explicit one-tool workflow recipes. */
+async function calibrated(engine: Engine, only: "claude-code" | "codex" | "grok") {
+  const expected = privateAgentToolProbe([only]);
+  for (const id of ["claude-code", "codex", "grok", "antigravity", "git", "node"] as const) {
+    const { status, account, detail } = checkOf(engine.s.setup?.checks, id);
+    expect({ status, ...(account ? { account } : {}), ...(detail ? { detail } : {}) })
+      .toEqual(await expected.run(id, { signal: engine.stopRequested.signal, onGone: () => {} }));
+  }
+}
 
 describe("The squad uses tools that are ready", () => {
 for (const [only, other] of [
@@ -12,6 +25,7 @@ for (const [only, other] of [
       // Each logged out the way its tool is: Claude Code still opens conversations, Codex refuses them.
       await run({ [other]: other === "claude-code" ? "not-logged-in" : "logged-out" }, async ({ engine, taskId }) => {
       try {
+        await calibrated(engine, only);
         expect(status(engine, other)).toBe("logged-out");
         const state = await until(engine, (current) => ["done", "failed"].includes(taskOf(current, taskId).state));
         const task = taskOf(state, taskId);
@@ -39,6 +53,7 @@ for (const [only, other] of [
 it("keeps main's third tool available through planning, review and delivery", async () => {
     await run({ "claude-code": "logged-out", codex: "logged-out", grok: "ok" }, async ({ engine, taskId }) => {
     try {
+      await calibrated(engine, "grok");
       const state = await until(engine, (current) => ["done", "failed"].includes(taskOf(current, taskId).state));
       const task = taskOf(state, taskId);
       expect(task.error).toBeUndefined();

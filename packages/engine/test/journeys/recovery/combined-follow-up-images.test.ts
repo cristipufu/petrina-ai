@@ -3,12 +3,11 @@ import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { Coordination } from "../../../src/coordination.js";
 import { createFollowUpFixtures, cards, combinedAssignments } from "../../fixtures/follow-up-native.js";
-
-const { open, reopen, close, shutdown } = createFollowUpFixtures();
+const { open, reopen, close, use } = createFollowUpFixtures();
 afterAll(close);
-
 it("recovers unfinished reports and pictures on the combined task after the app combines their cards", async () => {
-  const world = await open();
+  return use(async caseOwner => {
+  const world = await open(caseOwner);
   let release = () => {};
   try {
     const saved = await combinedAssignments(world);
@@ -31,11 +30,12 @@ it("recovers unfinished reports and pictures on the combined task after the app 
     await reopen(world);
     expect(cards(world.engine).map(task => task.id)).toEqual([combinedId]);
     expect(world.engine.task(combinedId)!.session.flatMap(line => line.images ?? [])).toHaveLength(2);
-  } finally { release(); await shutdown(world.engine); }
+  } finally { release(); await caseOwner.stop(world.engine); }
+  });
 });
-
 it("retains combined reports' originals while copying fails and permits manual recovery on a later combined task", async () => {
-  const world = await open();
+  return use(async caseOwner => {
+  const world = await open(caseOwner);
   let release = () => {};
   try {
     const saved = await combinedAssignments(world, true);
@@ -49,7 +49,9 @@ it("retains combined reports' originals while copying fails and permits manual r
     release();
     world.engine.save();
     const original = world.files.copyFile;
-    const copy = spyOn(world.files, "copyFile").mockImplementation(async (...args) => {
+    const copy = spyOn(world.files, "copyFile");
+    caseOwner.onStop(() => copy.mockRestore());
+    copy.mockImplementation(async (...args) => {
       if (String(args[0]).endsWith("pic.png")) throw new Error("Copy still refused");
       return original(...args);
     });
@@ -81,5 +83,6 @@ it("retains combined reports' originals while copying fails and permits manual r
     expect(world.engine.task(latestId)!.followUp!.reports).toHaveLength(2);
     expect(world.engine.task(latestId)!.session.flatMap(line => line.images ?? [])).toHaveLength(3);
     expect(readdirSync(join(world.data, "captures", latestId))).toHaveLength(3);
-  } finally { release(); await shutdown(world.engine); }
+  } finally { release(); await caseOwner.stop(world.engine); }
+  });
 });

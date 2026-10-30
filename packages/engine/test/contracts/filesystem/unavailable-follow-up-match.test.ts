@@ -2,13 +2,12 @@ import { afterAll, expect, it } from "bun:test";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { createFollowUpFixtures, older, keysOf, groupByBug, taskOf, finish, cards, cardFor, plant } from "../../fixtures/follow-up-native.js";
-
-const { open, close, shutdown } = createFollowUpFixtures();
+const { open, close, use } = createFollowUpFixtures();
 afterAll(close);
-
 it("leaves a report untracked when the match cannot be settled, then links one card when it can", async () => {
+  return use(async caseOwner => {
   let mode: "unsure" | "down" | "same" = "unsure";
-  const world = await open((prompt) => {
+  const world = await open(caseOwner, (prompt) => {
     if (mode === "down") return "unavailable";
     if (mode === "unsure") return { groups: [], uncertain: keysOf(prompt) };
     return groupByBug(prompt);
@@ -17,8 +16,8 @@ it("leaves a report untracked when the match cannot be settled, then links one c
   try {
     const one = taskOf(engine, world.shop, "Date", [older("one", "bug-lost: The date is wrong.")]);
     const two = taskOf(engine, world.shop, "Year", [older("two", "bug-lost: The year is wrong.")]);
-    await finish(engine, one);
-    await finish(engine, two);
+    await finish(caseOwner, engine, one);
+    await finish(caseOwner, engine, two);
     expect(cards(engine)).toHaveLength(0);
     expect(one.findings[0]!.tracking).toEqual({ reason: "unmatched" });
     expect(two.findings[0]!.tracking).toEqual({ reason: "unmatched" });
@@ -26,14 +25,13 @@ it("leaves a report untracked when the match cannot be settled, then links one c
     await engine["followUps"].catchUp();
     expect(cards(engine)).toHaveLength(0);
     expect(one.findings[0]!.tracking).toEqual({ reason: "unmatched" });
-
     mode = "down";
     const pictured = "bug-held: The footer opens a retired page.";
     const held = taskOf(engine, world.shop, "Held", [older("held", pictured)]);
     const heldToo = taskOf(engine, world.shop, "Held too", [older("held-too", "bug-held: About in the footer is retired.")]);
     plant(engine, held.id, pictured);
-    await finish(engine, held);
-    await finish(engine, heldToo);
+    await finish(caseOwner, engine, held);
+    await finish(caseOwner, engine, heldToo);
     expect(cards(engine)).toHaveLength(0);
     expect(held.findings[0]!.tracking).toEqual({ reason: "unavailable", retry: true });
     await engine["cleanup"].removeCaptures(held.id);
@@ -47,5 +45,6 @@ it("leaves a report untracked when the match cannot be settled, then links one c
     expect(existsSync(join(engine.dataDir, "captures", card[0]!.id))).toBe(false);
     await engine["followUps"].catchUp();
     expect(cardFor(engine, "held")).toHaveLength(1);
-  } finally { await shutdown(engine); }
+  } finally { await caseOwner.stop(engine); }
+  });
 });

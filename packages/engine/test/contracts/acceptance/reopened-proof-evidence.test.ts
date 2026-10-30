@@ -2,7 +2,7 @@ import { afterAll, expect, it } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beginAgentStep } from "@petrina/core";
-import { git } from "../../fixtures.js";
+import * as gitOps from "@petrina/repositories/git";
 import { executionFor } from "@petrina/orchestrator";
 import { versionsOf } from "../../../src/repositories.js";
 import { ReviewResult } from "../../../src/roles.js";
@@ -17,7 +17,7 @@ it("retains an earlier pass and refreshes it when an affected product changes du
   const reply = testerReply(f, passes, async () => {
     const companion = f.owners[1]!.worktree;
     writeFileSync(join(companion, "changed-during-acceptance.txt"), "A different companion version\n");
-    await git(companion, "add", "."); await git(companion, "commit", "-q", "-m", "Change the companion during acceptance");
+    await gitOps.commitChanges(companion, "Change the companion during acceptance");
   });
   try {
     await f.engine["work"].runDo(f.scope, f.tester, signal());

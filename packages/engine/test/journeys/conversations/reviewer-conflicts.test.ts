@@ -1,4 +1,4 @@
-import { contextStageFixtures } from "../../fixtures/context-stage.js";
+import { reviewerConversationStageFixtures } from "../../fixtures/reviewer-conversation-stage.js";
 import { writeFixtureJson } from "@petrina/test-support/fixture-json";
 import { expectRejection } from "@petrina/test-support/rejections";
 import { afterAll, describe, expect, it } from "bun:test";
@@ -6,17 +6,14 @@ import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Coordination } from "../../../src/coordination.js";
 import { executionFor } from "@petrina/orchestrator";
+import * as gitOps from "@petrina/repositories/git";
 import { git, waitFor } from "../../fixtures.js";
-import { reviewContextFixtures } from "../../fixtures/review-context.js";
-const { run, close } = reviewContextFixtures();
-afterAll(close);
-
-const prepared = contextStageFixtures();
+const prepared = reviewerConversationStageFixtures();
 afterAll(() => prepared.close());
 
 describe.concurrent("reviewer conversations across fix rounds", () => {
-for (const { between, shared, single } of [{}, { between: "pause" }, { between: "restart" }, { shared: true }, { single: true }] as { between?: "pause" | "restart"; shared?: boolean; single?: boolean }[]) it(`drops ${single ? "a single reviewer's conversation" : "reviewer conversations"} when main conflicts${shared ? " in one shared product" : ""} and records why on each seat's next start${between ? `, across a ${between} before admission` : ""}`, async () => {
-    const exercise = async (f: Parameters<Parameters<typeof run>[2]>[0]) => {
+for (const { between, shared, single } of [{ between: "pause" }, { between: "restart" }, { shared: true }] as { between?: "pause" | "restart"; shared?: boolean; single?: boolean }[]) it(`drops ${single ? "a single reviewer's conversation" : "reviewer conversations"} when main conflicts${shared ? " in one shared product" : ""} and records why on each seat's next start${between ? `, across a ${between} before admission` : ""}`, async () => {
+    const exercise = async (f: Awaited<ReturnType<typeof prepared.reviewRun>>) => {
       try {
         await f.beforeFix();
         const moved = await f.advanceMain(undefined, true);
@@ -62,7 +59,6 @@ for (const { between, shared, single } of [{}, { between: "pause" }, { between: 
         expect(task.reviewFreshReasons).toBeUndefined();
       } finally { await f.shutdown(); }
     };
-    if (shared || between === "restart") return run(single ? "load" : "resume", { advance: true, shared, single }, exercise);
     const f = await prepared.reviewRun(single ? "load" : "resume", { advance: true, shared, single });
     return f.use(() => exercise(f));
   });
@@ -70,15 +66,15 @@ for (const { between, shared, single } of [{}, { between: "pause" }, { between: 
 
 describe.concurrent("reviewer conversations across fix rounds", () => {
 it("stops before reopening reviewers when main replaces the saved base history", async () => {
-    await run("resume", { advance: true }, async f => {
-
+    const f = await prepared.reviewRun("resume", { advance: true });
+    return f.use(async () => {
     try {
       await f.beforeFix();
       const product = f.engine().s.products[0]!;
       await git(product.path!, "reset", "--hard", "HEAD~1");
       writeFileSync(join(product.path!, "replacement.txt"), "Different history\n");
-      await git(product.path!, "add", "."); await git(product.path!, "commit", "-qm", "Replace the source history");
-      await expectRejection(f.done(), "history was replaced or diverged");
+      await gitOps.commitChanges(product.path!, "Replace the source history");
+      await f.done(operation => expectRejection(operation, "history was replaced or diverged"));
       const sessions = new Set(f.fakes.received("code reviewer").map((entry) => entry.session));
       expect(sessions.size).toBe(2);
       expect(f.fakes.opens().filter((entry) => sessions.has(entry.session)).every((entry) => entry.how === "new")).toBe(true);
@@ -89,8 +85,8 @@ it("stops before reopening reviewers when main replaces the saved base history",
 
 describe.concurrent("reviewer conversations across fix rounds", () => {
 it("returns failed checks on updated code to the Builder before spending another review", async () => {
-    await run("resume", { advance: true }, async f => {
-
+    const f = await prepared.reviewRun("resume", { advance: true, checks: true });
+    return f.use(async () => {
     try {
       await f.beforeFix(); await f.advanceMain();
       writeFileSync(join(f.root, "fail-check"), "");
@@ -123,7 +119,7 @@ it("resumes the actual usage replacement in its own reviewer seat", async () => 
 
 describe.concurrent("reviewer conversations across fix rounds", () => {
 it("continues a shared-product review with its own detached map and both prepared comparisons", async () => {
-    const f = await prepared.reviewRun("resume", { shared: true });
+    const f = await prepared.reviewRun("resume", { shared: true, inspectDiffs: true });
     return f.use(async () => {
       try {
         const task = await f.done();

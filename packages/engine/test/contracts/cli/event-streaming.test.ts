@@ -6,19 +6,19 @@ import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import type { WorkflowEvent } from "@petrina/core";
 import { CLI, engineEnv, waitFor } from "../../support.js";
 import { createWorkflowEventFixtures } from "../../fixtures/workflow-event-native.js";
-
-const { served, close, stopServer } = createWorkflowEventFixtures();
+const { served, close, use } = createWorkflowEventFixtures();
 afterAll(close);
-
 describe("waits over the local connection, MCP and the terminal", () => {
 it("streams one batch per line in the terminal, renews quiet deadlines silently and stops cleanly on interruption", async () => {
-    const { e, server, home, taskId } = await served();
+  return use("petrina-events-", async caseOwner => {
+    const { e, home, taskId , stopServer} = await served(caseOwner);
     const controller = new AbortController();
+    caseOwner.onStop(() => controller.abort("SIGINT"));
     const lines: string[] = [];
     let partial = "", subscriptions = 0;
     const subscribe = e.events.log.subscribe.bind(e.events.log);
     e.events.log.subscribe = listener => { subscriptions++; return subscribe(listener); };
-    const completion = runProcess([process.execPath, CLI, "watch", "events", "--task-ids", JSON.stringify([taskId]), "--timeout-ms", "300", "--follow", "--json"], {
+    const completion = caseOwner.prepare(() => runProcess([process.execPath, CLI, "watch", "events", "--task-ids", JSON.stringify([taskId]), "--timeout-ms", "300", "--follow", "--json"], {
       env: engineEnv(home), signal: controller.signal,
       start: (argv, options) => {
         const child = startCommand(argv, options);
@@ -34,13 +34,15 @@ it("streams one batch per line in the terminal, renews quiet deadlines silently 
         lines.push(...frames.filter(Boolean));
         return undefined;
       },
-    });
+    }));
     const result = completion.then(outcome => outcome.result);
     void result.catch(() => undefined); // The operation is still awaited below and on every failure path.
     const stop = async () => {
       controller.abort("SIGINT");
       await settleCommandAfterStop({ result, abort: () => controller.abort("SIGINT") });
     };
+    caseOwner.onStop(stop);
+    caseOwner.onStop(() => { e.events.log.subscribe = subscribe; });
     try {
       await setupWithCleanup(async () => {
         // Three actual subscriptions prove two quiet 300ms renewals, without a guessed sleep.
@@ -65,7 +67,8 @@ it("streams one batch per line in the terminal, renews quiet deadlines silently 
       expect(partial).toBe("");
     } finally {
       e.events.log.subscribe = subscribe;
-      await stopServer(server);
+      await stopServer();
     }
   });
+});
 });

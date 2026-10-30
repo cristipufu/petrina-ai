@@ -16,6 +16,14 @@ export function scopesFor(task: RuntimeTask, options: { includeExcluded?: boolea
   return [...included, ...(options.includeExcluded ? task.excludedRepositories ?? [] : [])].map((work) => ({ task, work }));
 }
 
+/** The native preparation host asks this after preparing every approved repository. */
+export function nextWorkspaceProduct(task: RuntimeTask, editingProgress?: string): string {
+  if (!task.repositories?.length) throw new Error("There is no approved shared workspace to select.");
+  return task.repair?.products[task.repair.index]
+    ?? (editingProgress ? task.repositories.find(work => !work.completedStages.includes(editingProgress))?.productId : undefined)
+    ?? task.leadProductId ?? task.repositories[0]!.productId;
+}
+
 /** Bind once at a stage boundary. Every product has an independent execution record. */
 export function executionFor(task: RuntimeTask, productId = task.activeProductId ?? task.productId): RepositoryContext {
   const work = task.repositories ? task.repositories.find((entry) => entry.productId === productId) : task.repository?.productId === productId ? task.repository : undefined;

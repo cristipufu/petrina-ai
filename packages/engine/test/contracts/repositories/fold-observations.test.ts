@@ -2,18 +2,19 @@ import { expect, it, spyOn } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { executionFor } from "@petrina/orchestrator";
+import * as gitOps from "@petrina/repositories/git";
 import { git } from "../../fixtures.js";
 import { withRepositoryRecords } from "../../fixtures/shared-records.js";
 
 it("shares a fold's actual commit observation and skips only directly proven unchanged-source ancestry", async () => {
   const observed = await withRepositoryRecords("fold-observations", { git: ["first"] }, async ({ engine, task, run }) => run(async () => {
     const scope = executionFor(task), product = engine.s.products.find(product => product.id === scope.work.productId)!;
-    const clone = product.path!, base = await git(clone, "rev-parse", "HEAD"), copy = join(engine.dataDir, "fold-copy");
-    await git(clone, "worktree", "add", "-q", "-b", "fold-task", copy, base);
+    const clone = product.path!, base = (await gitOps.head(clone))!, copy = join(engine.dataDir, "fold-copy");
+    await gitOps.ensureWorktree(clone, copy, "fold-task", base);
     scope.work.worktree = copy; scope.work.baseSha = base; scope.work.base = base; scope.work.branch = "fold-task";
     scope.work.report = { title: "Task title", summary: "The task's actual change", changes: [] };
     writeFileSync(join(copy, "feature.txt"), "First task change\n");
-    await git(copy, "add", "."); await git(copy, "commit", "-qm", "The initial task commit");
+    await gitOps.commitChanges(copy, "The initial task commit");
     const native = Bun.spawn;
     const calls: string[] = [];
     const watch = spyOn(Bun, "spawn");

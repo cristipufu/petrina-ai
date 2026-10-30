@@ -1,18 +1,16 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { join } from "node:path";
 import type { WorkflowEvent } from "@petrina/core";
-import { Engine } from "../../engine.js";
 import { Coordination, type Result } from "../../../src/coordination.js";
 import { EVENT_BYTES } from "../../../src/workflow-events.js";
 import { SLOW } from "../../support.js";
 import { createWorkflowEventFixtures, all, drain } from "../../fixtures/workflow-event-native.js";
-
-const { setup, close, shutdown, ownEngine } = createWorkflowEventFixtures();
+const { setup, close, use } = createWorkflowEventFixtures();
 afterAll(close);
-
 describe("a real workflow through the event feed", () => {
 it("links each handoff to its exact input, reports check reuse and causality, and ends with the recorded delivery", async () => {
-    const { engine, productId, fakes, root } = await setup({ planner: "tester-after" });
+  return use("petrina-events-flow-", async caseOwner => {
+    const { engine, productId, fakes } = await setup(caseOwner, { planner: "tester-after" });
     const c = new Coordination(engine);
     const before = await c.call("watch.events", { timeoutMs: 0 });
     const taskId = engine.addTask({ productId, title: "Add a greeting", description: "A greeting file." });
@@ -109,14 +107,15 @@ it("links each handoff to its exact input, reports check reuse and causality, an
     expect(JSON.stringify(observed)).not.toContain("You are the Builder");
     for (const event of observed) expect(Buffer.byteLength(JSON.stringify(event))).toBeLessThanOrEqual(EVENT_BYTES);
     // A restart loses continuity explicitly; the new run starts its own log.
-    await shutdown(engine);
-    const next = ownEngine(root, new Engine(engine.dataDir, { agentCommand: () => undefined, admissionsClosed: true }));
+    await caseOwner.stop(engine);
+    const next = caseOwner.open(engine.dataDir, { agentCommand: () => undefined, admissionsClosed: true });
     try {
     const again = new Coordination(next);
     const lost = await again.call("watch.events", { taskIds: [taskId], cursor, timeoutMs: 0 });
     expect(lost).toMatchObject({ outcome: "continuity-lost", reason: "engine-restarted" });
     expect((await again.call("watch.events", { taskIds: [taskId], from: "oldest", timeoutMs: 0 })).events).toEqual([]);
     expect((await again.call("journey.input", { taskId, nodeId: ref.input.nodeId, seat: ref.input.seat })).outcome).toBe("unavailable");
-    } finally { await shutdown(next); }
+    } finally { await caseOwner.stop(next); }
   });
+});
 });

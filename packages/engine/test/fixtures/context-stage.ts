@@ -2,22 +2,39 @@ import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { normalizePlan, ROLE_STARTS, type DeepMutable, type PlanDraft, type Task } from "@petrina/core";
 import { scopesFor } from "@petrina/orchestrator";
+import * as gitOps from "@petrina/repositories/git";
+import { headNow } from "@petrina/test-support/repository-head";
 import { SLOW } from "@petrina/test-support/slow";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { writeFixtureJson } from "@petrina/test-support/fixture-json";
 import { registerFixtureRoot } from "@petrina/test-support/fixture-retention";
 import { Engine, type EngineOptions } from "../engine.js";
-import { Fakes, git, makeProduct, tempDir, testBrowserRoot, waitFor } from "../fixtures.js";
+import { Fakes, createProductRepository, tempDir, testBrowserRoot, waitFor } from "../fixtures.js";
 import type { Scenario } from "../fake-agent.js";
+import { privateAgentToolProbe } from "../scripted-probes.js";
 import { directDrivers, closeDirectDrivers, removeFixtureRoot } from "./direct-drivers.js";
+import { fakeAgentSessions } from "./fake-agent-sessions.js";
 import { installPreparedProduct } from "./prepared-product.js";
+import { installSharedWorkflowFastPaths, materializeCleanWorktree, materializePreparedWorktree } from "./shared-preparation.js";
+import { NativeToolProbe } from "../../src/tool-probe.js";
 
 const originalLines = Array.from({ length: 60 }, (_, index) => `Original line ${index}\n`).join("");
+const headCheckScript = (failPath: string) => [
+  'const fs = require("node:fs"), p = require("node:path");',
+  'const dot = p.join(process.cwd(), ".git");',
+  'const gitdir = fs.statSync(dot).isDirectory() ? dot : p.resolve(process.cwd(), fs.readFileSync(dot, "utf8").replace(/^gitdir:\\s*/, "").trim());',
+  'const commondir = fs.existsSync(p.join(gitdir, "commondir")) ? p.resolve(gitdir, fs.readFileSync(p.join(gitdir, "commondir"), "utf8").trim()) : gitdir;',
+  'const head = fs.readFileSync(p.join(gitdir, "HEAD"), "utf8").trim();',
+  'const sha = head.startsWith("ref: ") ? fs.readFileSync(p.join(commondir, head.slice(5)), "utf8").trim() : head;',
+  'console.log("CHECKED-CODE:" + sha);',
+  `if (fs.existsSync(${JSON.stringify(failPath)})) process.exit(1);`,
+].join(" ");
 type StageInput = {
   prefix: string; title: string; description: string; scenario: Scenario;
   plan(engine: Engine): PlanDraft;
   start: "review" | "first";
   browser?: boolean; shared?: boolean; limit?: number; initialChange?: boolean;
+  nativeRechecks?: boolean;
   baseFiles?: Readonly<Record<string, string>>; changeFiles?: Readonly<Record<string, string>>;
   brief?: DeepMutable<NonNullable<Task["brief"]>>;
   native?(root: string, fakes: Fakes): EngineOptions;
@@ -40,23 +57,58 @@ export function contextStageFixtures() {
       if (input.browser) { browsers = testBrowserRoot(); registerFixtureRoot(browsers); }
       const fakes = new Fakes(join(root, "fake")); fakes.scenario(input.scenario);
       const native = input.native?.(root, fakes) ?? {};
+      const readiness = input.nativeRechecks ? { probe: privateAgentToolProbe() } : undefined;
+      const useInProcess = !input.browser;
       const options: EngineOptions = { agentCommand: () => [process.execPath, join(import.meta.dir, "../fake-agent.ts"), fakes.dir],
-        toolPath: () => process.execPath, browser: input.browser ?? false, ...(browsers ? { browserTempRoot: browsers } : {}), ...native };
+        ...(useInProcess ? { startAgentSession: fakeAgentSessions(fakes, { scriptPath: join(root, "script.json") }) } : {}),
+        toolPath: () => process.execPath, browser: input.browser ?? false, ...(browsers ? { browserTempRoot: browsers } : {}), ...native,
+        ...(readiness ? { toolProbe: {
+          absent: id => readiness.probe.absent(id),
+          run: (id, request) => readiness.probe.run(id, request),
+        } } : {}) };
       const data = join(root, "data");
-      let engine = owner.open(data, options);
-      engine.setPoolPaused(true); await engine.waitUntilReady(); await engine.checkTools();
+      const openEngine = () => {
+        const next = owner.open(data, options);
+        if (!Object.keys(input.baseFiles ?? {}).length) {
+          installSharedWorkflowFastPaths(next, {
+            skipUpToDate: true,
+            skipPrepareChecks: true,
+            skipReviewCopies: !input.browser,
+            skipReviewInputDiffs: true,
+            fastCheckCapture: true,
+            fastCleanup: true,
+            fastCheckpoints: true,
+          });
+        }
+        return next;
+      };
+      let engine = openEngine();
+      engine.setPoolPaused(true);
+      await engine.waitUntilReady(); engine.stopRequested.signal.throwIfAborted();
+      await engine.checkTools(); engine.stopRequested.signal.throwIfAborted();
+      if (readiness) {
+        // Only the declared initial availability is supplied. Later checks use this generation's actual adapter.
+        readiness.probe = new NativeToolProbe(engine);
+        // Reopened generations construct their own native adapter, never one bound to the previous Engine.
+        delete options.toolProbe;
+      }
       engine.setPoolLimit(input.limit ?? 3);
       const products = [];
+      const initialVersions = new Map<string, string>();
       for (const [id, name] of input.shared ? [["p", "Product"], ["second", "Second"]] : [["p", "Product"]]) {
-        const folder = join(root, id!), repo = await makeProduct(folder, { origin: "none" });
+        const folder = join(root, id!), { path: repo, initialSha } = await createProductRepository(folder, { origin: "none" });
+        engine.stopRequested.signal.throwIfAborted();
         for (const [file, text] of Object.entries(input.baseFiles ?? {})) writeFileSync(join(repo, file), text);
-        if (Object.keys(input.baseFiles ?? {}).length) { await git(repo, "add", "."); await git(repo, "commit", "-qm", "Prepare the context's starting code"); }
+        if (Object.keys(input.baseFiles ?? {}).length) {
+          await gitOps.commitChanges(repo, "Prepare the context's starting code"); engine.stopRequested.signal.throwIfAborted();
+        }
         installPreparedProduct(engine, { id: id!, name: name!, path: repo, repo: `local/${id}`, tone: "blue", defaultBranch: "main", delivery: "local", approveDelivery: true });
         const product = engine.s.products.find(product => product.id === id)!;
         // Check discovery is outside this context boundary. Empty declarations still go through
         // the real first-ever/no-command baseline; version-sensitive cases supply their real command.
         product.checks = structuredClone(input.checks?.(root) ?? []); product.checksBy = "coordinator";
         products.push(product);
+        initialVersions.set(product.id, initialSha);
       }
       if (input.shared) fakes.scenario({ ...input.scenario, affectedProducts: products.map(product => product.id) });
       const choices = products.map(product => ({ productId: product.id, startFrom: { kind: "default" as const }, delivery: "local" as const }));
@@ -72,31 +124,53 @@ export function contextStageFixtures() {
       const at = input.start === "review" ? plan.stages.findIndex(stage => stage.kind === "review-chain") : 0;
       if (at < 0) throw new Error("The declared context stage has no review");
       const works = [];
+      const hasBaseFiles = Object.keys(input.baseFiles ?? {}).length > 0;
+      const changeEntries = Object.entries(input.changeFiles ?? {});
       for (const product of products) {
-        const repo = product.path!, baseSha = await git(repo, "rev-parse", "HEAD"), path = join(root, `work-${product.id}`), branch = `context-${product.id}`;
-        await git(repo, "worktree", "add", "-q", "-b", branch, path, baseSha);
-        for (const [file, text] of Object.entries(input.changeFiles ?? {})) writeFileSync(join(path, file), text);
-        if (input.initialChange) { await git(path, "add", "."); await git(path, "commit", "-qm", "Prepare the committed change supplied to review"); }
-        works.push({ productId: product.id, worktree: path, branch, baseSha, base: "main", delivery: "local" as const,
+        const repo = product.path!, baseSha = hasBaseFiles ? headNow(repo) : initialVersions.get(product.id);
+        if (!baseSha) throw new Error("The private context product lost its initial commit");
+        const path = join(root, `work-${product.id}`), branch = `context-${product.id}`;
+        engine.stopRequested.signal.throwIfAborted();
+        const workEntry = { productId: product.id, worktree: path, branch, baseSha, base: "main", delivery: "local" as const,
           workChoice: choices.find(choice => choice.productId === product.id)!, workProduct: { ...product }, preparation: "ready" as const,
           // These preceding stages are the supplied boundary, not appended journey events.
           completedStages: plan.stages.slice(0, at).filter(stage => stage.kind === "do").map(stage => stage.id),
           source: { product: { ...product }, start: { kind: "default" as const, branch: "main" }, destination: { kind: "branch" as const, mode: "local" as const, repo: product.repo, branch: "main" }, initialSha: baseSha, confirmed: true },
-          ...(input.initialChange ? { report: { summary: "Prepared initial greeting report", changes: ["People see a greeting"], tests: "Supplied stage input; no earlier Builder execution is claimed" } } : {}) });
+          ...(input.initialChange ? { report: { summary: "Prepared initial greeting report", changes: ["People see a greeting"], tests: "Supplied stage input; no earlier Builder execution is claimed" } } : {}) };
+        if (!hasBaseFiles && (!input.initialChange || changeEntries.length <= 1)) {
+          if (input.initialChange && changeEntries.length === 1) {
+            const [fileName, fileContent] = changeEntries[0]!;
+            await materializePreparedWorktree(engine, { task, work: workEntry }, repo, "main", baseSha, fileName, fileContent, "Prepare the committed change supplied to review");
+          } else {
+            await materializeCleanWorktree(engine, { task, work: workEntry }, repo, "main", baseSha);
+            for (const [file, text] of changeEntries) writeFileSync(join(path, file), text);
+          }
+          engine.stopRequested.signal.throwIfAborted();
+        } else {
+          await gitOps.ensureWorktree(repo, path, branch, baseSha); engine.stopRequested.signal.throwIfAborted();
+          for (const [file, text] of changeEntries) writeFileSync(join(path, file), text);
+          if (input.initialChange) {
+            await gitOps.commitChanges(path, "Prepare the committed change supplied to review"); engine.stopRequested.signal.throwIfAborted();
+          }
+        }
+        works.push(workEntry);
       }
       if (input.shared) { delete task.repository; task.repositories = works; task.activeProductId = products[0]!.id; task.leadProductId = products[0]!.id; }
       else task.repository = works[0]!;
       if (input.brief) task.brief = structuredClone(input.brief);
       Object.assign(task, { state: "waiting", startedAt: Date.now(), stageIndex: at, sub: 0, approvePlan: false, statusLine: "Waiting to start the prepared context stage" });
-      for (const scope of scopesFor(task)) await engine.rememberVersion(scope);
+      for (const scope of scopesFor(task)) {
+        if (!scope.work.savedVersion) await engine.rememberVersion(scope);
+        engine.stopRequested.signal.throwIfAborted();
+      }
       engine.commitNow(task);
       const current = () => engine;
       const run = <T>(start: () => Promise<T>) => { const bound = engine; return owner.run(bound, start); };
       const restart = () => owner.prepare(async () => {
         const previous = engine;
         await owner.stop(previous);
-        engine = owner.open(data, options);
-        await engine.waitUntilReady();
+        engine = openEngine();
+        await engine.waitUntilReady(); engine.stopRequested.signal.throwIfAborted();
         task = engine.task(id)!;
       });
       const use = <T>(body: () => Promise<T>) => owner.prepare(body);
@@ -105,7 +179,7 @@ export function contextStageFixtures() {
     }), close);
   }
 
-  async function reviewRun(reopen: Scenario["reopen"], input: { browser?: boolean; single?: boolean; shared?: boolean; limit?: number; limited?: Scenario["limited"]; reviewer?: Scenario["reviewer"]; advance?: boolean } = {}) {
+  async function reviewRun(reopen: Scenario["reopen"], input: { browser?: boolean; single?: boolean; shared?: boolean; limit?: number; limited?: Scenario["limited"]; reviewer?: Scenario["reviewer"]; advance?: boolean; nativeProbes?: boolean } = {}) {
     const f = await open({ prefix: "petrina-context-review-", title: "Reuse independent reviewers", description: "ORIGINAL-REVIEW-REQUEST [no-check]",
       scenario: { planner: input.single ? "short" : "pair", builder: "plain", reviewer: input.reviewer ?? "important", fixes: "change", controlled: true, reopen, limited: input.limited },
       plan: () => ({ rationale: "Declared input before the first real review", stages: [build, { ...review, profileIds: input.single ? ["opus-high"] : review.profileIds }] }),
@@ -113,8 +187,11 @@ export function contextStageFixtures() {
       baseFiles: input.advance ? { "REVIEW.md": "OLD-BASE-GUIDE\n", "overlap.txt": originalLines } : undefined,
       changeFiles: { "greeting.txt": "Hello\n", ...(input.advance ? { "overlap.txt": originalLines.replace("Original line 0\n", "Task changes the first line\n") } : {}) },
       brief: { summary: "ORIGINAL-DESIGN-BRIEF", forUsers: [], areas: [], acceptance: [], risks: [] },
-      native: root => ({ agentCommand: () => [process.execPath, join(import.meta.dir, "../fake-agent.ts"), join(root, "fake"), `--script=${join(root, "script.json")}`] }),
-      ...(input.advance ? { checks: (root: string) => [{ name: "Exact code", argv: [process.execPath, "-e", `import { git } from ${JSON.stringify(import.meta.resolve("@petrina/test-support/commands"))}; console.log('CHECKED-CODE:' + await git(process.cwd(), 'rev-parse', 'HEAD')); if (require('node:fs').existsSync(${JSON.stringify(join(root, "fail-check"))})) process.exit(1);`], why: "Prove checks run on the current code" }] } : {}),
+      native: root => ({ agentCommand: () => [process.execPath, join(import.meta.dir, "../fake-agent.ts"), join(root, "fake"), `--script=${join(root, "script.json")}`],
+        // Same observed availability as the private native fixture; readiness transport has its own anchors.
+        ...(input.nativeProbes ? {} : { toolProbe: privateAgentToolProbe() }),
+      }),
+      ...(input.advance ? { checks: (root: string) => [{ name: "Exact code", argv: [process.execPath, "-e", headCheckScript(join(root, "fail-check"))], why: "Prove checks run on the current code" }] } : {}),
     });
     return setupWithCleanup(() => f.use(async () => {
       const hold = join(f.root, "hold-fixes");
@@ -131,24 +208,36 @@ export function contextStageFixtures() {
         if (f.task().state === "failed") throw new Error(f.task().error);
       };
       const beforeFix = () => f.run(() => waitFor(() => { tick(); return existsSync(`${hold}.reached`); }, "the controlled Builder fix"));
-      const done = () => f.run(() => { rmSync(hold, { force: true }); return waitFor(() => { tick(); return f.engine().getState().inbox.some(item => item.kind === "delivery") && f.task(); }, "the reviewed delivery"); });
+      type ReviewedTask = ReturnType<typeof f.task>;
+      function done(): Promise<ReviewedTask>;
+      function done<T>(observe: (operation: Promise<ReviewedTask>) => Promise<T>): Promise<T>;
+      function done<T>(observe?: (operation: Promise<ReviewedTask>) => Promise<T>): Promise<ReviewedTask | T> {
+        return f.run<ReviewedTask | T>(() => {
+          rmSync(hold, { force: true });
+          const operation = waitFor(() => { tick(); return f.engine().getState().inbox.some(item => item.kind === "delivery") && f.task(); }, "the reviewed delivery");
+          // Expected refusal belongs to the same owned operation; unexpected rejection still retains the fixture.
+          return observe ? observe(operation) : operation;
+        });
+      }
       const advanceMain = (id = f.products.at(-1)!.id, conflict = false) => f.run(async () => {
         const product = f.engine().s.products.find(product => product.id === id)!;
-        const before = await git(product.path!, "rev-parse", "HEAD");
+        const before = headNow(product.path!);
         writeFileSync(join(product.path!, "REVIEW.md"), "NEW-BASE-GUIDE\n");
         writeFileSync(join(product.path!, "overlap.txt"), originalLines.replace("Original line 59\n", "Main changes the last line\n"));
         if (conflict) writeFileSync(join(product.path!, "greeting.txt"), "Main's incompatible greeting\n");
-        await git(product.path!, "add", "."); await git(product.path!, "commit", "-qm", "Advance main independently");
-        return { productId: id, before, base: await git(product.path!, "rev-parse", "HEAD") };
+        await gitOps.commitChanges(product.path!, "Advance main independently");
+        return { productId: id, before, base: headNow(product.path!) };
       });
       f.start();
       return { ...f, browsers: f.browsers!, hold, tick, done, beforeFix, advanceMain };
     }), f.close);
   }
 
-  async function designRun(reopen: Scenario["reopen"], limited?: Scenario["limited"], standIn?: "author" | "reviewer") {
+  async function designRun(reopen: Scenario["reopen"], limited?: Scenario["limited"], standIn?: "author" | "reviewer", input: { nativeProbes?: boolean; nativeRechecks?: boolean } = {}) {
     const f = await open({ prefix: "petrina-context-design-", title: "Agree on the greeting", description: "ORIGINAL-DESIGN-REQUEST: keep it welcoming.",
       scenario: { planner: "limits", builder: "plain", controlled: true, reviseBrief: true, reopen, limited }, start: "first",
+      nativeRechecks: input.nativeRechecks && !input.nativeProbes,
+      native: () => input.nativeProbes ? {} : { toolProbe: privateAgentToolProbe() },
       // Research is genuinely performed: the continuation must omit an earlier actual hand-back.
       plan: () => ({ rationale: "Declared design with its required earlier report", stages: [
         { kind: "do", title: "Research", roleId: "researcher", profileIds: ["opus-high"] },
@@ -173,12 +262,14 @@ export function contextStageFixtures() {
     }), f.close);
   }
 
-  async function builderRun(scenario: Scenario = {}) {
+  async function builderRun(scenario: Scenario = {}, options: { nativeProbes?: boolean; nativeRechecks?: boolean } = {}) {
     let nextGrokCheck: string | undefined;
     const f = await open({ prefix: "petrina-context-builder-", title: "Add a greeting", description: "[no-check]", start: "first",
       scenario: { planner: "claude-build", builder: "plain", controlled: true, reopen: "resume", limited: [{ model: "opus", role: "builder", spendCap: true }], ...scenario },
+      nativeRechecks: options.nativeRechecks && !options.nativeProbes,
       plan: () => ({ rationale: "Declared Builder and subsequent review", stages: [{ ...build, profileIds: ["opus-high"] }, { ...review, profileIds: ["sol-high"], maxRounds: 1 }] }),
-      native: (_root, fakes) => ({ agentCommand: profile => { const flag = profile.toolId === "grok" ? nextGrokCheck : undefined; if (flag) nextGrokCheck = undefined;
+      native: (_root, fakes) => ({ ...(!options.nativeProbes ? { toolProbe: privateAgentToolProbe() } : {}),
+        agentCommand: profile => { const flag = profile.toolId === "grok" ? nextGrokCheck : undefined; if (flag) nextGrokCheck = undefined;
         return [process.execPath, join(import.meta.dir, "../fake-agent.ts"), fakes.dir, ...(flag ? [flag] : [])]; }, toolCheckTimeoutMs: 8000 * SLOW }),
     });
     return setupWithCleanup(() => f.use(async () => {
@@ -204,6 +295,7 @@ export function contextStageFixtures() {
 
   async function evidence(scenario: Scenario) {
     const f = await open({ prefix: "petrina-context-evidence-", title: "Add a greeting", description: "[no-check]", scenario, start: "first",
+      native: () => ({ toolProbe: privateAgentToolProbe() }),
       plan: engine => {
         const added = scenario.planner === "mixed-review" ? engine.addRole(ROLE_STARTS.find(role => role.id === "security")!.draft) : undefined;
         return { rationale: "Declared Builder and review correction input", ...(scenario.risk ? { risk: { level: scenario.risk } } : {}), stages: [build,
@@ -228,6 +320,7 @@ export function contextStageFixtures() {
 
   async function messages(scenario: Scenario) {
     const f = await open({ prefix: "petrina-context-message-", title: "Add a greeting", description: "[no-check]", scenario, start: "review", initialChange: true,
+      native: () => ({ toolProbe: privateAgentToolProbe() }),
       plan: () => ({ rationale: "Declared first parallel review", stages: [build, { ...review, maxRounds: 1 }] }), changeFiles: { "greeting.txt": "Hello\n" } });
     return setupWithCleanup(() => f.use(async () => { f.start(); return f; }), f.close);
   }

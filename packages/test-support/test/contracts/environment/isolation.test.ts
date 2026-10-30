@@ -16,6 +16,7 @@ it("starts workers with private settings and no inherited accounts, Git override
     GIT_CONFIG_GLOBAL: "private", GIT_CONFIG_SYSTEM: "private", GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "remote.origin.pushurl",
     GIT_CONFIG_VALUE_0: "blocked", GIT_CONFIG_PARAMETERS: "private", GIT_DIR: "private", GIT_AUTHOR_NAME: "Developer",
     CODEX_HOME: "private", CODEX_CONFIG: "private", CLAUDE_CONFIG_DIR: "private", GEMINI_HOME: "private", NODE_OPTIONS: "private",
+    FORCE_COLOR: "1", COLORTERM: "truecolor",
     PETRINA_FIXTURE_RUN: "controlled", PETRINA_TEST_EXAMPLE: "controlled", CI: "true",
   });
   expect(own.HOME).toBe(join(folder, "home"));
@@ -24,7 +25,8 @@ it("starts workers with private settings and no inherited accounts, Git override
   expect(own.SystemRoot).toBe("native-system-root");
   expect(own.PETRINA_FIXTURE_RUN).toBe("controlled");
   expect(own.PETRINA_TEST_EXAMPLE).toBe("controlled");
-  for (const key of ["GH_TOKEN", "OPENAI_API_KEY", "ARBITRARY_SECRET", "SSH_AUTH_SOCK", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT", "GIT_DIR", "GIT_AUTHOR_NAME", "CODEX_HOME", "CODEX_CONFIG", "CLAUDE_CONFIG_DIR", "GEMINI_HOME", "NODE_OPTIONS"]) expect(own[key], key).toBeUndefined();
+  expect(own.NO_COLOR).toBe("1");
+  for (const key of ["GH_TOKEN", "OPENAI_API_KEY", "ARBITRARY_SECRET", "SSH_AUTH_SOCK", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT", "GIT_DIR", "GIT_AUTHOR_NAME", "CODEX_HOME", "CODEX_CONFIG", "CLAUDE_CONFIG_DIR", "GEMINI_HOME", "NODE_OPTIONS", "FORCE_COLOR", "COLORTERM"]) expect(own[key], key).toBeUndefined();
   const config = readFileSync(own.GIT_CONFIG_GLOBAL!, "utf8");
   expect(config).toContain(TEST_GIT_IDENTITY.email);
   expect(readFileSync(own.GIT_CONFIG_SYSTEM!, "utf8")).toBe("");
@@ -44,6 +46,9 @@ it("shares only provisioned browser binaries while nested homes and settings rem
   const two = testEnvironment(second, join(root, "browser-two"), one);
   expect(one.HOME).not.toBe(two.HOME);
   expect(one.GIT_CONFIG_GLOBAL).not.toBe(two.GIT_CONFIG_GLOBAL);
+  expect(one.PETRINA_TEST_REPOSITORY_SEEDS).toBe(join(first, "repository-seeds"));
+  expect(two.PETRINA_TEST_REPOSITORY_SEEDS).toBe(join(second, "repository-seeds"));
+  expect(readFileSync(join(two.PETRINA_TEST_REPOSITORY_SEEDS!, "global.gitconfig"), "utf8")).toBe(readFileSync(two.GIT_CONFIG_GLOBAL!, "utf8"));
   expect(existsSync(join(one.HOME!, "account.json"))).toBe(false);
   expect(existsSync(join(two.HOME!, "account.json"))).toBe(false);
   const ownCache = process.platform === "darwin" ? join(two.HOME!, "Library", "Caches") : process.platform === "win32" ? two.LOCALAPPDATA! : two.XDG_CACHE_HOME!;

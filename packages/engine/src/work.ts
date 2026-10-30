@@ -1,16 +1,15 @@
-import { AcceptanceResults, WorkCompletion } from "@petrina/orchestrator";
-import { routeAcceptance, type AcceptanceRoutingHost, type RepositoryContext } from "@petrina/orchestrator";
+import { AcceptanceStep, AcceptanceResults, WorkCompletion, BuildCompletion, finishSourcePort } from "@petrina/orchestrator";
+import { type AcceptanceRoutingHost, type RepositoryContext } from "@petrina/orchestrator";
 import { versionsOf, committedCodeOf, acceptanceVersion, invalidateAcceptance } from "./repositories.js";
-import { openProofs, refreshProofs } from "@petrina/core";
 // "do" stages: one role on one profile. The builder answers findings, brings work up to date and writes a pull
 // request's description, and Petrina keeps its work as one commit; the tester checks acceptance, and any other
 // role hands back notes. The delivery step is Petrina's own (shipping.ts).
 
-import { builderFindings, builderReturnWords, checkProblem, recordBuilderFindingAnswers, endAgentStep, JOURNEY_WORDS as W, openStep, type Task } from "@petrina/core";
+import { builderFindings, endAgentStep, JOURNEY_WORDS, type Task } from "@petrina/core";
 import * as git from "@petrina/repositories/git";
 import { formatFindings } from "./prompts.js";
 import { BuildResult, freshBuilderRethink, NotesResult, TestResult, TEXT_LIMITS } from "./roles.js";
-import { Kernel, stepKey, type MStage } from "./kernel.js";
+import { Kernel, type MutableStage } from "./kernel.js";
 import type { Turns } from "./turn.js";
 import type { Context } from "./context.js";
 import type { GuideKeeper } from "./guide-keeper.js";
@@ -26,10 +25,28 @@ function tooLong(value: { description?: string | undefined }): string | undefine
 }
 
 export class Work {
+  private readonly acceptanceStep: AcceptanceStep;
   private readonly acceptanceHost: AcceptanceRoutingHost;
   private readonly acceptanceResults: AcceptanceResults;
   private readonly completion: WorkCompletion;
-  constructor(private readonly k: Kernel, private readonly turns: Pick<Turns, "turn">, private readonly context: Pick<Context, "sectionsFor">, private readonly guide: Pick<GuideKeeper, "proposeGuideLine">, private readonly updates: Pick<Updates, "reopen" | "fold" | "message" | "patch">, private readonly learnings: Pick<Learnings, "note">, private readonly checks: Pick<ProductChecks, "repairVersion">) {
+  private readonly buildCompletion: BuildCompletion;
+  constructor(private readonly k: Kernel, private readonly turns: Pick<Turns, "turn">, private readonly context: Pick<Context, "sectionsFor">, private readonly guide: Pick<GuideKeeper, "proposeGuideLine">, private readonly updates: Pick<Updates, "reopen" | "fold" | "message" | "patch">, learnings: Pick<Learnings, "note">, checks: Pick<ProductChecks, "repairVersion">) {
+    this.buildCompletion = new BuildCompletion({
+      now: () => Date.now(), checkpoint: task => k.commitNow(task),
+      note: (scope, tone, text, roleId, profileId) => k.log(scope, tone, text, roleId, profileId),
+      noteLearnings: (scope, lessons, roleId, profileId) => learnings.note(scope, lessons, roleId, profileId),
+    }, {
+      saveChanges: async scope => { await git.commitChanges(scope.work.worktree!, updates.message(scope)); },
+      finishPort: async (scope, updating) => {
+        const worktree = scope.work.worktree!;
+        await finishSourcePort(scope, updating, {
+          treeOf: head => git.treeOf(worktree, head), merge: (onto, head) => git.mergeTree(worktree, onto, head),
+          changedFiles: async tree => git.changedFiles(worktree, tree, "HEAD"),
+        });
+      },
+      fold: scope => updates.fold(scope), tree: scope => git.treeOf(scope.work.worktree!), versions: versionsOf,
+      repairVersion: scope => checks.repairVersion(scope),
+    });
     this.acceptanceResults = new AcceptanceResults({
       id: task => k.id(task.id), now: () => Date.now(),
       note: (scope, tone, text, roleId, profileId) => k.log(scope, tone, text, roleId, profileId),
@@ -52,9 +69,22 @@ export class Work {
       commit: task => k.commit(task),
       openDeliveryDecision: task => k.gate(task, "delivery"),
     };
+    this.acceptanceStep = new AcceptanceStep({ now: () => Date.now(), checkpoint: () => k.commitNow() }, {
+      committedCode: committedCodeOf, versions: versionsOf,
+      saveEdits: (scope, roleId, profileId) => k.saveRoleEdits(scope, roleId, profileId),
+      turn: (scope, input, signal) => {
+        const initialHead = input.committed?.[scope.work.productId];
+        return turns.turn(scope, input.roleId, input.profileId, () => context.sectionsFor(scope, input.roleId), TestResult, signal, {
+          used: input.used,
+          check: input.check,
+          ...(initialHead && git.isSha(initialHead) ? { initialHead } : {}),
+          ...(input.committed ? { initialCompanionHeads: input.committed } : {}),
+        });
+      },
+    }, this.acceptanceResults, this.acceptanceHost);
   }
 
-  async runDo(scope: RepositoryContext, stage: MStage, signal: AbortSignal): Promise<"continue" | "stop"> {
+  async runDo(scope: RepositoryContext, stage: MutableStage, signal: AbortSignal): Promise<"continue" | "stop"> {
     const { task, work: repository } = scope;
     const roleId = stage.roleId;
     const profileId = (task.repositories && this.k.role(stage.roleId, task)?.result === "build" ? task.plan?.products?.find((owner) => owner.productId === repository.productId)?.builderProfileId : undefined) ?? stage.profileIds[0] ?? "opus-xhigh";
@@ -84,9 +114,10 @@ export class Work {
       const updating = repository.updating;
       const sourceName = repository.source?.start.kind === "pull-request" ? `PR #${repository.source.start.number}` : repository.source?.start.branch ?? "main";
       if (updating) await this.updates.reopen(scope);
-      const startingTree = repository.conversation?.roleId === roleId && repository.conversation.head
-        ? repository.conversation.builderTree
-        : await git.contentTree(repository.worktree!).catch(() => undefined);
+      const starting = repository.conversation?.roleId === roleId && repository.conversation.head
+        ? { head: repository.conversation.head, tree: repository.conversation.builderTree }
+        : await git.observeContentTree(repository.worktree!, repository.savedVersion).catch(() => ({ head: undefined, tree: undefined }));
+      const startingTree = starting.tree;
       // In a fix round the builder answers every finding it was given, by id. Acceptance failures whose returns are used up
       // wait for the coordinator: no repair of another finding hands them over.
       const given = task.fixing ? builderFindings(task, repository.productId) : [];
@@ -98,6 +129,7 @@ export class Work {
       const back = (task.fixing || updating) && own?.stageId === stage.id && (own.plannedProfileId ?? own.profileId) === profileId && !rethink ? own : undefined;
       const result = savedResult !== undefined ? BuildResult.parse(savedResult) : await this.turns.turn(scope, roleId, profileId, sections, BuildResult, signal, {
         builderTree: startingTree,
+        initialHead: starting.head,
         used,
         check: async (value) => {
           if (maintenance && typeof value.complete !== "boolean") return 'Return "complete": true for a completed investigation, or false and explain why it is incomplete.';
@@ -110,106 +142,12 @@ export class Work {
         ...(back ? { resume: back } : {}),
         ...(rethink ? { freshReason: "A deliberate fresh rethink after three review rounds; later repairs can keep this replacement conversation." } : {}),
       });
-      // A pull request's description: the builder's latest, or what it wrote before when it hands back none this time.
-      const description = result.description?.trim() || repository.report?.description;
-      repository.report = {
-        summary: result.summary,
-        changes: result.changes,
-        ...(result.tests ? { tests: result.tests } : {}),
-        ...(result.title ? { title: result.title } : {}),
-        ...(description ? { description } : {}),
-      };
-      if (maintenance && !result.complete) { this.k.commitNow(task); throw new Error(`Maintenance investigation is incomplete: ${result.summary}`); }
-      await this.learnings.note(scope, result.learnings, roleId, by);
-      // One commit per task: the builder's work joins the branch's one commit, under its title.
-      await git.commitChanges(repository.worktree!, this.updates.message(scope));
-      if (updating) {
-        // A first review, an unreviewed fix, or work beyond the conflicts needs the whole planned review.
-        // Check the saved code too: older updates recorded a head without recording any completed review.
-        const reviewed = !task.fixing && updating.head && repository.reviewedTree && repository.reviewedTree === await git.treeOf(repository.worktree!, updating.head);
-        const merged = reviewed ? await git.mergeTree(repository.worktree!, updating.onto, updating.head) : undefined;
-        const portOnly = merged && (await git.changedFiles(repository.worktree!, merged.tree, await git.head(repository.worktree!))).every((file) => updating.files.includes(file));
-        delete repository.updating;
-        delete repository.reviewedSha;
-        delete task.hunt;
-        delete repository.portReview;
-        if (portOnly && updating.head) repository.portReview = { from: updating.from, head: updating.head, onto: updating.onto, files: updating.files };
-        else delete repository.reviewedTree;
-        this.k.log(scope, "done", `Brought up to date with ${sourceName}: ${result.summary}`, roleId, by);
-      } else delete repository.reviewedTree;
-      const folded = await this.updates.fold(scope);
-      if (folded && (!git.isSha(folded.version.head) || !git.isSha(folded.version.tree))) {
-        if (repository.checks) repository.checks.current = false;
-        throw new Error("Petrina could not read the folded product version");
-      }
-      // A successful fold already observed or created this exact version. No fold still needs a fresh read.
-      const builtTree = folded ? folded.version.tree : await git.treeOf(repository.worktree!);
-      if (task.proofRequests?.length) refreshProofs(task, await versionsOf(task));
-      const changed = startingTree && builtTree ? startingTree !== builtTree : undefined;
-      if (repository.checks) repository.checks.current = !!builtTree && repository.checks.tree === builtTree;
-      const buildReport = openStep(task)?.agentResults?.findLast((entry) => entry.roleId === roleId && entry.profileId === by);
-      if (buildReport && builtTree) buildReport.versions = { [repository.productId]: builtTree };
-      const completedStep = openStep(task);
-      if (completedStep && builtTree) completedStep.buildVersions = { ...completedStep.buildVersions, [repository.productId]: builtTree };
-      if (completedStep && checkFailures.length) {
-        const version = await this.checks.repairVersion(scope).catch(() => undefined);
-        if (version?.sha && version.tree) completedStep.checkRepairs = checkFailures.flatMap((failure) => {
-          if (!completedStep.findingIds?.includes(failure.check.findingId!) || !given.some((finding) => finding.id === failure.check.findingId)) return [];
-          const answer = result.answers.find((answer) => answer.id === failure.check.findingId);
-          return answer?.text.trim() ? [{ productId: repository.productId, failureNode: failure.nodeId, checkId: failure.check.id!, attemptId: failure.attempt.id, findingId: answer.id,
-            sha: version.sha!, tree: version.tree!, definition: version.definition, commands: version.commands, answer: { fixed: answer.fixed, text: answer.text.slice(0, 600) } }] : [];
-        });
-      }
-      // The next fix round or update goes back to the conversation that really completed this build.
-      const conversation = repository.conversation;
-      if (conversation?.briefed && conversation.roleId === roleId) repository.builderSession = { stageId: stage.id, profileId: by, plannedProfileId: profileId, toolId: conversation.toolId, model: conversation.model, sessionId: conversation.sessionId, ...(conversation.context ? { context: conversation.context } : {}), ...(rethink || back?.rethought ? { rethought: true } : {}) };
-      const fixing = task.fixing;
-      const fixed = fixing ? recordBuilderFindingAnswers(task, given, result.answers, { productId: repository.productId, shared: !!task.repositories, at: Date.now() }) : 0;
-      // A changed return awaits verification. An unchanged return retains the unresolved problem,
-      // including when an earlier edit or check-definition change made that evidence outdated.
-      const problem = changed === true ? undefined : checkProblem(repository);
-      const outcome = builderReturnWords(changed, problem, fixed);
-      const returnedStep = openStep(task);
-      if (returnedStep?.kind === "agent") returnedStep.builderReturn = { productId: repository.productId, ...(changed !== undefined ? { changed } : {}), claimedFixes: fixed, outcome };
-      if (!updating) this.k.log(scope, "done", `${outcome}: ${result.summary}`, roleId, by);
-      endAgentStep(
-        task,
-        updating ? { outcome: W.broughtUpToDate, reason: sourceName === "main" ? W.upToDate : `up to date with ${sourceName}` } : fixing || (changed === false && problem) ? { outcome, reason: outcome, ...(problem ? { tone: "back" as const } : {}) } : { outcome: changed === false ? W.unchanged : W.built, reason: W.readyForReview },
-        Date.now(),
-      );
+      await this.buildCompletion.complete(scope, { stageId: stage.id, roleId, plannedProfileId: profileId, actualProfileId: by,
+        result, maintenance: !!maintenance, updating, sourceName, startingTree, given, checkFailures, rethought: rethink || back?.rethought });
     } else if (role?.result === "checks") {
-      const continuing = repository.conversation?.roleId === roleId && repository.conversation.step === stepKey(task);
-      if (!task.acceptanceRun || !continuing) {
-        // An interrupted attempt whose changes Petrina undid settled nothing: its step keeps that record, and the fresh run gets its own.
-        const interrupted = openStep(task);
-        const lost = interrupted?.kind === "agent" ? interrupted.proofRun?.restored : undefined;
-        if (lost) endAgentStep(task, { outcome: "Stopped before a result", reason: `${lost.products.length ? "Petrina undid changes during this attempt" : "Petrina could not confirm what this attempt's cleanup undid"}; the next run starts fresh`, tone: "back" }, Date.now());
-        const observed = await committedCodeOf(task);
-        refreshProofs(task, observed.versions);
-        task.acceptanceRun = { ...observed, requestIds: openProofs(task).map(request => request.id) };
-        this.k.commitNow();
-      }
-      const run = task.acceptanceRun;
-      testedVersions = { ...run.versions };
-      const rawResult = await this.turns.turn(scope, roleId, profileId, sections, TestResult, signal, {
-        used,
-        check: (value) => {
-          const ids = value.proofAnswers.map(answer => answer.id);
-          if (new Set(ids).size !== ids.length || ids.some(id => !run.requestIds.includes(id)) || run.requestIds.some(id => !ids.includes(id))) return `Answer every open proof request exactly once by id in proofAnswers, with pass, fail, or blocked and evidence. Required ids: ${run.requestIds.join(", ") || "none"}.`;
-          const missing = task.brief?.acceptance.filter((item) => !value.checks.some((check) => check.text === item.text));
-          return missing?.length ? `Report pass, fail, or blocked for every acceptance item, using its exact text. For blocked checks, include a reason naming what prevented verification. These are missing:\n${missing.map((item) => `- ${item.text}`).join("\n")}` : undefined;
-        },
-      });
-      if (role.canEdit) {
-        await this.k.saveRoleEdits(scope, roleId, by);
-        testedVersions = await versionsOf(task);
-      }
-      // Reuse the run's snapshot for ordinary acceptance and the post-save snapshot for editors.
-      // Explicit proof also needs one finishing observation when a read-only Tester returns.
-      const currentVersions = role.canEdit || !task.proofRequests?.length ? testedVersions : await versionsOf(task);
-      const recorded = await this.acceptanceResults.record(scope, { roleId, profileId: by, report: rawResult, run, testedVersions, currentVersions });
-      const next = routeAcceptance(this.acceptanceHost, scope, recorded);
-      if (next) return next;
+      const accepted = await this.acceptanceStep.run(scope, { roleId, profileId, canEdit: () => !!role.canEdit, used }, signal);
+      testedVersions = accepted.testedVersions;
+      if (accepted.next) return accepted.next;
     } else {
       const result = savedResult !== undefined ? NotesResult.parse(savedResult) : await this.turns.turn(scope, roleId, profileId, sections, NotesResult, signal, { used, check: value => maintenance && typeof value.complete !== "boolean" ? 'Return "complete": true for a completed investigation, or false and explain why it is incomplete.' : undefined });
       const handed = { ...(task.repositories && role?.canEdit ? { productId: repository.productId } : {}), at: Date.now(), profileId: by, stageId: stage.id, roleId, roleName: repository.conversation?.role?.name ?? role?.name ?? roleId, title: stage.title, summary: result.summary, notes: result.notes };
@@ -217,7 +155,7 @@ export class Work {
       this.k.participantSay(scope, "agent", [result.summary, ...result.notes.map((note) => `• ${note}`)].join("\n"), roleId, by, undefined);
       this.k.log(scope, "done", `${role?.name ?? roleId} done: ${result.summary}`, roleId, by);
       if (maintenance && !result.complete) { this.k.commitNow(task); throw new Error(`Maintenance investigation is incomplete: ${result.summary}`); }
-      endAgentStep(task, { outcome: W.wroteNotes, reason: W.notesReady }, Date.now());
+      endAgentStep(task, { outcome: JOURNEY_WORDS.wroteNotes, reason: JOURNEY_WORDS.notesReady }, Date.now());
     }
     if (role?.result !== "build" && role?.result !== "checks") await this.k.saveRoleEdits(scope, roleId, by);
     if (maintenance) {
@@ -225,7 +163,7 @@ export class Work {
       if (maintenance.readOnlyWrites) throw new Error("The read-only maintenance agent changed product files. Petrina undid those writes. Review its report and retry the investigation.");
       // Compare the actual final product tree, including committed changes withdrawn in a repair.
       const base = repository.baseSha;
-      const changed = repository.worktree && base ? (await git.changedFiles(repository.worktree, base, await git.head(repository.worktree))).length > 0 : true;
+      const changed = repository.worktree && base ? (await git.changedFiles(repository.worktree, base, "HEAD")).length > 0 : true;
       if (!changed) {
         maintenance.noProductChanges = true;
         this.k.finishStep(scope);

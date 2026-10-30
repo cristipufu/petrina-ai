@@ -8,7 +8,8 @@ import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { executionFor } from "@petrina/orchestrator";
 import { participantConversation } from "../../src/participant-conversation.js";
 import * as gitOps from "@petrina/repositories/git";
-import { Fakes, git, makeProduct, tempDir } from "../fixtures.js";
+import { Fakes, createProductRepository, tempDir } from "../fixtures.js";
+import { fakeAgentSessions } from "./fake-agent-sessions.js";
 import { FixtureTrace } from "../fixture-trace.js";
 import { completeAll } from "@petrina/core";
 
@@ -57,16 +58,21 @@ async function fixture(pair = false, roleId = "code-reviewer", trace?: FixtureTr
   const close = async () => { await lifetime.close(); fixtures.delete(lifetime); };
   return setupWithCleanup(() => lifetime.prepare(async () => {
   if (trace) trace.snapshot = () => ({ root });
-  const repo = await makeProduct(root), base = await git(repo, "rev-parse", "HEAD");
+  const { path: repo, initialSha: base } = await createProductRepository(root);
   const fakes = new Fakes(join(root, "fake"));
   fakes.scenario({ reopen: "resume", addedReviewer: "pass" });
   const launches: { at: number; profileId: string; toolId: string }[] = [];
   trace?.mark("Waiting to create the fixture engine");
   trace?.mark("Creating the fixture engine");
+  const baseStartSession = fakeAgentSessions(fakes, { flags: (toolId) => [`--record-tool=${toolId}`] });
   const engine = lifetime.open(join(root, "data"), {
       agentCommand: (profile) => {
         launches.push({ at: Date.now(), profileId: profile.id, toolId: profile.toolId });
         return [process.execPath, join(import.meta.dir, "../fake-agent.ts"), fakes.dir, `--record-tool=${profile.toolId}`, "--trace-startup"];
+      },
+      startAgentSession: (launch, role) => {
+        launches.push({ at: Date.now(), profileId: launch.profile.id, toolId: launch.profile.toolId });
+        return baseStartSession(launch, role);
       },
       toolPath: () => process.execPath, usageCommands: { codex: null, grok: null, antigravity: null },
   });
@@ -196,9 +202,9 @@ async function conflicting(f: Awaited<ReturnType<typeof fixture>>) {
   const main = f.scope.work.worktree!, copy = join(dirname(main), "task-copy");
   const commit = async (cwd: string, greeting: string) => {
     writeFileSync(join(cwd, "greeting.txt"), greeting);
-    await git(cwd, "add", "."); await git(cwd, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", greeting);
+    await gitOps.commitChanges(cwd, greeting);
   };
-  await git(main, "worktree", "add", "-q", "-b", "task", copy);
+  await gitOps.ensureWorktree(main, copy, "task", f.scope.work.baseSha ?? "HEAD");
   await commit(copy, "The task's greeting\n");
   Object.assign(f.scope.work, { worktree: copy, branch: "task", delivery: "local" });
   f.engine.s.products.find((product) => product.id === "p")!.remoteRefused = "No remote in this fixture";

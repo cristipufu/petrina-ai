@@ -1,16 +1,16 @@
+import { engineCaseFixtures, type EngineCaseOwner } from "../../fixtures/engine-cases.js";
 import { afterAll, describe, expect, it } from "bun:test";
 import { slotWait } from "@petrina/core";
 import { Engine } from "../../engine.js";
 import { executionFor } from "@petrina/orchestrator";
 import { capacityWaiting } from "../../../src/usage.js";
-import { removeDir, tempDir } from "../../fixtures.js";
-const roots: string[] = [];
-afterAll(() => roots.forEach(removeDir));
+
+const engineCases = engineCaseFixtures();
+afterAll(() => engineCases.close());
 describe("choosing who continues after a model fills up", () => {
-  function choiceEngine() {
-    const root = tempDir("petrina-capacity-choice-");
-    roots.push(root);
-    const engine = new Engine(root, { agentCommand: () => ["unused"], toolPath: () => process.execPath });
+  function choiceEngine(caseOwner: EngineCaseOwner) {
+    const root = caseOwner.root;
+    const engine = caseOwner.open(root, { agentCommand: () => ["unused"], toolPath: () => process.execPath });
     engine.setPoolPaused(true);
     engine.s.products.push({ id: "product", name: "Product", repo: "a/b", tone: "blue", delivery: "local", approveDelivery: true });
     engine.s.setup!.checks = ["claude-code", "codex", "grok", "antigravity"].map((id) => ({ id: id as "codex", status: "ready" as const }));
@@ -24,9 +24,9 @@ describe("choosing who continues after a model fills up", () => {
     };
     return { engine, task, profileOf };
   }
-
   it("uses a free tool when the preferred tool has no seat, and keeps a review off the builder's tool", async () => {
-    const { engine, task, profileOf } = choiceEngine();
+  return engineCases.use("petrina-capacity-choice-", async caseOwner => {
+    const { engine, task, profileOf } = choiceEngine(caseOwner);
     const soon = Date.now() + 60_000;
     try {
       engine.s.setup!.checks = [
@@ -54,7 +54,6 @@ describe("choosing who continues after a model fills up", () => {
         { id: "review", kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["sol-xhigh", "opus-high"] },
       ] };
       expect(profileOf("sol-xhigh", "code-reviewer", "0")?.id).toBe("astra-xhigh");
-
       engine.s.pool.toolCaps["codex"] = 3;
       engine.s.setup!.checks = ["claude-code", "codex", "grok", "antigravity"].map((id) => ({ id: id as "codex", status: "ready" as const }));
       task.stageIndex = 1;
@@ -66,11 +65,12 @@ describe("choosing who continues after a model fills up", () => {
       expect(profileOf("opus-xhigh", "security-reviewer")?.toolId).not.toBe("claude-code");
       task.modelCapacity = [{ toolId: "codex", modelId: "gpt-6.1-sol", profileId: "sol-xhigh", until: soon }];
       expect(profileOf("opus-xhigh", "security-reviewer")?.toolId).not.toBe("claude-code");
-    } finally { await engine.shutdown(); }
+    } finally { await caseOwner.stop(engine); }
   });
-
+});
   it("continues a replacement's conversation only when it has a seat and usage, and stays off the builder's tool", async () => {
-    const { engine, task, profileOf } = choiceEngine();
+  return engineCases.use("petrina-capacity-choice-", async caseOwner => {
+    const { engine, task, profileOf } = choiceEngine(caseOwner);
     const later = Date.now() + 5 * 60_000;
     const hours = Date.now() + 5 * 60 * 60_000;
     try {
@@ -107,7 +107,6 @@ describe("choosing who continues after a model fills up", () => {
         expect(profileOf("sol-xhigh", roleId, key)?.toolId).toBe("claude-code");
         engine.s.pool.limited = [];
       }
-
       // A security review stays off the builder's tool even when its own conversation there is owed a continue.
       task.stageIndex = 1;
       task.plan = { rationale: "Build", plannerProfileId: "sol-xhigh", stages: [
@@ -117,11 +116,12 @@ describe("choosing who continues after a model fills up", () => {
       executionFor(task).work.builderSession = { stageId: "build", profileId: "astra-xhigh", toolId: "codex", model: "gpt-6-astra", sessionId: "built" };
       owe("security-reviewer");
       expect(profileOf("sol-xhigh", "security-reviewer")?.toolId).toBe("claude-code");
-    } finally { await engine.shutdown(); }
+    } finally { await caseOwner.stop(engine); }
   });
-
+});
   it("waits for the account, not the full model, when the account is out too", async () => {
-    const { engine, task } = choiceEngine();
+  return engineCases.use("petrina-capacity-choice-", async caseOwner => {
+    const { engine, task } = choiceEngine(caseOwner);
     const later = Date.now() + 5 * 60_000;
     const hours = Date.now() + 5 * 60 * 60_000;
     const capacityWait = (choice: ReturnType<Engine["choose"]>) => choice?.kind === "none" && choice.waiting.startsWith("The selected model is at capacity");
@@ -146,24 +146,23 @@ describe("choosing who continues after a model fills up", () => {
       // Codex's account is out as well: the wait is the account limit's.
       engine.s.pool.limited = [...engine.s.pool.limited, { toolId: "codex", until: hours, reason: "Codex's weekly limit" }];
       expect(usageWait(engine.choose("sol-xhigh", task, "builder"))).toBe(true);
-
       // A voter keeps its seat for a full model, but not for an account limit.
       engine.s.pool.limited = [];
       expect(capacityWait(engine.choose("sol-high", task, "verifier"))).toBe(true);
       engine.s.pool.limited = [{ toolId: "codex", until: hours, reason: "Codex's weekly limit" }];
       expect(capacityWait(engine.choose("sol-high", task, "verifier"))).toBe(false);
-
       // A scheduled run waits for its saved profile's account the same way.
       const sol = engine.s.profiles.find((profile) => profile.id === "sol-xhigh")!;
       (task as { maintenance?: unknown }).maintenance = { role: engine.s.roles.find((role) => role.id === "maintenance-bug-finder"), profile: sol };
       expect(engine.choose("sol-xhigh", task, "maintenance-bug-finder")).toEqual({ kind: "none", waiting: "Waiting for usage on the saved maintenance profile" });
       engine.s.pool.limited = [];
       expect(capacityWait(engine.choose("sol-xhigh", task, "maintenance-bug-finder"))).toBe(true);
-    } finally { await engine.shutdown(); }
+    } finally { await caseOwner.stop(engine); }
   });
-
+});
   it("holds a replacement's own short retry, and not a different step", async () => {
-    const { engine, task, profileOf } = choiceEngine();
+  return engineCases.use("petrina-capacity-choice-", async caseOwner => {
+    const { engine, task, profileOf } = choiceEngine(caseOwner);
     const now = Date.now();
     const soon = now + 5_000;
     const later = now + 5 * 60_000;
@@ -180,16 +179,13 @@ describe("choosing who continues after a model fills up", () => {
       expect(engine.choose("sol-xhigh", task, "builder")).toEqual({ kind: "none", waiting: capacityWaiting(soon, Date.now()) });
       expect(engine.choose("astra-xhigh", task, "builder")).toEqual({ kind: "none", waiting: capacityWaiting(soon, Date.now()) });
       expect(engine.choose("sol-xhigh", task, "code-reviewer")).not.toEqual({ kind: "none", waiting: capacityWaiting(soon, Date.now()) });
-
       task.modelCapacity = [{ toolId: "codex", modelId: "gpt-6-astra", profileId: "astra-xhigh", until: soon }];
       task.capacityPaused = [{ toolId: "codex", modelId: "gpt-6-astra", profileId: "astra-xhigh", roleId: "builder", plannedId: "astra-xhigh" }];
       expect(engine.choose("astra-xhigh", task, "builder")?.kind).toBe("none");
       expect(profileOf("sol-xhigh", "builder")?.id).toBe("sol-xhigh");
-
       task.modelCapacity = [{ toolId: "codex", modelId: "gpt-6.1-sol", profileId: "sol-xhigh", until: later }];
       task.capacityPaused = [{ toolId: "codex", modelId: "gpt-6-astra", profileId: "astra-xhigh", roleId: "builder", plannedId: "sol-xhigh" }];
       expect(profileOf("sol-xhigh", "builder")?.id).toBe("astra-xhigh");
-
       // Both waits have ended, so the pause is gone and the original model is free. The replacement's saved conversation still goes on.
       delete task.modelCapacity;
       delete task.capacityPaused;
@@ -199,7 +195,6 @@ describe("choosing who continues after a model fills up", () => {
       expect(profileOf("sol-xhigh", "code-reviewer")?.id).not.toBe("astra-xhigh");
       delete task.capacityResume;
       expect(profileOf("sol-xhigh", "builder")?.id).toBe("sol-xhigh");
-
       task.capacityResume = [
         { sessionId: "review-astra", profileId: "astra-xhigh", roleId: "code-reviewer", toolId: "codex", model: "gpt-6-astra", member: "review-0" },
         { sessionId: "review-opus", profileId: "opus-high", roleId: "code-reviewer", toolId: "claude-code", model: "opus", member: "review-1" },
@@ -214,6 +209,7 @@ describe("choosing who continues after a model fills up", () => {
       task.capacityRetries = [{ toolId: "codex", modelId: "gpt-6-astra", profileId: "astra-xhigh", roleId: "verifier", member: "vote-sol-high", tried: 1 }];
       expect(profileOf("sol-high", "verifier")?.id).toBe("astra-xhigh");
       expect(profileOf("opus-high", "verifier")?.id).toBe("opus-high");
-    } finally { await engine.shutdown(); }
+    } finally { await caseOwner.stop(engine); }
   });
+});
 });

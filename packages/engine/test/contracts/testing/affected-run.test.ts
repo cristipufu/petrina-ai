@@ -2,9 +2,9 @@ import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { afterAll, afterEach, expect, it } from "bun:test";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
-import { removeDir, runCommand, tempDir, testGitEnv, git } from "../../fixtures.js";
+import { removeDir, runCommand, tempDir, testGitEnv } from "../../fixtures.js";
 import { fixtureFiles } from "@petrina/test-support/fixture-files";
-import { closeControlledRunner, entryFixture, prepareSuite, installRunFailure, isolatedRunnerEnvironment, EXAMPLE, type StandIn, type Suite } from "../../fixtures/required-suite.js";
+import { closeControlledRunner, commitSuiteDirectory, entryFixture, prepareSuite, installRunFailure, isolatedRunnerEnvironment, EXAMPLE, type StandIn, type Suite } from "../../fixtures/required-suite.js";
 import { coordinatorLifetimes } from "../../fixtures/coordinator-lifetime.js";
 
 const roots: string[] = [];
@@ -77,7 +77,7 @@ it("runs a complete short Vitest workspace with its real runner despite collidin
       const path = join(core, file); mkdirSync(dirname(path), { recursive: true });
       writeFileSync(path, "import { expect, it } from 'vitest'; it('runs its actual assertion', () => expect(1).toBe(1));\n");
     }
-    await git(root, "add", "."); await git(root, "commit", "-q", "-m", "Private real Vitest workspace");
+    commitSuiteDirectory(root, "Private real Vitest workspace");
   });
   expect(code).toBe(0);
   expect(selection.requested).toEqual([`packages/core/${EXAMPLE}`]);

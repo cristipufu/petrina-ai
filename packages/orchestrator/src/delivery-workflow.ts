@@ -1,4 +1,4 @@
-import { beginPetrinaStep, endPetrinaStep, companionText, completeAll, landingState, repositoryDelivered, syncRuntimeWait, undecidedAcceptanceGap, petrinaMoment, lastIndexWhere, JOURNEY_WORDS as W } from "@petrina/core";
+import { beginPetrinaStep, endPetrinaStep, companionText, completeAll, landingState, repositoryDelivered, syncRuntimeWait, undecidedAcceptanceGap, petrinaMoment, lastIndexWhere, JOURNEY_WORDS } from "@petrina/core";
 import { clearDeliveryPreparation } from "./delivery-return.js";
 import { addDeliveryCheck } from "./delivery-gate.js";
 import type { RuntimeTask } from "./model.js";
@@ -77,7 +77,7 @@ export class DeliveryWorkflow {
       clearDeliveryPreparation(scope);
       task.stageIndex = check;
       task.sub = 0;
-      petrinaMoment(task, "delivery", { outcome: W.askAgain, reason: W.changedSinceApproval, tone: "back" }, this.host.now());
+      petrinaMoment(task, "delivery", { outcome: JOURNEY_WORDS.askAgain, reason: JOURNEY_WORDS.changedSinceApproval, tone: "back" }, this.host.now());
       this.host.noteScope(scope, "warn", line);
       this.host.changed();
       return "back";
@@ -183,7 +183,7 @@ export class DeliveryWorkflow {
     await this.effects.backToWork(scope);
     repository.shipping = { ...(shipping.start ? { start: shipping.start } : {}), moves: shipping.moves + 1, failures: shipping.failures };
     const place = repository.source?.start.kind === "pull-request" ? `PR #${repository.source.start.number}` : branch;
-    endPetrinaStep(task, { outcome: place === "main" ? W.mainMovedOn : `${place} moved on`, reason: W.readyAgain }, this.host.now());
+    endPetrinaStep(task, { outcome: place === "main" ? JOURNEY_WORDS.mainMovedOn : `${place} moved on`, reason: JOURNEY_WORDS.readyAgain }, this.host.now());
     this.host.noteScope(scope, "warn", `${why}, so Petrina gets it ready again (${shipping.moves + 1} of ${MAX_MOVES})`);
     this.host.checkpoint();
     return "again";

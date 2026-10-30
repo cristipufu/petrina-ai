@@ -1,8 +1,8 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { slotUses } from "@petrina/core";
-import { git } from "../../fixtures.js";
+import * as gitOps from "@petrina/repositories/git";
 import { independentReviewFixtures } from "../../fixtures/independence.js";
 
 const { fixture, close } = independentReviewFixtures();
@@ -60,12 +60,11 @@ it("reviews a real conflict port away from its latest builder, even when neither
       await f.advance(() => f.fakes.received("builder").length === 1, (role) => role !== "builder");
       writeFileSync(join(f.task().worktree!, "notes.txt"), "A first draft\n");
       await f.advance(f.delivery);
-      expect(await git(f.task().worktree!, "show", "HEAD:notes.txt")).toBe("A first draft");
+      expect(await gitOps.isClean(f.task().worktree!) && readFileSync(join(f.task().worktree!, "notes.txt"), "utf8").trim()).toBe("A first draft");
       // The original build and review finished. A conflicting change lands before delivery.
       expect(f.task().builderSession?.toolId).toBe("claude-code");
       writeFileSync(join(f.repo, "greeting.txt"), "Hi from main\n");
-      await git(f.repo, "add", "greeting.txt");
-      await git(f.repo, "commit", "-q", "-m", "A greeting on main");
+      await gitOps.commitChanges(f.repo, "A greeting on main");
       f.fakes.scenario({ builder: "plain", controlled: true, limited: [{ model: "opus", role: "builder", spendCap: true }] });
       f.engine.approve(f.engine.getState().inbox.find((item) => item.kind === "delivery")!.id);
       await f.advance(() => f.task().portReview !== undefined && f.fakes.received("code reviewer").some((entry) => entry.text.includes("Review only the port")), (role) => role !== "code reviewer");

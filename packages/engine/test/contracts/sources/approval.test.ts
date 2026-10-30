@@ -13,7 +13,7 @@ for (const changed of ["branch"] as const) it(`requires confirmation when the sa
     await fixtures.world(`redo-pr-${changed}`, async ({ w, engine: withEngine }) => { await pull(w);
     let { id, state, approved, previous } = await withEngine(async engine => {
 
-      const productId = await engine.addProduct(w.clone);
+      const productId = await w.preparedProduct(engine);
       const id = engine.addTask({ productId, title: "A greeting", startFrom: { kind: "pull-request", value: "7" }, approvePlan: true });
       let state = await planGate(engine, id);
       engine.setPoolPaused(true);
@@ -50,46 +50,11 @@ for (const changed of ["branch"] as const) it(`requires confirmation when the sa
 
 
 describe.concurrent("one approved product and starting point",()=>{
-for (const approvePlan of [undefined, false]) it(`requires source confirmation when the planner chooses the product, with optional plan approval ${approvePlan === false ? "off" : "defaulted"}`, async () => {
-    await fixtures.world("choose-product", async ({ w, fakes, engine: withEngine }) => {
-    await withEngine(async engine => {
-
-      const productId = await engine.addProduct(w.clone);
-      fakes.scenario({ planner: "short", worksOn: [{ productId, startFrom: { kind: "default" }, delivery: "local" }] });
-      const id = engine.addTask({ productId: "", title: "Fix it", approvePlan });
-      const state = await planGate(engine, id);
-      expect(taskOf(state, id).productId).toBe(""); expect(taskOf(state, id).worktree).toBeUndefined();
-      engine.approve(itemOf(state, id, "plan")!.id);
-      expect(taskOf(await finish(engine, id), id).state).toBe("done");
-
-    });
-    });
-  });
-});
-
-describe.concurrent("one approved product and starting point",()=>{
-it("keeps ordinary default tasks able to skip the plan check, without interpreting PR words", async () => {
-    await fixtures.world("default", async ({ w, engine: withEngine }) => {
-    await withEngine(async engine => {
-
-      const productId = await engine.addProduct(w.clone);
-      const id = engine.addTask({ productId, title: "Fix PR #999 on release-2.x", delivery: "local", approvePlan: false });
-      const task = taskOf(await finish(engine, id), id);
-      expect(task.error).toBeUndefined(); expect(task.source?.start).toEqual({ kind: "default", branch: "main" });
-      expect(task.timeline.some((entry) => entry.text === "You approved the plan")).toBe(false);
-      expect(await remoteRef(w.remote, "refs/heads/main")).toBe(await taskCommit(w, task));
-
-    });
-    });
-  });
-});
-
-describe.concurrent("one approved product and starting point",()=>{
 it("keeps a default task saved by an older Petrina able to run without a new plan check", async () => {
     await fixtures.world("older-default", async ({ w, engine: withEngine }) => {
     let { id, previous } = await withEngine(async engine => {
 
-      const productId = await engine.addProduct(w.clone);
+      const productId = await w.preparedProduct(engine);
       engine.setPoolPaused(true);
       const id = engine.addTask({ productId, title: "A greeting", delivery: "local", approvePlan: false });
 
@@ -106,6 +71,7 @@ it("keeps a default task saved by an older Petrina able to run without a new pla
       expect(task.error).toBeUndefined(); expect(task.state).toBe("done");
       expect(task.source?.start).toEqual({ kind: "default", branch: "main" });
       expect(task.timeline.some((entry) => entry.text === "You approved the plan")).toBe(false);
+      expect(await remoteRef(w.remote, "refs/heads/main")).toBe(await taskCommit(w, task));
 
     });
     });

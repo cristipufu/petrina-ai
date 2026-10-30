@@ -5,7 +5,7 @@ export { parseDescendants, parseChildState, parseProcessState, type ChildState, 
 export type { ProcessListRead } from "./process-observations.js";
 import { execFile } from "node:child_process";
 
-export const CLEANUP_INCOMPLETE = "Petrina could not confirm every child process stopped. Some may still be running.";
+export { CLEANUP_INCOMPLETE } from "./process-snapshots.js";
 
 /** Descendants of these exact processes, captured before stopping their parents loses the relationship. */
 export function descendants(roots: readonly number[], timeout = 4_000): Promise<number[] | undefined> {

@@ -1,5 +1,5 @@
 // Usage belongs to a recorded step and an agent start, never a stage/round or native conversation.
-import { figures, type Detail } from "./analytics.js";
+import { figures, type Detail } from "./analytics-figures.js";
 import type { Id, JourneyStep, Task } from "./model.js";
 import { listWords, type Figure } from "./numbers.js";
 import { tallyOf, turnModelLabel, lineModelLabel, type TokenLine, type WorkLogReader, type WorkTurn } from "./worklog.js";

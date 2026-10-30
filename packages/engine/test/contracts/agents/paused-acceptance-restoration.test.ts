@@ -1,7 +1,8 @@
 import { afterAll, expect, it } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { Fakes, git, tempDir, waitFor } from "../../fixtures.js";
+import * as gitOps from "@petrina/repositories/git";
+import { Fakes, tempDir, waitFor } from "../../fixtures.js";
 import { versionsOf } from "../../../src/repositories.js";
 import { proofRequestFixtures } from "../../fixtures/proof-requests.js";
 
@@ -14,7 +15,7 @@ it("starts a genuinely fresh acceptance run after a pause, keeping the paused at
   try {
     const request = await f.request(); const worktree = f.scope.work.worktree!;
     writeFileSync(join(worktree, "tester-edit.txt"), "Saved before acceptance\n");
-    await git(worktree, "add", "."); await git(worktree, "commit", "-q", "-m", "Save a project file");
+    await gitOps.commitChanges(worktree, "Save a project file");
     f.task.retest = true; f.task.stageIndex = 1;
     fakes.scenario({ tester: "work", testerFiles: [{ dir: worktree, file: "tester-edit.txt", text: "Edited before the pause\n" }], testerProofAnswers: passes([request.id]) });
     const driving = f.drive();

@@ -1,22 +1,41 @@
+import { afterAll, expect, it, spyOn } from "bun:test";
+import { engineCaseFixtures, type EngineCaseOwner } from "../../fixtures/engine-cases.js";
+import { installPreparedProduct, privateCloneProduct } from "../../fixtures/prepared-product.js";
 import { nonpassingChecks } from "../../fixtures/check-verification.js";
-import { expect, it, spyOn } from "bun:test";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beginAgentStep, endAgentStep, type ProductCheck } from "@petrina/core";
+import * as gitOps from "@petrina/repositories/git";
 import { CheckPreparationChanged } from "../../../src/product-checks.js";
 import { checksFingerprint, commandInputText } from "../../../src/checks.js";
 import { executionFor } from "@petrina/orchestrator";
-import { Engine } from "../../engine.js";
-import { git, makeProduct, removeDir, tempDir, waitFor } from "../../fixtures.js";
 
+import { createProductRepository, waitFor } from "../../fixtures.js";
+import { installSharedWorkflowFastPaths, looseMergeBase, materializePreparedWorktree, readWorktreeCommit } from "../../fixtures/shared-preparation.js";
+import { privateAgentToolProbe } from "../../scripted-probes.js";
+const engineCases = engineCaseFixtures();
+afterAll(() => engineCases.close());
 /** Exercise only check admission and its discovery side step, with no unrelated workflow agents. */
-async function fixture(conflictingTask = false) {
-  const root = tempDir("petrina-discovery-admission-");
-  const engine = new Engine(join(root, "data"), { agentCommand: () => { throw new Error("Only the discovery stand-in should run"); }, terminals: () => [] });
+async function fixture(caseOwner: EngineCaseOwner, conflictingTask = false) {
+  const root = caseOwner.root;
+  const log = join(root, "invocations"), script = join(root, "check.ts");
+  const engine = caseOwner.open(join(root, "data"), {
+    agentCommand: () => { throw new Error("Only the discovery stand-in should run"); },
+    toolProbe: privateAgentToolProbe(),
+    terminals: () => [],
+    runCheckCommand: (req) => {
+      if (req.argv[0] !== process.execPath || req.argv[1] !== script) return undefined;
+      appendFileSync(log, "ran\n");
+      return { code: 0 };
+    },
+  });
+  installSharedWorkflowFastPaths(engine, { fastCheckCapture: true });
+  return caseOwner.run(engine, async () => {
   engine.schedule = () => engine.checkQueue.pump();
-  await engine.waitUntilReady();
-  const clone = await makeProduct(root), productId = await engine.addProduct(clone);
-  const initial = await git(clone, "rev-parse", "HEAD"), copy = join(root, "work");
+  await engine.waitUntilReady(); caseOwner.check();
+  const { path: clone, initialSha: initial } = await createProductRepository(root, { origin: "none" }); caseOwner.check();
+  const productId = installPreparedProduct(engine, privateCloneProduct(clone)); caseOwner.check();
+  const copy = join(root, "work");
   const task = engine.task(engine.addTask({ productId, title: "Recheck discovered commands", delivery: "local", backlog: true }))!;
   task.state = "running"; task.startedAt = 1; task.stageIndex = 1;
   task.plan = { rationale: "Check admission only", plannerProfileId: "sol-high", stages: [
@@ -24,19 +43,19 @@ async function fixture(conflictingTask = false) {
     { id: "review", title: "Review", kind: "review-chain", roleId: "code-reviewer", profileIds: ["sol-high"], maxRounds: 2 },
   ] };
   const scope = executionFor(task);
-  await git(clone, "worktree", "add", "-b", "task-discovery", copy, initial);
   Object.assign(scope.work, { worktree: copy, branch: "task-discovery", base: "main", baseSha: initial });
-  writeFileSync(join(copy, conflictingTask ? "README.md" : "task-change.txt"), "The task change\n");
-  await git(copy, "add", "."); await git(copy, "commit", "-qm", "Make the task change");
-  const log = join(root, "invocations"), script = join(root, "check.ts");
+  await materializePreparedWorktree(engine, scope, clone, "main", initial, conflictingTask ? "README.md" : "task-change.txt", "The task change\n", "Make the task change");
   writeFileSync(script, `import { appendFileSync } from "node:fs"; appendFileSync(${JSON.stringify(log)}, "ran\\n");`);
   const command: ProductCheck = { name: "Tests", argv: [process.execPath, script] };
   engine.setProductChecks(productId, [{ name: command.name, command: commandInputText(command.argv) }]);
   const product = engine.productOf(scope)!;
   product.checksBy = "finder"; product.checksFingerprint = checksFingerprint(copy);
   const checks = engine["checks"], entered = Promise.withResolvers<void>(), releaseDiscovery = Promise.withResolvers<void>();
+  caseOwner.onStop(() => releaseDiscovery.resolve());
   let oldStep: NonNullable<typeof task.journey>[number] | undefined, oldRecord: string | undefined;
-  const discovery = spyOn(checks, "ensureChecks").mockImplementation(async () => {
+  const discovery = spyOn(checks, "ensureChecks");
+    caseOwner.onStop(() => discovery.mockRestore());
+    discovery.mockImplementation(async () => {
     // Use the real journey transitions: discovery closes the pending checks entry before awaiting.
     beginAgentStep(task, "check-finder", "sol-high", Date.now(), engine.s.roles, undefined, scope.work);
     oldStep = task.journey!.find(step => step.work === "checks")!;
@@ -50,26 +69,30 @@ async function fixture(conflictingTask = false) {
   });
   const land = async (conflict = false) => {
     writeFileSync(join(clone, conflict ? "README.md" : "package.json"), conflict ? "Main's different change\n" : JSON.stringify({ name: "changed-check-inputs" }));
-    await git(clone, "add", "."); await git(clone, "commit", "-qm", conflict ? "Conflict with the task" : "Change check discovery inputs");
-    return git(clone, "rev-parse", "HEAD");
+    await gitOps.commitChanges(clone, conflict ? "Conflict with the task" : "Change check discovery inputs");
+    return readWorktreeCommit(clone)!.commit;
   };
   const invocations = () => existsSync(log) ? readFileSync(log, "utf8").match(/ran/g)?.length ?? 0 : 0;
   const unchangedHistory = () => {
     if (oldRecord === undefined || !oldStep) throw new Error("Discovery must first close and capture the original checks step");
     expect(JSON.stringify(oldStep)).toBe(oldRecord);
   };
-  const cleanup = async () => { releaseDiscovery.resolve(); discovery.mockRestore(); await engine.shutdown(); removeDir(root); };
+  const cleanup = async () => { releaseDiscovery.resolve(); discovery.mockRestore(); await caseOwner.stop(engine);  };
   return { root, engine, clone, copy, task, scope, checks, command, discovery, entered, releaseDiscovery, land, invocations, unchangedHistory, cleanup };
-}
 
+  });
+}
 for (const waitsAgain of [false, true]) it(`recaptures discovered check inputs ${waitsAgain ? "with one more source update after another queue wait" : "without another source update when the line is free"}`, async () => {
-  const f = await fixture();
+  return engineCases.use("petrina-discovery-admission-", async caseOwner => {
+  const f = await fixture(caseOwner);
   const controller = new AbortController(), block = f.engine.checkQueue.hold();
   let place: (() => void) | undefined, follower: Promise<() => void> | undefined;
+  caseOwner.onStop(() => { controller.abort(); block(); place?.(); });
   let updates = 0;
   const prepare = async () => { updates++; return await f.engine["updates"].upToDate(f.scope, controller.signal) !== "conflict"; };
   const checking = f.checks.runProductChecks(f.scope, [f.command], controller.signal, undefined, undefined, prepare);
   try {
+    await caseOwner.run(f.engine, async () => {
     await waitFor(() => f.engine.checkQueue.waiting === 1, "check run to join the line");
     const latest = await f.land();
     block(); await f.entered.promise;
@@ -79,23 +102,28 @@ for (const waitsAgain of [false, true]) it(`recaptures discovered check inputs $
     if (waitsAgain) { await waitFor(() => f.engine.checkQueue.waiting === 1, "discovered run to rejoin the occupied line"); place!(); }
     expect(nonpassingChecks(await checking!)).toBe(0);
     expect(updates).toBe(waitsAgain ? 2 : 1); expect(f.discovery).toHaveBeenCalledTimes(1); expect(f.invocations()).toBe(1);
-    const sha = await git(f.copy, "rev-parse", "HEAD"), tree = await git(f.copy, "rev-parse", "HEAD^{tree}");
-    expect(await git(f.copy, "merge-base", latest, sha)).toBe(latest);
+    const copyVersion = readWorktreeCommit(f.copy)!;
+    const sha = copyVersion.commit, tree = copyVersion.tree;
+    expect(looseMergeBase(join(f.clone, ".git"), latest, sha)).toBe(latest);
     expect(f.scope.work.checks).toMatchObject({ sha, tree, current: true });
     expect(f.scope.work.checks!.results[0]!.name).toBe("Rediscovered tests");
     f.unchangedHistory();
     expect(f.engine.checkQueue.running).toBe(0); expect(f.engine.checkQueue.waiting).toBe(0);
-  } finally {
+
+    });
+} finally {
     controller.abort(); block(); place?.(); f.releaseDiscovery.resolve();
     if (follower) await follower.then(release => release(), () => {});
     await checking.catch(() => {}); await f.cleanup();
   }
+  });
 });
-
 for (const reason of ["conflict", "approval"] as const) it(`keeps the closed pre-discovery record unchanged when later preparation stops for ${reason}`, async () => {
-  const f = await fixture(reason === "conflict");
+  return engineCases.use("petrina-discovery-admission-", async caseOwner => {
+  const f = await fixture(caseOwner, reason === "conflict");
   const controller = new AbortController(), block = f.engine.checkQueue.hold();
   let place: (() => void) | undefined, follower: Promise<() => void> | undefined;
+  caseOwner.onStop(() => { controller.abort(); block(); place?.(); });
   let updates = 0;
   const prepare = async () => {
     updates++;
@@ -104,6 +132,7 @@ for (const reason of ["conflict", "approval"] as const) it(`keeps the closed pre
   };
   const checking = f.checks.runProductChecks(f.scope, [f.command], controller.signal, undefined, undefined, prepare).then(value => ({ value, error: undefined }), error => ({ value: undefined, error }));
   try {
+    await caseOwner.run(f.engine, async () => {
     await waitFor(() => f.engine.checkQueue.waiting === 1, "check run to join the line");
     await f.land(); block(); await f.entered.promise;
     follower = f.engine.checkQueue.acquire(controller.signal); place = await follower;
@@ -119,9 +148,12 @@ for (const reason of ["conflict", "approval"] as const) it(`keeps the closed pre
     expect(steps[1]!.productChecks![0]!.detail).toContain(reason === "conflict" ? "conflict" : "approval");
     expect(f.scope.work.checkReturns).toBeUndefined();
     expect(f.engine.checkQueue.running).toBe(0); expect(f.engine.checkQueue.waiting).toBe(0);
-  } finally {
+
+    });
+} finally {
     controller.abort(); block(); place?.(); f.releaseDiscovery.resolve();
     if (follower) await follower.then(release => release(), () => {});
     await checking; await f.cleanup();
   }
+  });
 });

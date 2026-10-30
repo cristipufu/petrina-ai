@@ -8,7 +8,7 @@ import { existsSync } from "node:fs";
 import { join, normalize, resolve, sep } from "node:path";
 import type { ServerWebSocket } from "bun";
 import { z } from "zod";
-import { MAX_READING_OFFSET, READING_PAGE_SIZE, allowanceKey, HISTORY_STATUSES, type HistoryStatus, ROLE_ICON_CHOICES, ROLE_LIMITS, TONE_CHOICES, type RoleIcon, type Tone, COMMAND_NAMES, type CommandName, type Commands } from "@petrina/core";
+import { MAX_READING_OFFSET, READING_PAGE_SIZE, allowanceKey, HISTORY_STATUSES, type HistoryStatus, ROLE_ICON_CHOICES, ROLE_LIMITS, TONE_CHOICES, COMMAND_NAMES, type CommandName, type Commands } from "@petrina/core";
 import type { Engine } from "./engine.js";
 import { Coordination, serial, type LifecycleControl } from "./coordination.js";
 
@@ -42,8 +42,8 @@ const NewTask = z.object({
 const RoleDraft = z.object({
   category: z.enum(["workflow", "maintenance"]).optional(),
   name: z.string().max(ROLE_LIMITS.name * 10),
-  icon: z.enum(ROLE_ICON_CHOICES as unknown as [RoleIcon, ...RoleIcon[]]),
-  tone: z.enum(TONE_CHOICES as unknown as [Tone, ...Tone[]]),
+  icon: z.enum(ROLE_ICON_CHOICES),
+  tone: z.enum(TONE_CHOICES),
   purpose: z.string().max(ROLE_LIMITS.purpose * 10),
   instructions: z.string().max(ROLE_LIMITS.instructions * 10),
   canEdit: z.boolean(),

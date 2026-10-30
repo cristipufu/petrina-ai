@@ -11,6 +11,7 @@ import type { ActiveAgent, State, Task, TaskUsage } from "@petrina/core";
 import { claudeSandbox } from "@petrina/agent-runtime/sandbox";
 import { ADAPTERS } from "@petrina/agent-runtime/tools";
 import type { Scenario } from "../../fake-agent.js";
+import { privateAgentToolProbe } from "../../scripted-probes.js";
 import { EngineProcess, Fakes, makeProduct, tempDir, traceTaskWait, waitFor, type Open } from "../../support.js";
 
 const cases = engineProcessCases();
@@ -103,6 +104,7 @@ describe("Claude Code's own sandbox", () => {
     fakes.scenario({ planner: "short", controlled: true });
     const engine = owners.open(join(root, "home"), {
       agentCommand: (profile) => [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), fakes.dir, `--record-tool=${profile.toolId}`],
+      toolProbe: privateAgentToolProbe(),
     });
     const result = await setupWithCleanup(() => owners.prepare(async () => {
     try {
@@ -110,6 +112,7 @@ describe("Claude Code's own sandbox", () => {
       engine.s.setup!.checks = [
         { id: "claude-code", status: "unchecked", checking: true },
         { id: "codex", status: "ready" },
+        { id: "git", status: "ready" },
       ];
       expect(engine.onUsable("opus-high")).toBe("sol-high");
       expect(engine.s.pool.limited ?? []).toEqual([]);

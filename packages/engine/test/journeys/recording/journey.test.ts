@@ -1,24 +1,43 @@
+import { installPreparedProduct, privateCloneProduct } from "../../fixtures/prepared-product.js";
+import { prepareRecordingStage } from "../../fixtures/recording-stage.js";
+import { installSharedWorkflowFastPaths } from "../../fixtures/shared-preparation.js";
+import { fakeAgentSessions } from "../../fixtures/fake-agent-sessions.js";
+import { privateAgentToolProbe } from "../../scripted-probes.js";
+import { engineCaseFixtures, type EngineCaseOwner } from "../../fixtures/engine-cases.js";
 import { afterAll, describe, expect, it } from "bun:test";
 import { join } from "node:path";
 import { journeyProblems, journeyView, type JourneyView, type State, type Task } from "@petrina/core";
 import { Engine } from "../../engine.js";
-import { Fakes, makeProduct, removeDir, tempDir, waitFor } from "../../fixtures.js";
+import { Fakes, createProductRepository, makeProduct, waitFor } from "../../fixtures.js";
 import { Coordination } from "../../../src/coordination.js";
+const engineCases = engineCaseFixtures();
+afterAll(() => engineCases.close());
+
 
 const fake = join(import.meta.dir, "../..", "fake-agent.ts");
-const roots: string[] = [];
-afterAll(() => roots.forEach(removeDir));
+
+const fastJourneyEngine = (engine: Engine) =>
+  installSharedWorkflowFastPaths(engine, {
+    skipUpToDate: true,
+    skipPrepareChecks: true,
+    skipReviewCopies: true,
+    skipReviewInputDiffs: true,
+    fastCheckCapture: true,
+    fastCleanup: true,
+  });
 
 /** An engine on fake agents, with a product on a GitHub-like origin, delivering locally. */
-async function setup(scenario: Parameters<Fakes["scenario"]>[0] = {}, approveDelivery = true) {
-  const root = tempDir("petrina-journey-");
-  roots.push(root);
+async function setup(caseOwner: EngineCaseOwner, scenario: Parameters<Fakes["scenario"]>[0] = {}, approveDelivery = true) {
+  const root = caseOwner.root;
+
   const fakes = new Fakes(join(root, "fake"));
   fakes.scenario(scenario);
-  const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, fake, fakes.dir] });
-  const productId = await engine.addProduct(await makeProduct(root));
+  const engine = fastJourneyEngine(caseOwner.open(join(root, "data"), { agentCommand: () => [process.execPath, fake, fakes.dir], toolProbe: privateAgentToolProbe(), startAgentSession: fakeAgentSessions(fakes) }));
+  const repository = await createProductRepository(root, { origin: "none" }), repo = repository.path; caseOwner.check();
+  await engine.waitUntilReady(); caseOwner.check();
+  const productId = installPreparedProduct(engine, privateCloneProduct(repo));
   engine.setProductDelivery(productId, "local", approveDelivery);
-  return { engine, productId, fakes };
+  return { engine, productId, fakes, repository };
 }
 
 const taskOf = (engine: Engine, id: string): Task => engine.getState().tasks.find((task) => task.id === id)!;
@@ -47,15 +66,17 @@ async function until(engine: Engine, done: (state: State) => boolean, respond: (
 
 describe("the engine records each task's journey", () => {
   it("keeps separate input records for parallel reviewer seats on the same available profile", async () => {
-    const { engine, productId, fakes } = await setup();
+  return engineCases.use("petrina-journey-", async caseOwner => {
+    const { engine, productId, fakes, repository } = await setup(caseOwner);
     try {
       engine.setPoolPaused(true);
       await waitFor(() => !engine.s.setup?.checks.some(check => check.checking), "initial tool checks");
       engine.s.setup!.checks = [{ id: "codex", status: "ready" }, { id: "claude-code", status: "logged-out" }, { id: "grok", status: "logged-out" }, { id: "antigravity", status: "logged-out" }];
       engine.s.tools = engine.s.tools.map(tool => ({ ...tool, status: tool.id === "codex" ? "ready" : "logged-out" }));
-      const id = engine.addTask({ productId, title: "Check the single-tool journey", description: "Keep reviewer seats separate." });
-      engine.setPoolPaused(false);
-      await until(engine, state => ["done", "failed"].includes(state.tasks.find(task => task.id === id)!.state));
+      const id = engine.addTask({ productId, title: "Check the single-tool journey", description: "Keep reviewer seats separate.", backlog: true });
+      await prepareRecordingStage(caseOwner, engine, id, "review", repository); caseOwner.check();
+      engine.queueTask(id); engine.setPoolPaused(false);
+      await until(engine, state => state.inbox.some(item => item.taskId === id && item.kind === "delivery"));
       const task = taskOf(engine, id);
       expect(task.error).toBeUndefined();
       const inputs = task.journey!.find(step => step.roleId === "code-reviewer")!.agentInputs!.filter(input => input.roleId === "code-reviewer");
@@ -69,12 +90,17 @@ describe("the engine records each task's journey", () => {
       const spoken = engine.task(id)!.session.filter(line => line.step === step.id && line.from === "agent" && line.roleId === "code-reviewer");
       expect(new Set(spoken.map(line => step.agentInputs![line.inputIndex!]!.reviewerKey))).toEqual(new Set(["0", "1"]));
       expect(new Set(spoken.map(line => line.inputIndex))).toEqual(new Set(step.agentResults!.filter(result => result.roleId === "code-reviewer").map(result => result.inputIndex)));
-    } finally { await engine.shutdown(); }
+    } finally { await caseOwner.stop(engine); }
+
   });
+});
   it("lists one current message for an agent that streamed words and then asked a question", async () => {
-    const { engine, productId } = await setup();
+  return engineCases.use("petrina-journey-", async caseOwner => {
+    const { engine, productId, repository } = await setup(caseOwner);
     try {
-      const id = engine.addTask({ productId, title: "Ask before designing", description: "One agent, one current message." });
+      const id = engine.addTask({ productId, title: "Ask before designing", description: "One agent, one current message.", backlog: true });
+      await prepareRecordingStage(caseOwner, engine, id, "architect", repository); caseOwner.check();
+      engine.queueTask(id);
       const asked = (state: State) => state.inbox.some(item => item.taskId === id && item.kind === "question");
       await until(engine, asked, (_, kind) => kind === "question", "the architect's question");
       const task = engine.task(id)!, step = task.journey!.at(-1)!;
@@ -84,17 +110,21 @@ describe("the engine records each task's journey", () => {
       expect(new Set(spoken.map(line => line.inputIndex))).toEqual(new Set([step.agentInputs!.length - 1]));
       const read = await new Coordination(engine).call("task.conversation", { taskId: id, nodeId: step.id });
       expect(read.activeMessages).toEqual([expect.objectContaining({ id: spoken.at(-1)!.id, roleId: "architect" })]);
-    } finally { await engine.shutdown(); }
+    } finally { await caseOwner.stop(engine); }
+
   });
+});
   it("keeps the still-asking reviewer discoverable when its same-profile peer answers and finishes", async () => {
-    const { engine, productId } = await setup({ reviewer: "question", architect: "plain" });
+  return engineCases.use("petrina-journey-", async caseOwner => {
+    const { engine, productId, repository } = await setup(caseOwner, { reviewer: "question", architect: "plain" });
     try {
       engine.setPoolPaused(true);
       await waitFor(() => !engine.s.setup?.checks.some(check => check.checking), "initial tool checks");
       engine.s.setup!.checks = [{ id: "claude-code", status: "ready" }, { id: "codex", status: "logged-out" }, { id: "grok", status: "logged-out" }, { id: "antigravity", status: "logged-out" }];
       engine.s.tools = engine.s.tools.map(tool => ({ ...tool, status: tool.id === "claude-code" ? "ready" : "logged-out" }));
-      const id = engine.addTask({ productId, title: "Two reviewers ask", description: "Keep each reviewer's questions its own." });
-      engine.setPoolPaused(false);
+      const id = engine.addTask({ productId, title: "Two reviewers ask", description: "Keep each reviewer's questions its own.", backlog: true });
+      await prepareRecordingStage(caseOwner, engine, id, "review", repository); caseOwner.check();
+      engine.queueTask(id); engine.setPoolPaused(false);
       const questions = () => engine.s.inbox.filter(item => item.taskId === id && item.kind === "question" && item.roleId === "code-reviewer");
       await until(engine, () => questions().length === 2, (current, kind, itemId) => kind === "question" && current.s.inbox.find(item => item.id === itemId)?.roleId === "code-reviewer", "both reviewers' questions");
       const task = engine.task(id)!, step = task.journey!.at(-1)!;
@@ -119,10 +149,13 @@ describe("the engine records each task's journey", () => {
       expect((after.activeMessages as { id: string }[]).map(message => message.id)).toEqual([stillAsking.id]);
       const statuses = Object.fromEntries(((await read()).items as { id: string; mayChange: boolean | null }[]).map(item => [item.id, item.mayChange]));
       for (const line of lines) expect(statuses[line.id]).toBe(line.inputIndex === waiting);
-    } finally { await engine.shutdown(); }
+    } finally { await caseOwner.stop(engine); }
+
   });
+});
   it("names the planner that can run as tool readiness changes, including after a restart", async () => {
-    const { engine, productId } = await setup({ controlled: true });
+  return engineCases.use("petrina-journey-", async caseOwner => {
+    const { engine, productId } = await setup(caseOwner, { controlled: true });
     const data = engine.dataDir;
     let reopened: Engine | undefined;
     try {
@@ -131,9 +164,9 @@ describe("the engine records each task's journey", () => {
       engine.s.setup!.checks = [{ id: "claude-code", status: "logged-out" }, { id: "codex", status: "ready" }];
       engine.commit();
       expect(viewOf(engine, id).nodes[0]).toMatchObject({ name: "Planner", state: "next", profileId: "sol-high" });
-      await engine.shutdown();
+      await caseOwner.stop(engine);
 
-      reopened = new Engine(data, { agentCommand: () => [process.execPath, fake] });
+      reopened = caseOwner.open(data, { agentCommand: () => [process.execPath, fake], toolProbe: privateAgentToolProbe() });
       expect(viewOf(reopened, id).nodes[0]).toMatchObject({ profileId: "sol-high" });
       reopened.s.setup!.checks = [{ id: "claude-code", status: "ready" }, { id: "codex", status: "ready" }];
       reopened.commitNow();
@@ -141,12 +174,15 @@ describe("the engine records each task's journey", () => {
       expect(taskOf(reopened, id).journey).toBeUndefined();
     } finally {
       await reopened?.shutdown();
-      await engine.shutdown();
+      await caseOwner.stop(engine);
     }
+
   });
+});
 
   it.each(["engine", "window"] as const)("one step per agent and check, with outcomes, reasons, questions and tagged lines (%s answer)", async (from) => {
-    const { engine, productId, fakes } = await setup();
+  return engineCases.use("petrina-journey-", async caseOwner => {
+    const { engine, productId, fakes } = await setup(caseOwner);
     const id = engine.addTask({ productId, title: "Add a greeting", description: "A friendly greeting file." });
     await until(engine, (state) => ["done", "failed"].includes(state.tasks.find((task) => task.id === id)!.state), (squad, kind, itemId) => {
       if (kind !== "question") return false;
@@ -201,11 +237,14 @@ describe("the engine records each task's journey", () => {
     expect(architectInput.updates?.some(update => update.reason === "answer" && update.text.includes("The coordinator answered:"))).toBe(true);
     expect(task.timeline.find((entry) => entry.text.startsWith("You allowed"))?.step).toBe(builder.id);
     expect(journeyProblems(task)).toEqual([]);
-    await engine.shutdown();
+    await caseOwner.stop(engine);
+
   });
+});
 
   it("records parallel review, fresh votes and a fix round as distinct steps", async () => {
-    const { engine, productId } = await setup({ reviewer: "important", fixes: "change" });
+  return engineCases.use("petrina-journey-", async caseOwner => {
+    const { engine, productId } = await setup(caseOwner, { reviewer: "important", fixes: "change" });
     try {
       const id = engine.addTask({ productId, title: "Fix the greeting", description: "A greeting file." });
       await until(engine, (state) => ["done", "failed"].includes(state.tasks.find((task) => task.id === id)!.state));
@@ -227,12 +266,15 @@ describe("the engine records each task's journey", () => {
       expect(view.nodes.at(-1)).toMatchObject({ kind: "petrina", name: "Publish delivery", state: "done" });
       expect(journeyProblems(task)).toEqual([]);
     } finally {
-      await engine.shutdown();
+      await caseOwner.stop(engine);
     }
+
   });
+});
 
   it("design rounds, the call on a disagreement, and the architect following it", async () => {
-    const { engine, productId } = await setup();
+  return engineCases.use("petrina-journey-", async caseOwner => {
+    const { engine, productId } = await setup(caseOwner);
     const id = engine.addTask({ productId, title: "Pick a greeting", description: "A greeting file. [disagree]" });
     const item = (kind: string) => engine.getState().inbox.find((entry) => entry.taskId === id && entry.kind === kind);
     await until(engine, () => !!item("disagreement"), (_engine, kind) => kind === "disagreement");
@@ -260,11 +302,14 @@ describe("the engine records each task's journey", () => {
     engine.cancel(id);
     expect(viewOf(engine, id)).toMatchObject({ end: { text: "Cancelled", state: "cancelled" } });
     expect(viewOf(engine, id).nodes.at(-1)).toMatchObject({ name: "Your design check", state: "cancelled", outcome: "Cancelled" });
-    await engine.shutdown();
+    await caseOwner.stop(engine);
+
   });
+});
 
   it("a stuck step, a Stuck step for you, and a new box when you try again", async () => {
-    const { engine, productId, fakes } = await setup({ planner: "short", builder: "fail-once" }, false);
+  return engineCases.use("petrina-journey-", async caseOwner => {
+    const { engine, productId, fakes } = await setup(caseOwner, { planner: "short", builder: "fail-once" }, false);
     const id = engine.addTask({ productId, title: "Add a greeting" });
     await until(engine, (state) => state.tasks.find((task) => task.id === id)!.state === "failed", () => true);
     let view = viewOf(engine, id);
@@ -279,11 +324,14 @@ describe("the engine records each task's journey", () => {
     expect(view.nodes.map((node) => `${node.name}: ${node.state}`)).toEqual(["Planner: done", "Builder: failed", "Stuck: done", "Builder (again): done", "Check finder: done", "Automated checks: done", "Code reviewer: done", "Publish delivery: done"]);
     expect(view.nodes[2]).toMatchObject({ outcome: "Tried again", reason: "you asked to try again" });
     expect(journeyProblems(taskOf(engine, id))).toEqual([]);
-    await engine.shutdown();
+    await caseOwner.stop(engine);
+
   });
+});
 
   it("cancelling stops the step under way", async () => {
-    const { engine, productId } = await setup({ controlled: true });
+  return engineCases.use("petrina-journey-", async caseOwner => {
+    const { engine, productId } = await setup(caseOwner, { controlled: true });
     const id = engine.addTask({ productId, title: "Hold on" });
     await waitFor(() => taskOf(engine, id).journey?.at(-1)?.roleId === "planner", "the planner to start");
     engine.cancel(id);
@@ -292,17 +340,22 @@ describe("the engine records each task's journey", () => {
     expect(view.nodes[0]!.outcome).toBe("Stopped: you cancelled");
     expect(view.rest).toBeUndefined();
     expect(journeyProblems(taskOf(engine, id))).toEqual([]);
-    await engine.shutdown();
+    await caseOwner.stop(engine);
+
   });
+});
 
   it("starts old tasks' journeys with one step per finished stage", async () => {
-    const root = tempDir("petrina-journey-old-");
-    roots.push(root);
+  return engineCases.use("petrina-journey-", async caseOwner => {
+    const root = caseOwner.root;
+
     const data = join(root, "data");
     const fakes = new Fakes(join(root, "fake"));
     fakes.scenario({ controlled: true });
-    let engine = new Engine(data, { agentCommand: () => [process.execPath, fake, fakes.dir] });
-    const productId = await engine.addProduct(await makeProduct(root));
+    let engine = caseOwner.open(data, { agentCommand: () => [process.execPath, fake, fakes.dir], toolProbe: privateAgentToolProbe(), startAgentSession: fakeAgentSessions(fakes) });
+    const repo = await makeProduct(root, { origin: "none" }); caseOwner.check();
+    await engine.waitUntilReady(); caseOwner.check();
+    const productId = installPreparedProduct(engine, privateCloneProduct(repo));
     engine.setPoolPaused(true);
     const id = engine.addTask({ productId, title: "From before" });
     // As if it ran before journeys were recorded: planned, designed and waiting for its build.
@@ -314,24 +367,29 @@ describe("the engine records each task's journey", () => {
       plan: { rationale: "Old.", plannerProfileId: "opus-high", stages: [{ id: `${id}:s0`, kind: "do", title: "Research", roleId: "researcher", profileIds: ["opus-high"] }, { id: `${id}:s1`, kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-xhigh"] }] },
     });
     delete task.journey;
-    await engine.shutdown();
-    engine = new Engine(data, { agentCommand: () => [process.execPath, fake, fakes.dir] });
+    await caseOwner.stop(engine);
+    engine = caseOwner.open(data, { agentCommand: () => [process.execPath, fake, fakes.dir], toolProbe: privateAgentToolProbe(), startAgentSession: fakeAgentSessions(fakes) });
     const view = viewOf(engine, id);
     expect(view.nodes.map((node) => `${node.name}: ${node.state}`)).toEqual(["Planner: done", "Researcher: done", "Builder: next"]);
     expect(view.note).toMatch(/Earlier rounds were not recorded/);
     expect(taskOf(engine, id).journey).toHaveLength(2);
-    await engine.shutdown();
+    await caseOwner.stop(engine);
+
   });
+});
 
   it("keeps an old task's step under way, and the question it waits on, across a restart", async () => {
-    const root = tempDir("petrina-journey-old-asked-");
-    roots.push(root);
+  return engineCases.use("petrina-journey-", async caseOwner => {
+    const root = caseOwner.root;
+
     const data = join(root, "data");
     const fakes = new Fakes(join(root, "fake"));
     fakes.scenario({});
-    const open = () => new Engine(data, { agentCommand: () => [process.execPath, fake, fakes.dir] });
+    const open = () => fastJourneyEngine(caseOwner.open(data, { agentCommand: () => [process.execPath, fake, fakes.dir], toolProbe: privateAgentToolProbe(), startAgentSession: fakeAgentSessions(fakes) }));
     let engine = open();
-    const productId = await engine.addProduct(await makeProduct(root));
+    const repo = await makeProduct(root, { origin: "none" }); caseOwner.check();
+    await engine.waitUntilReady(); caseOwner.check();
+    const productId = installPreparedProduct(engine, privateCloneProduct(repo));
     engine.setProductDelivery(productId, "local", false);
     const id = engine.addTask({ productId, title: "From before", description: "A friendly greeting file." });
     const question = () => engine.getState().inbox.find((item) => item.taskId === id && item.kind === "question");
@@ -340,7 +398,7 @@ describe("the engine records each task's journey", () => {
     const before = engine.task(id)! as unknown as { journey?: unknown; timeline: { step?: string }[]; session: { step?: string }[] };
     delete before.journey;
     for (const line of [...before.timeline, ...before.session]) delete line.step;
-    await engine.shutdown();
+    await caseOwner.stop(engine);
 
     engine = open();
     const asked = question()!;
@@ -359,6 +417,8 @@ describe("the engine records each task's journey", () => {
     // toEqual, not toMatchObject: bun's toMatchObject writes its matchers into the object it checks.
     expect(taskOf(engine, id).journey![1]!.asks).toEqual([expect.objectContaining({ id: asked.id, how: "answered", answer: "Formal" })]);
     expect(journeyProblems(taskOf(engine, id))).toEqual([]);
-    await engine.shutdown();
+    await caseOwner.stop(engine);
+
   });
+});
 });

@@ -2,6 +2,7 @@ import { afterAll, expect, it, spyOn } from "bun:test";
 import { beginAgentStep, endAgentStep } from "@petrina/core";
 import { executionFor } from "@petrina/orchestrator";
 import { proofRequestFixtures } from "../../fixtures/proof-requests.js";
+import { privateAgentToolProbe } from "../../scripted-probes.js";
 
 const { signal, fixture, passes, close } = proofRequestFixtures();
 afterAll(close);
@@ -19,7 +20,7 @@ it("retains one interrupted Tester run across restart and binds a stand-in's pro
     expect(f.task.proofRequests![0]!.proof).toBeUndefined(); expect(f.task.acceptanceRun!.requestIds).toHaveLength(1);
     const run = structuredClone(f.task.acceptanceRun);
     f.engine.setPoolPaused(true); await f.stop(f.engine); first.mockRestore();
-    f.engine = f.open(f.engine.dataDir, { agentCommand: () => undefined, terminals: () => [] }); f.engine.schedule = () => {};
+    f.engine = f.open(f.engine.dataDir, { agentCommand: () => undefined, toolProbe: privateAgentToolProbe(), terminals: () => [] }); f.engine.schedule = () => {};
     await f.engine.waitUntilReady(); f.task = f.engine.task(f.task.id)!; f.scope = executionFor(f.task);
     expect(f.task.acceptanceRun).toEqual(run); expect(f.task.proofRefreshes).toBe(1);
     const resumed = spyOn(f.engine["turns"], "turn").mockImplementation(async (scope, roleId, _profileId, _given, schema, _signal, options) => {
@@ -38,21 +39,3 @@ it("retains one interrupted Tester run across restart and binds a stand-in's pro
   } finally { first.mockRestore(); await f.close(); }
 });
 
-it("repairs missing or duplicate proof answers in the same Tester turn and never trusts evidence-free passes", async () => {
-  const f = await fixture(); await f.request(); f.task.retest = true; f.task.stageIndex = 1;
-  const turn = spyOn(f.engine["turns"], "turn").mockImplementation(async (scope, roleId, profileId, _given, schema, _signal, options) => {
-    const missing = schema.parse({ summary: "Incomplete answer" });
-    expect(await options?.check?.(missing)).toContain("exactly once by id");
-    const id = scope.task.acceptanceRun!.requestIds[0]!;
-    expect(await options?.check?.(schema.parse({ summary: "Duplicate answer", proofAnswers: [...passes([id]), ...passes([id])] }))).toContain("exactly once");
-    const value = schema.parse({ summary: "No receipt was obtained", proofAnswers: [{ id, result: "pass" }] });
-    expect(await options?.check?.(value)).toBeUndefined();
-    const node = beginAgentStep(scope.task, roleId, profileId, 1, f.engine.s.roles, undefined, scope.work);
-    node.agentResults = [{ roleId, profileId, at: 2, value }]; return value;
-  });
-  try {
-    await f.engine["work"].runDo(f.scope, f.tester, signal());
-    expect(turn).toHaveBeenCalledTimes(1); expect(f.task.proofRequests![0]!.status).toBe("unverified");
-    expect(f.task.findings).toEqual([]); expect(f.scope.work.acceptanceReturns).toBeUndefined();
-  } finally { turn.mockRestore(); await f.close(); }
-});

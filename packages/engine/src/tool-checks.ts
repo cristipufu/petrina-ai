@@ -5,7 +5,8 @@
 
 import { CHECK_NAMES, checkOf, type CheckId, type Id, type ToolCheck } from "@petrina/core";
 import { ToolCheckCoordinator, TOOL_CHECK_LINGER_MS, type ToolCheckClock } from "@petrina/orchestrator";
-import { Kernel, notReady, ToolProblem, type MTask } from "./kernel.js";
+import { notReady, ToolProblem, type RuntimeTask } from "./engine-options.js";
+import type { Kernel } from "./kernel.js";
 import { AGENT_CHECK_TIMEOUT_MS } from "@petrina/agent-runtime/probe";
 import { isAuthRequired } from "@petrina/agent-runtime/failures";
 import { ADAPTERS } from "@petrina/agent-runtime/tools";
@@ -80,7 +81,7 @@ export class ToolChecks {
   }
 
   /** Before a delivery to GitHub: the GitHub CLI must be logged in, or nothing ships. Couldn't check: it goes ahead. */
-  async needGitHub(task: MTask): Promise<void> {
+  async needGitHub(task: RuntimeTask): Promise<void> {
     const before = task.statusLine;
     task.statusLine = "Checking the GitHub login";
     this.k.commit();
@@ -95,7 +96,7 @@ export class ToolChecks {
   }
 
   /** Retry on a Stuck item about a tool: true while the tool is still not installed or not logged in. */
-  async stillNotReady(toolId: CheckId, task: MTask | undefined): Promise<boolean> {
+  async stillNotReady(toolId: CheckId, task: RuntimeTask | undefined): Promise<boolean> {
     await this.check(toolId);
     const status = this.status(toolId);
     if (!notReady(status)) return false;

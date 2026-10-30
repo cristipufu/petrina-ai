@@ -1,6 +1,10 @@
 // Task state is grouped by owner and lifetime. These interfaces keep one persisted shape;
 // composing them does not introduce projection copies or a second schema.
-import type { AcceptanceGap, ActiveAgent, BuilderContext, CheckEnvironmentBinding, CheckRun, CheckSetupAttempt, CheckSetupInvalidation, Cleanup, Column, ConversationNote, DesignBrief, DesignCall, DeliveryMode, Driving, Finding, HandedBack, Hunt, Id, InboxKind, JourneyStep, Lesson, Objection, Plan, PullRequest, QueuedMessage, RiskLevel, RunState, ScreenRequest, SessionLine, ShippingRecord, SourcePointer, StepClock, StepNote, StepRecord, TaskKind, TimelineEntry, WorkRow } from "./model.js";
+import type { Column, DeliveryMode, Id, InboxKind, Lesson, Plan, RiskLevel, RunState, TaskKind } from "./catalog-model.js";
+import type { CheckEnvironmentBinding, CheckRun, CheckSetupAttempt, CheckSetupInvalidation } from "./check-model.js";
+import type { ActiveAgent, AgentToolActivity, BuilderContext, Cleanup, ConversationNote, DesignBrief, DesignCall, Driving, Finding, HandedBack, Hunt, Objection, ProofDecision, ProofRequest, PullRequest, QueuedMessage, ScreenRequest, SessionLine, ShippingRecord, SourcePointer, StepClock, StepNote, StepRecord, TimelineEntry, WorkRow } from "./review-model.js";
+import type { AcceptanceGap, JourneyStep } from "./journey-model.js";
+export type { ProofDecision, ProofRequest } from "./review-model.js";
 import type { PullRequestBackground, TaskSource, WorkChoice } from "./source.js";
 import type { ReadinessWait } from "./readiness.js";
 
@@ -341,34 +345,13 @@ export interface TaskAcceptanceState {
   repairCheck?: boolean;
 }
 
-export interface ProofDecision {
-  versions: Readonly<Record<Id, string>>;
-  statuses: Readonly<Record<Id, ProofRequest["status"]>>;
-  refreshBlocked?: boolean;
-}
-
-export interface ProofRequest {
-  id: Id;
-  text: string;
-  reason: string;
-  productIds: readonly Id[];
-  checklistText?: string;
-  requestedBy: { stageId: Id; round: number; seat: string; roleId: Id; profileId: Id; reviewId?: Id };
-  reviewedVersions: Readonly<Record<Id, string>>;
-  ownerStageId: Id;
-  status: "pending" | "already-current" | "proved" | "failed" | "unverified" | "stale";
-  /** Position in one accepted reviewer result: replay never creates another request. */
-  source: string;
-  proof?: { stepId: Id; versions: Readonly<Record<Id, string>>; result: "pass" | "fail" | "blocked"; evidence?: string; reason?: string; checklist?: boolean };
-}
-
 /** The current step, its agent seats, public activity and coordinator interaction. */
 export interface TaskActivity {
   agent?: ActiveAgent;
   /** Agents working on the same step at the same time as `agent` (reviewers hunting at once, voters). Each holds a slot of its own. */
   helpers?: readonly ActiveAgent[];
   statusLine: string;
-  toolActivity?: import("./model.js").AgentToolActivity;
+  toolActivity?: AgentToolActivity;
   /** Agent-owned current to-do, kept separate from changing tool activity. */
   todo?: string;
   /**

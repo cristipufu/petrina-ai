@@ -1,25 +1,28 @@
 import { executionFor } from "@petrina/orchestrator";
 import { afterAll, describe, expect, it } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { type DeepMutable, type Task } from "@petrina/core";
 import { coordinator, finish, git, taskOf, until } from "../../support.js";
+import { readWorktreeCommit } from "../../fixtures/shared-preparation.js";
 import { sourceWorlds, deliveryGate, taskCommit } from "../../fixtures/source-world.js";
-const fixtures = sourceWorlds();
+const fixtures = sourceWorlds({ skipReviewInputDiffs: false });
 afterAll(() => fixtures.close());
 
 describe.concurrent("review findings for a confirmed start",()=>{
 it("puts an interrupted commit hook back on the task's work before review", async () => {
-    await fixtures.world("hook-restart", async ({ w, fakes, engine: withEngine }) => {
+    await fixtures.world("hook-restart", async ({ w, fakes, engine: withEngine, planned }) => {
 
     let { id, live, work, base, seen, previous } = await withEngine(async engine => {
 
-      const productId = await engine.addProduct(w.clone);
-      const id = engine.addTask({ productId, title: "A greeting", description: "[quick]", delivery: "local", approvePlan: false });
+      const productId = await w.preparedProduct(engine);
+      const id = await planned(engine, { productId, title: "A greeting", description: "[quick]", delivery: "local", approvePlan: false }, "builder");
       await deliveryGate(engine, id);
       const live = engine.task(id)!;
-      const work = await git(executionFor(live).work.worktree!, "rev-parse", "HEAD");
+      const work = readWorktreeCommit(executionFor(live).work.worktree!)!.commit;
       const base = executionFor(live).work.baseSha!;
       expect(work).not.toBe(base);
-      expect(await git(executionFor(live).work.worktree!, "show", "HEAD:greeting.txt")).toContain("Hello");
+      expect(readFileSync(join(executionFor(live).work.worktree!, "greeting.txt"), "utf8")).toContain("Hello");
       const seen = fakes.received("code reviewer").length;
       expect(seen).toBeGreaterThan(0);
 
@@ -46,9 +49,9 @@ it("puts an interrupted commit hook back on the task's work before review", asyn
     await withEngine(async engine => {
       await until(engine, async () => {
         const task = engine.task(id);
-        return !!task && !!executionFor(task).work.worktree && executionFor(task).work.hooking === undefined && await git(executionFor(task).work.worktree!, "rev-parse", "HEAD") === work && fakes.received("code reviewer").length > seen;
+        return !!task && !!executionFor(task).work.worktree && executionFor(task).work.hooking === undefined && readWorktreeCommit(executionFor(task).work.worktree!)?.commit === work && fakes.received("code reviewer").length > seen;
       }, coordinator(["plan", "design"]));
-      expect(await git(executionFor(engine.task(id)!).work.worktree!, "rev-parse", "HEAD")).toBe(work);
+      expect(readWorktreeCommit(executionFor(engine.task(id)!).work.worktree!)?.commit).toBe(work);
       expect(executionFor(engine.task(id)!).work.hooking).toBeUndefined();
       expect(fakes.prompts("code reviewer").at(-1)).toContain(`git diff ${base}...HEAD`);
       const done = taskOf(await finish(engine, id), id);

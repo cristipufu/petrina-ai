@@ -1,12 +1,11 @@
 import { afterAll, expect, it } from "bun:test";
 import { followUpKey } from "@petrina/core";
 import { createFollowUpFixtures, older, groupByBug, taskOf, finish } from "../../fixtures/follow-up-native.js";
-
-const { open, reopen, close, shutdown } = createFollowUpFixtures();
+const { open, reopen, close, use } = createFollowUpFixtures();
 afterAll(close);
-
 it("reuses a coordinator's Backlog bug with current wording, preserving its request, products and links through restart", async () => {
-  const world = await open(groupByBug, true);
+  return use(async caseOwner => {
+  const world = await open(caseOwner, groupByBug, true);
   try {
     const engine = world.engine;
     const id = engine.addTask({ productId: world.shop, kind: "bug", title: "bug-manual: Fix the remaining variant", description: "Current request, edited by the coordinator.", backlog: true });
@@ -14,7 +13,7 @@ it("reuses a coordinator's Backlog bug with current wording, preserving its requ
     const unrelated = engine.addTask({ productId: world.notes, kind: "bug", title: "bug-manual: Separate product", description: "Another scope", backlog: true });
     const feature = engine.addTask({ productId: world.shop, title: "bug-manual: A feature", description: "Do not turn features into bug follow-ups", backlog: true });
     const source = taskOf(engine, world.shop, "Report the remaining issue", [older("remaining", "bug-manual: A confirmed current defect")]);
-    await finish(engine, source);
+    await finish(caseOwner, engine, source);
     expect(source.findings[0]!.tracking).toEqual({ taskId: id });
     expect(manual.followUp?.preserveRequest).toBe(true);
     expect(manual.description).toBe("Current request, edited by the coordinator.");
@@ -34,5 +33,6 @@ it("reuses a coordinator's Backlog bug with current wording, preserving its requ
     expect(world.engine.task(id)!.description).toBe("Current request, edited by the coordinator.");
     expect(world.engine.task(id)!.productId).toBe(world.shop);
     expect(world.engine.task(id)!.followUp?.reports).toHaveLength(0);
-  } finally { await shutdown(world.engine); }
+  } finally { await caseOwner.stop(world.engine); }
+  });
 });

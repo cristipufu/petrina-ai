@@ -1,4 +1,5 @@
 import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
+import { installPreparedProduct, privateCloneProduct } from "../../fixtures/prepared-product.js";
 import { mkdtempSync } from "node:fs";
 import { afterAll as closeOwnedCases } from "bun:test";
 import { executionFor } from "@petrina/orchestrator";
@@ -7,7 +8,8 @@ import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Learnings } from "../../../src/learnings.js";
 import * as gitOps from "@petrina/repositories/git";
-import { git, makeProduct } from "../../fixtures.js";
+import { makeProduct } from "../../fixtures.js";
+import { privateAgentToolProbe } from "../../scripted-probes.js";
 const cases = engineCaseFixtures();
 closeOwnedCases(() => cases.close());
 
@@ -16,22 +18,23 @@ describe("lessons agents pass on", () => {
   for (const state of ["before-copy", "deleted", "empty"] as const) it(`reads learning instructions from the authoritative version: ${state}`, async () => {
     return cases.use("petrina-engine-case-", async owner => {
       const root = mkdtempSync(join(owner.root, `petrina-learning-source-${state}-`));
-      const engine = owner.open(join(root, "data"), { agentCommand: () => undefined, usageCommands: { codex: null, grok: null, antigravity: null }, terminals: () => [] });
+      const engine = owner.open(join(root, "data"), { agentCommand: () => undefined, toolProbe: privateAgentToolProbe(), usageCommands: { codex: null, grok: null, antigravity: null }, terminals: () => [] });
       try {
         await owner.run(engine, async () => {
           engine.setPoolPaused(true);
-          const repo = await makeProduct(root), lesson = "Use the repository's focused greeting checks before the full suite.";
+          const repo = await makeProduct(root, { origin: "none" }), lesson = "Use the repository's focused greeting checks before the full suite.";
           writeFileSync(join(repo, "AGENTS.md"), `## Learnings\n\n- ${lesson}\n`);
-          await git(repo, "add", "."); await git(repo, "commit", "-qm", "Record the original instruction");
-          const base = await git(repo, "rev-parse", "HEAD");
-          const productId = await engine.addProduct(repo);
+          await gitOps.commitChanges(repo, "Record the original instruction");
+          const base = (await gitOps.head(repo))!;
+          await engine.waitUntilReady(); owner.check();
+          const productId = installPreparedProduct(engine, privateCloneProduct(repo));
           const scope = executionFor(engine.task(engine.addTask({ productId, title: "Learn from the current instructions", backlog: true }))!);
           scope.work.baseSha = base;
           if (state !== "before-copy") {
             scope.work.worktree = repo;
             if (state === "deleted") rmSync(join(repo, "AGENTS.md"));
             else writeFileSync(join(repo, "AGENTS.md"), "");
-            await git(repo, "add", "."); await git(repo, "commit", "-qm", "Remove the old instruction");
+            await gitOps.commitChanges(repo, "Remove the old instruction");
           }
           const read = spyOn(gitOps, "fileAt");
           try {
@@ -55,12 +58,13 @@ describe("lessons agents pass on", () => {
     return cases.use("petrina-engine-case-", async owner => {
       const root = mkdtempSync(join(owner.root, "petrina-lessons-complete-"));
 
-      const engine = owner.open(join(root, "data"), { usageCommands: { codex: null } });
+      const engine = owner.open(join(root, "data"), { toolProbe: privateAgentToolProbe(), usageCommands: { codex: null } });
       try {
         await owner.run(engine, async () => {
           engine.setPoolPaused(true);
-          const repo = await makeProduct(root);
-          const productId = await engine.addProduct(repo);
+          const repo = await makeProduct(root, { origin: "none" });
+          await engine.waitUntilReady(); owner.check();
+          const productId = installPreparedProduct(engine, privateCloneProduct(repo));
           const task = engine.task(engine.addTask({ productId, title: "Keep a complete instruction" }))!;
           executionFor(task).work.worktree = repo;
           const learnings = new Learnings(engine);
@@ -71,7 +75,7 @@ describe("lessons agents pass on", () => {
           expect(offer.body).toBe(`- ${lesson}`);
           engine.addLessons(offer.id, [0]);
           await learnings.write(executionFor(task));
-          expect(await git(repo, "show", "HEAD:AGENTS.md")).toContain(`- ${lesson}`);
+          expect(await gitOps.fileAt(repo, "HEAD", "AGENTS.md")).toContain(`- ${lesson}`);
           await learnings.note(executionFor(task), [lesson], "builder", "sol-xhigh");
           await learnings.offer(executionFor(task));
           expect(engine.getState().inbox.filter((item) => item.kind === "learnings")).toEqual([]);
@@ -95,15 +99,15 @@ describe("repeated lessons", () => {
     return cases.use("petrina-engine-case-", async owner => {
       const root = mkdtempSync(join(owner.root, "petrina-lessons-distinct-"));
 
-      const engine = owner.open(join(root, "data"), { usageCommands: { codex: null } });
+      const engine = owner.open(join(root, "data"), { toolProbe: privateAgentToolProbe(), usageCommands: { codex: null } });
       try {
         await owner.run(engine, async () => {
           engine.setPoolPaused(true);
-          const repo = await makeProduct(root);
-          const productId = await engine.addProduct(repo);
+          const repo = await makeProduct(root, { origin: "none" });
+          await engine.waitUntilReady(); owner.check();
+          const productId = installPreparedProduct(engine, privateCloneProduct(repo));
           writeFileSync(join(repo, "AGENTS.md"), "- Run engine tests with bun test --parallel.\n");
-          await git(repo, "add", "AGENTS.md");
-          await git(repo, "commit", "-q", "-m", "Existing guidance");
+          await gitOps.commitChanges(repo, "Existing guidance");
           const task = engine.task(engine.addTask({ productId, title: "Keep distinct instructions" }))!;
           executionFor(task).work.worktree = repo;
           const product = engine.productOf(task)!;
@@ -124,9 +128,10 @@ describe("repeated lessons", () => {
           expect(offer.body).toBe(instructions.map((line) => `- ${line}`).join("\n"));
           engine.addLessons(offer.id, [0, 1, 2, 3]);
           await learnings.write(executionFor(task));
-          expect(await git(repo, "show", "HEAD:AGENTS.md")).toContain(instructions[0]!);
-          expect(await git(repo, "show", "HEAD:AGENTS.md")).toContain(instructions[1]!);
-          expect(await git(repo, "show", "HEAD:AGENTS.md")).not.toContain(`- ${instructions[4]}`);
+          const writtenAgents = await gitOps.fileAt(repo, "HEAD", "AGENTS.md");
+          expect(writtenAgents).toContain(instructions[0]!);
+          expect(writtenAgents).toContain(instructions[1]!);
+          expect(writtenAgents).not.toContain(`- ${instructions[4]}`);
 
         });
       } finally {

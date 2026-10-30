@@ -22,4 +22,5 @@ export interface RepositoryObservationQueries {
 export interface CommittedCode {
   versions: Record<Id, string>;
   changes: Record<Id, string>;
+  readonly heads?: Readonly<Record<Id, string>>;
 }

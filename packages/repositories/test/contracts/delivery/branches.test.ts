@@ -1,12 +1,12 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fastForward, push } from "../../../src/git.js";
-import { removeDir } from "@petrina/test-support/fixtures";
+import { removeDir, tempDir } from "@petrina/test-support/fixtures";
 import { git, gitWith } from "@petrina/test-support/commands";
+import { headNow } from "@petrina/test-support/repository-head";
 
-const temp = mkdtempSync(join(tmpdir(), "petrina-git-"));
+const temp = tempDir("petrina-git-");
 
 /** A file as checked out, in one line-ending style: git on Windows writes CRLF. */
 const checkedOut = (path: string) => readFileSync(path, "utf8").replace(/\r\n/g, "\n");
@@ -15,30 +15,69 @@ describe("Petrina's own git steps", () => {
   afterAll(() => removeDir(temp));
 
   describe("pushes and local updates", () => {
+    let seedPromise: Promise<{ remote: string; repo: string; one: string; two: string }> | undefined;
+    const ensureSeed = () => {
+      seedPromise ??= (async () => {
+        const remote = join(temp, "_seed.git");
+        await gitWith({}, "init", "-q", "--bare", "-b", "main", remote);
+        const repo = join(temp, "_seed");
+        mkdirSync(repo, { recursive: true });
+        await git(repo, "init", "-q", "-b", "main");
+        await git(repo, "config", "user.email", "test@example.com");
+        await git(repo, "config", "user.name", "Test");
+        await git(repo, "commit", "-q", "--allow-empty", "-m", "one");
+        const one = headNow(repo);
+        await git(repo, "push", "-q", remote, "main");
+        await git(repo, "commit", "-q", "--allow-empty", "-m", "two");
+        const two = headNow(repo);
+        return { remote, repo, one, two };
+      })();
+      return seedPromise;
+    };
+
     const setup = async (name: string) => {
+      const seed = await ensureSeed();
       const remote = join(temp, `${name}.git`);
-      await gitWith({}, "init", "-q", "--bare", "-b", "main", remote);
       const repo = join(temp, name);
-      mkdirSync(repo, { recursive: true });
-      await git(repo, "init", "-q", "-b", "main");
-      await git(repo, "config", "user.email", "test@example.com");
-      await git(repo, "config", "user.name", "Test");
-      await git(repo, "commit", "-q", "--allow-empty", "-m", "one");
-      const one = await git(repo, "rev-parse", "HEAD");
-      await git(repo, "push", "-q", remote, "main");
-      await git(repo, "commit", "-q", "--allow-empty", "-m", "two");
-      const two = await git(repo, "rev-parse", "HEAD");
-      return { remote, repo, one, two, at: (ref: string) => gitWith({}, "--git-dir", remote, "for-each-ref", "--format=%(objectname)", ref) };
+      cpSync(seed.remote, remote, { recursive: true });
+      cpSync(seed.repo, repo, { recursive: true });
+      return {
+        remote,
+        repo,
+        one: seed.one,
+        two: seed.two,
+        at: (ref: string) => gitWith({}, "--git-dir", remote, "for-each-ref", "--format=%(objectname)", ref),
+      };
     };
 
     it("pushes main and a tag all or nothing, and refuses an existing tag", async () => {
       const { remote, repo, one, two, at } = await setup("atomic");
       await gitWith({}, "--git-dir", remote, "update-ref", "refs/tags/v1.0.0", one);
-      const pushed = await push(repo, { url: remote, local: true }, [{ sha: two, ref: "refs/heads/main" }, { sha: two, ref: "refs/tags/v1.0.0" }], true);
+      const pushed = await push(
+        repo,
+        { url: remote, local: true },
+        [
+          { sha: two, ref: "refs/heads/main" },
+          { sha: two, ref: "refs/tags/v1.0.0" },
+        ],
+        true,
+      );
       expect(pushed.ok).toBe(false);
       expect(await at("refs/heads/main")).toBe(one);
       expect(await at("refs/tags/v1.0.0")).toBe(one);
-      expect((await push(repo, { url: remote, local: true }, [{ sha: two, ref: "refs/heads/main" }, { sha: two, ref: "refs/tags/v1.0.1" }], true)).ok).toBe(true);
+      expect(
+        (
+          await push(
+            repo,
+            { url: remote, local: true },
+            [
+              { sha: two, ref: "refs/heads/main" },
+              { sha: two, ref: "refs/tags/v1.0.1" },
+            ],
+            true,
+          )
+        ).ok,
+      ).toBe(true);
       expect(await at("refs/heads/main")).toBe(two);
       expect(await at("refs/tags/v1.0.1")).toBe(two);
     });
@@ -46,7 +85,7 @@ describe("Petrina's own git steps", () => {
     it("never forces: a branch that moved elsewhere on GitHub is refused, not overwritten", async () => {
       const { remote, repo, one, two, at } = await setup("forward");
       await git(repo, "commit", "-q", "--allow-empty", "-m", "elsewhere");
-      const elsewhere = await git(repo, "rev-parse", "HEAD");
+      const elsewhere = headNow(repo);
       await git(repo, "push", "-q", remote, "HEAD:main");
       expect((await push(repo, { url: remote, local: true }, [{ sha: two, ref: "refs/heads/main" }])).ok).toBe(false);
       expect(await at("refs/heads/main")).toBe(elsewhere);
@@ -61,7 +100,7 @@ describe("Petrina's own git steps", () => {
       // Not checked out: main must still be where Petrina saw it.
       await git(repo, "switch", "-q", "-c", "side", one);
       await git(repo, "commit", "-q", "--allow-empty", "-m", "a teammate's commit");
-      const teammate = await git(repo, "rev-parse", "HEAD");
+      const teammate = headNow(repo);
       await git(repo, "branch", "-f", "main", teammate);
       expect((await fastForward(repo, "main", one, two, false)).ok).toBe(false);
       expect(await git(repo, "rev-parse", "main")).toBe(teammate);
@@ -73,7 +112,7 @@ describe("Petrina's own git steps", () => {
       writeFileSync(join(repo, "greeting.txt"), "Hello\n");
       await git(repo, "add", "greeting.txt");
       await git(repo, "commit", "-q", "-m", "three");
-      const three = await git(repo, "rev-parse", "HEAD");
+      const three = headNow(repo);
       // Moved forward since Petrina looked, to a commit the tested one has: still refused, files untouched.
       await git(repo, "reset", "-q", "--hard", two);
       expect((await fastForward(repo, "main", one, three, true)).ok).toBe(false);
@@ -97,7 +136,7 @@ describe("Petrina's own git steps", () => {
       writeFileSync(join(repo, "greeting.txt"), "Hello\n");
       await git(repo, "add", "greeting.txt");
       await git(repo, "commit", "-q", "-m", "greeting");
-      const tested = await git(repo, "rev-parse", "HEAD");
+      const tested = headNow(repo);
       await git(repo, "reset", "-q", "--hard", one);
       const lock = join(repo, ".git", "index.lock");
       const untouched = async () => {

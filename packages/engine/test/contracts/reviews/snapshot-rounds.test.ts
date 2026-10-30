@@ -1,12 +1,13 @@
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { writeFileSync, existsSync, readFileSync } from "node:fs";
 import * as gitOps from "@petrina/repositories/git";
+import * as objectOps from "@petrina/repositories/object-batch";
 import { expectRejection, rejectionOf } from "@petrina/test-support/rejections";
 import { join } from "node:path";
 import { beginAgentStep, panelAnswers } from "@petrina/core";
 import { prepareReviewInput, readReviewInput } from "../../../src/review-context.js";
-import { git } from "../../fixtures.js";
 import { reviewContextFixtures } from "../../fixtures/review-context.js";
+import { readWorktreeCommit } from "../../fixtures/shared-preparation.js";
 const { bare, ballot, earlier, answer, place, close } = reviewContextFixtures();
 afterAll(close);
 
@@ -14,12 +15,12 @@ describe("one fresh review version per owner", () => {
   it("keeps both identities from the paired observation when HEAD moves before material is prepared", async () => {
     await bare(async f => {
 
-    const before = { head: await git(f.repo, "rev-parse", "HEAD"), tree: await git(f.repo, "rev-parse", "HEAD^{tree}") };
-    const read = gitOps.commitVersion;
-    const paired = spyOn(gitOps, "commitVersion").mockImplementation(async path => {
-      const version = await read(path);
+    const before = { head: (await gitOps.head(f.repo))!, tree: (await gitOps.treeOf(f.repo))! };
+    const read = objectOps.commitAndFile;
+    const paired = spyOn(objectOps, "commitAndFile").mockImplementation(async (...args) => {
+      const version = await read(...args), path = args[0];
       writeFileSync(join(path, "later-during-capture.txt"), "Later work must not enter this review snapshot\n");
-      await git(path, "add", "."); await git(path, "commit", "-qm", "Later work while review input is captured");
+      await gitOps.commitChanges(path, "Later work while review input is captured");
       return version;
     });
     const heads = spyOn(gitOps, "head"), trees = spyOn(gitOps, "treeOf");
@@ -31,7 +32,7 @@ describe("one fresh review version per owner", () => {
       const comparisons = (saved.artifacts ?? []).map(artifact => readFileSync(artifact.file, "utf8")).join("\n");
       expect(comparisons).toContain("FIRST-CHANGE");
       expect(comparisons).not.toContain("later-during-capture.txt");
-      expect(await git(f.repo, "rev-parse", "HEAD")).not.toBe(before.head);
+      expect(readWorktreeCommit(f.repo)?.commit).not.toBe(before.head);
       expect(paired).toHaveBeenCalledTimes(1);
       expect(heads).not.toHaveBeenCalled(); expect(trees).not.toHaveBeenCalled();
     } finally { paired.mockRestore(); heads.mockRestore(); trees.mockRestore(); await f.shutdown(); }
@@ -41,15 +42,17 @@ describe("one fresh review version per owner", () => {
   it("does not prepare review material from unavailable, partial, malformed or rejected observations", async () => {
     await bare(async f => {
 
-    const before = { head: await git(f.repo, "rev-parse", "HEAD"), tree: await git(f.repo, "rev-parse", "HEAD^{tree}") };
+    const before = { head: (await gitOps.head(f.repo))!, tree: (await gitOps.treeOf(f.repo))! };
     try {
       // None of these reads may write review material or change this private committed fixture.
       for (const observed of ["unavailable", "head-only", "tree-only", "malformed", "rejected"] as const) {
         const failure = new Error("The review version could not be observed");
         const value = observed === "head-only" ? { head: before.head } : observed === "tree-only" ? { tree: before.tree }
           : observed === "malformed" ? { head: before.head, tree: "not-a-tree" } : {};
-        const paired = spyOn(gitOps, "commitVersion");
-        if (observed === "rejected") paired.mockRejectedValue(failure); else paired.mockResolvedValue(value);
+        const paired = spyOn(objectOps, "commitAndFile");
+        // Deliberately violate the adapter's return contract to prove the review owner refuses partial data.
+        if (observed === "rejected") paired.mockRejectedValue(failure);
+        else paired.mockResolvedValue(value as Awaited<ReturnType<typeof objectOps.commitAndFile>>);
         const heads = spyOn(gitOps, "head"), trees = spyOn(gitOps, "treeOf");
         try {
           const input = await f.context.captureReview(f.scope);
@@ -77,15 +80,15 @@ it("records a passed round against its saved snapshot, and omits unknown version
       f.task.stageIndex = 0; f.task.findings = [];
       const signal = new AbortController().signal;
       const input = await prepareReviewInput(f.engine.dataDir, f.scope, await f.context.captureReview(f.scope), signal);
-      const originalTree = await git(f.repo, "rev-parse", "HEAD^{tree}");
+      const originalTree = (await gitOps.treeOf(f.repo))!;
       expect(input.trees).toEqual({ p: originalTree });
       f.task.hunt = { stageId: stage.id, round: 1, reported: { "0": true }, input };
       beginAgentStep(f.task, "code-reviewer", "sol-high", Date.now(), f.engine.s.roles, undefined, f.scope.work);
       writeFileSync(join(f.repo, "later.txt"), "Different current code\n");
-      await git(f.repo, "add", "."); await git(f.repo, "commit", "-qm", "Later contents");
+      await gitOps.commitChanges(f.repo, "Later contents");
       await f.engine["reviews"].runReview(f.task, stage, signal);
       expect(f.task.journey!.at(-1)!.checkReviews?.map((review) => review.tree)).toEqual([originalTree]);
-      expect(originalTree).not.toBe(await git(f.repo, "rev-parse", "HEAD^{tree}"));
+      expect(originalTree).not.toBe(await gitOps.treeOf(f.repo));
       f.task.stageIndex = 0;
       const { trees: _trees, ...olderInput } = input;
       f.task.hunt = { stageId: stage.id, round: 1, reported: { "0": true }, input: olderInput };

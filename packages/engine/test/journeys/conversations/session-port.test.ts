@@ -2,7 +2,7 @@ import { expect, it } from "bun:test";
 import { join } from "node:path";
 import type { ConversationNote } from "@petrina/core";
 import { executionFor, type AgentSessionOptions, type StartAgentSession } from "@petrina/orchestrator";
-import { git, makeProduct, tempDir } from "../../fixtures.js";
+import { createProductRepository, tempDir } from "../../fixtures.js";
 import { ScriptedAgents, scriptedResult } from "../../scripted-agents.js";
 import { NotesResult, ReviewResult } from "../../../src/roles.js";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
@@ -14,7 +14,7 @@ for (const parallel of [false, true]) it(`opens and resumes a ${parallel ? "para
   const root = tempDir("petrina-session-port-");
   const owner = directDrivers(root);
   await setupWithCleanup(() => owner.prepare(async () => {
-    const repo = await makeProduct(root);
+    const { path: repo, initialSha: baseSha } = await createProductRepository(root);
     const roleId = parallel ? "code-reviewer" : "researcher";
     const agents = new ScriptedAgents(prompt => {
       expect(prompt.roleId).toBe(roleId);
@@ -52,7 +52,7 @@ for (const parallel of [false, true]) it(`opens and resumes a ${parallel ? "para
     task.stageIndex = 0;
     engine.s.pool.paused = false;
     const scope = executionFor(task);
-    Object.assign(scope.work, { worktree: repo, branch: "main", base: "main", baseSha: await git(repo, "rev-parse", "HEAD") });
+    Object.assign(scope.work, { worktree: repo, branch: "main", base: "main", baseSha });
     if (parallel) task.hunt = { stageId: "step", round: 1, reported: {}, findings: 0 };
     const run = (resume?: ConversationNote) => owner.run(engine, async () => {
       delete scope.work.conversation;

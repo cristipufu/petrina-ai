@@ -1,9 +1,10 @@
+import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
 import { fixtureFiles } from "@petrina/test-support/fixture-files";
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import * as processes from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { checkOf } from "@petrina/core";
+import { checkOf, completeAll } from "@petrina/core";
 import { stopOwnedProcess } from "@petrina/platform/owned-process";
 import { engineProcessCases } from "../../support.js";
 import { shutdownActors } from "../../fixtures/shutdown-actors.js";
@@ -17,18 +18,27 @@ import { SLOW } from "@petrina/test-support/slow";
 import { testGitEnv } from "@petrina/test-support/test-git-env";
 import { tempDir, waitFor } from "@petrina/test-support/fixtures";
 import { setupFixtures } from "../../fixtures/setup.js";
+const engineCases = engineCaseFixtures();
+afterAll(() => engineCases.close());
 
-const { fakeGh, fresh, agents, status, LIMIT } = setupFixtures();
+
+const { fakeGh, fresh, agents, status, LIMIT, nativeProbeOnly } = setupFixtures();
 const probeCases = engineProcessCases();
 afterAll(() => probeCases.close());
 
 describe("Tool status", () => {
 it("tells Ready, Not logged in and Couldn't check apart for agent tools, without sending the AI a message", async () => {
-    const fakes = new Fakes(fresh("fakes"));
-    const data = fresh("data");
-    const engine = new Engine(data, { agentCommand: agents({ codex: "logged-out" }, fakes.dir), toolCheckTimeoutMs: LIMIT });
+  return engineCases.use("petrina-setup-case-", async caseOwner => {
+    const fakes = new Fakes(fresh("fakes", caseOwner.root));
+    const data = fresh("data", caseOwner.root);
+    let engine!: Engine;
+    engine = caseOwner.open(data, {
+      agentCommand: agents({ codex: "logged-out" }, fakes.dir),
+      toolProbe: nativeProbeOnly(() => engine, "claude-code", "codex"),
+      toolCheckTimeoutMs: LIMIT,
+    });
     try {
-      await engine.checkTools();
+      await caseOwner.run(engine, async () => { await engine.checkTools(); });
       expect(status(engine, "claude-code")).toBe("ready");
       // A fake agent that asks for a login shows Not logged in.
       expect(status(engine, "codex")).toBe("logged-out");
@@ -39,28 +49,37 @@ it("tells Ready, Not logged in and Couldn't check apart for agent tools, without
       const conversations = readdirSync(join(fakes.dir, "conversations")).map((file) => JSON.parse(readFileSync(join(fakes.dir, "conversations", file), "utf8")) as { cwd: string });
       for (const conversation of conversations) expect(conversation.cwd).toBe(join(data, "checks"));
     } finally {
-      await engine.shutdown();
+      await caseOwner.stop(engine);
     }
+
   });
+});
 it("shows Couldn't check for a tool that will not start, and Not installed when its program is missing", async () => {
-    const engine = new Engine(fresh("data"), { agentCommand: agents({ "claude-code": "wont-start" }) });
+  return engineCases.use("petrina-setup-case-", async caseOwner => {
+    let engine!: Engine;
+    engine = caseOwner.open(fresh("data", caseOwner.root), {
+      agentCommand: agents({ "claude-code": "wont-start" }),
+      toolProbe: nativeProbeOnly(() => engine, "claude-code"),
+    });
     try {
-      await engine.checkTools();
+      await caseOwner.run(engine, async () => { await engine.checkTools(); });
       expect(status(engine, "claude-code")).toBe("unknown");
       expect(checkOf(engine.getState().setup?.checks, "claude-code").detail).toBeTruthy();
     } finally {
-      await engine.shutdown();
+      await caseOwner.stop(engine);
     }
-    const bare = new Engine(fresh("data"), { which: () => null });
+    const bare = caseOwner.open(fresh("data", caseOwner.root), { which: () => null });
     try {
-      await bare.checkTools();
+      await caseOwner.run(bare, async () => { await bare.checkTools(); });
       for (const id of ["claude-code", "codex", "git", "node"] as const) expect(status(bare, id)).toBe("not-installed");
       // The Library reads the agent tools from here too.
       expect(bare.getState().tools.find((tool) => tool.id === "codex")?.status).toBe("not-installed");
     } finally {
-      await bare.shutdown();
+      await caseOwner.stop(bare);
     }
+
   });
+});
 for (const behaviour of ["stubborn", "silent-stubborn"] as const) {
     it(`honors a short check deadline for a tool that ${behaviour === "stubborn" ? "never opens a conversation" : "never reports its login"} and ignores being stopped, stops it, and never piles up copies`, async () => {
       const timeoutMs = 2_000;
@@ -116,8 +135,9 @@ for (const behaviour of ["stubborn", "silent-stubborn"] as const) {
       }));
       const engine = nativeEngine = new Engine(data, {
         toolCheckTimeoutMs: timeoutMs,
+        toolProbe: nativeProbeOnly(() => nativeEngine!, "claude-code", "codex"),
         agentCommand: (profile) => {
-          if (profile.toolId === "claude-code" || profile.toolId === "codex") starts += 1;
+          starts += 1;
           return command(profile);
         },
       });
@@ -207,9 +227,12 @@ for (const behaviour of ["stubborn", "silent-stubborn"] as const) {
   }
 for (const releaseDuringCheck of [true, false]) {
     it(`joins rechecks during cleanup and ${releaseDuringCheck ? "starts once cleanup finishes" : "reports still stopping, then recovers after cleanup"}`, async () => {
+  return engineCases.use("petrina-setup-case-", async caseOwner => {
       let release!: () => void;
       const gone = new Promise<void>((done) => { release = done; });
+      caseOwner.onStop(() => release());
       const starting = spyOn(AgentRun, "start");
+      caseOwner.onStop(() => starting.mockRestore());
       starting.mockImplementationOnce(async (options) => {
         options.onGone?.(gone);
         throw new Error("The tool could not open a conversation.");
@@ -219,12 +242,13 @@ for (const releaseDuringCheck of [true, false]) {
         options.callbacks.onAuthStatus?.("account");
         return { stop: async () => true } as unknown as AgentRun;
       });
-      const engine = new Engine(fresh("data"), { agentCommand: agents({}) });
+      const engine = caseOwner.open(fresh("data", caseOwner.root), { agentCommand: agents({}) });
       const tools = new ToolChecks(engine);
+      caseOwner.onStop(() => tools.shutdown());
       try {
-        await tools.check("codex");
+        await caseOwner.run(engine, () => tools.check("codex"));
         expect(status(engine, "codex")).toBe("unknown");
-        const next = tools.check("codex");
+        const next = caseOwner.run(engine, () => tools.check("codex"));
         expect(tools.check("codex")).toBe(next);
         expect(tools.check("codex")).toBe(next);
         await new Promise((done) => setImmediate(done));
@@ -237,20 +261,23 @@ for (const releaseDuringCheck of [true, false]) {
           expect(checkOf(engine.getState().setup?.checks, "codex").detail).toContain("still stopping after its last check");
           release();
           await gone;
-          await tools.check("codex");
+          await caseOwner.run(engine, () => tools.check("codex"));
         }
         expect(starting).toHaveBeenCalledTimes(2);
         expect(status(engine, "codex")).toBe("ready");
       } finally {
         release();
         await tools.shutdown();
-        await engine.shutdown();
+        await caseOwner.stop(engine);
         starting.mockRestore();
       }
-    });
+
+  });
+});
   }
 it.skipIf(process.platform === "win32")("looks tools up on the PATH as it is now, as the Library does, so a Petrina opened from the Dock finds them", async () => {
-    const bin = fresh("bin");
+  return engineCases.use("petrina-setup-case-", async caseOwner => {
+    const bin = fresh("bin", caseOwner.root);
     mkdirSync(bin, { recursive: true });
     fixtureFiles.fileLink(Bun.which("git")!, join(bin, "git"));
     const node = Bun.which("node");
@@ -258,9 +285,10 @@ it.skipIf(process.platform === "win32")("looks tools up on the PATH as it is now
     // A GitHub CLI that only fails: no real one ever answers Couldn't check here.
     fixtureFiles.fileLink(Bun.which("false")!, join(bin, "gh"));
     const path = process.env.PATH;
+    caseOwner.onStop(() => { process.env.PATH = path; });
     // This boundary case deliberately discovers the fake programs planted on PATH, rather than
     // the fixture's ordinary scripted-service defaults. No real account tool is present on it.
-    const engine = new Engine(fresh("data"), { which: findProgram, gh: undefined });
+    const engine = caseOwner.open(fresh("data", caseOwner.root), { which: findProgram, gh: undefined });
     try {
       // App mode merges the login shell's PATH in after Petrina started.
       process.env.PATH = bin;
@@ -278,30 +306,35 @@ it.skipIf(process.platform === "win32")("looks tools up on the PATH as it is now
       expect(status(engine, "codex")).toBe("not-installed");
     } finally {
       process.env.PATH = path;
-      await engine.shutdown();
+      await caseOwner.stop(engine);
     }
+
   });
+});
 it("checks Git and Node.js, and on a Mac never runs Git without Apple's developer tools", async () => {
+  return engineCases.use("petrina-setup-case-", async caseOwner => {
     const which = () => process.execPath;
     expect((await checkGit(which, "linux")).status).toBe("ready");
     expect((await checkGit(() => null, "linux")).status).toBe("not-installed");
     // /usr/bin/git without the developer tools is a stand-in that would open Apple's installer.
     const noTools = await checkGit(() => "/usr/bin/git", "darwin", { developerTools: async () => ({ kind: "missing" }) });
     expect(noTools.status).toBe("not-installed");
-    const emptyTools = await checkGit(() => "/usr/bin/git", "darwin", { developerTools: async () => ({ kind: "found", path: fresh("no-git-here") }) });
+    const emptyTools = await checkGit(() => "/usr/bin/git", "darwin", { developerTools: async () => ({ kind: "found", path: fresh("no-git-here", caseOwner.root) }) });
     expect(emptyTools.status).toBe("not-installed");
-    const fakes = new Fakes(fresh("git-node-gh"));
-    const engine = new Engine(fresh("data"), {
+    const fakes = new Fakes(fresh("git-node-gh", caseOwner.root));
+    const engine = caseOwner.open(fresh("data", caseOwner.root), {
       which: (name) => name === "node" ? null : process.execPath,
       gh: [process.execPath, fakeGh, join(fakes.dir, "github.json"), join(fakes.dir, "github.git")],
       agentCommand: agents({}), toolCheckTimeoutMs: LIMIT,
     });
     try {
-      await engine.checkTools();
+      await caseOwner.run(engine, async () => { await completeAll([engine["tools"].check("git"), engine["tools"].check("node")]); });
       expect(status(engine, "git")).toBe("ready");
       expect(status(engine, "node")).toBe("not-installed");
     } finally {
-      await engine.shutdown();
+      await caseOwner.stop(engine);
     }
+
   });
+});
 });

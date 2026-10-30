@@ -9,6 +9,8 @@ import { reviewRoundsFixture } from "./review-rounds.js";
 import { ReleaseEvents } from "./release-events.js";
 import { ScriptedAgents, type ScriptedPrompt } from "./scripted-agents.js";
 import { completionOf, completedBeforeProgress } from "@petrina/test-support/progress-wait";
+import { ReviewWorkflow } from "../../src/review-workflow.js";
+import { pendingReviewPlaces } from "../../src/review-members.js";
 
 export class VerifierWait extends Error { constructor(readonly words: string) { super(words); } }
 class Stopped extends Error {}
@@ -37,6 +39,7 @@ export function verifierAdmissionFixture(options: VerifierAdmissionOptions = {})
   const sessions = new Set<Awaited<ReturnType<ScriptedAgents["start"]>>>();
   const slotSnapshots: ReturnType<typeof f.snapshot>[] = [];
   let pending: PendingVerification | undefined, running: Promise<PendingVerification> | undefined;
+  let finishing: Promise<"continue" | "stop"> | undefined;
   let phaseCompletion: ReturnType<typeof completionOf>;
   let phaseActive = false;
   let started = 0, accepted = 0;
@@ -77,10 +80,9 @@ export function verifierAdmissionFixture(options: VerifierAdmissionOptions = {})
     reference: member => `scripted:${member}`, prepare: async () => ({ activate() {}, finish() {} }),
     stopHelpers() {}, closeTaskRun() {}, releasedStops: async () => {}, finish: async () => {},
   };
-  const executePhase = (): Promise<PendingVerification> => {
+  const executePhase = (next: PendingVerification): Promise<PendingVerification> => {
     if (stop.signal.aborted) return Promise.reject(new Stopped());
-    const next = f.next();
-    if (!next?.voters.length) return Promise.reject(new Error("No actual voter phase remains"));
+    if (!next.voters.length) return Promise.reject(new Error("No actual voter phase remains"));
     pending = next; f.voteStep(next);
     const members: ParallelMember[] = next.seats.map((place, index) => ({ key: `vote-${place.key}`, reviewKey: `verifier:${place.key}`, roleId: "verifier", profileId: next.voters[index]!,
       async work(copy, _room, seat, used, _agent, _continuing, signal, selection) {
@@ -105,12 +107,30 @@ export function verifierAdmissionFixture(options: VerifierAdmissionOptions = {})
     task.holdsSlot = true;
     return group.run({ scope, signal: stop.signal, members, workspaces, status: () => "Voting" }).then(() => next);
   };
+  const bound = (current: typeof task) => { if (current !== task) throw new Error("Unexpected review phase owner"); };
+  const workflow = new ReviewWorkflow({
+    now: f.now, id: unexpected, checkpoint: current => { bound(current); observe(); }, changed: current => { bound(current); observe(); },
+    finishStep: unexpected, clearStep: unexpected, rerun: unexpected,
+  }, {
+    prepareChecks: unexpected, checks: unexpected, preparationChanged: () => false, backToBuilder: unexpected, blocked: unexpected,
+    versions: unexpected, input: unexpected, hunt: unexpected,
+    pendingReviewers: (current, stage) => { bound(current); return pendingReviewPlaces(current, stage, { roles: () => state.roles, profile: f.profile }); },
+    pendingVote: (current, stage) => { bound(current); f.reports.settle(current, stage); return f.ballots.next(current, stage); },
+    vote: async (current, next) => { bound(current); await executePhase(next); },
+    finishBallot: (current, next) => { bound(current); return f.ballots.finish(current, next); },
+    closeRound: (...args) => f.rounds.finish(...args),
+  });
   const phase = (): Promise<PendingVerification> => {
     if (phaseActive) return Promise.reject(new Error("A verifier phase is already running"));
     if (stop.signal.aborted) return Promise.reject(new Stopped());
     phaseActive = true;
     // Publish ownership before even synchronous selection/recording can begin.
-    const work = Promise.resolve().then(executePhase);
+    const work = Promise.resolve().then(async () => {
+      const before = pending;
+      await workflow.run(task, f.stage, stop.signal);
+      if (!pending || pending === before) throw new Error("The review phase did not admit an actual voter phase");
+      return pending;
+    });
     running = work;
     phaseCompletion = completionOf(work);
     void work.then(() => { phaseActive = false; }, () => { phaseActive = false; });
@@ -129,7 +149,7 @@ export function verifierAdmissionFixture(options: VerifierAdmissionOptions = {})
         completedBeforeProgress(owner.current()!, `The verifier phase completed before ${key}`);
     } finally { unsubscribe(); cancel.abort(); }
   };
-  return { ...f, agents, group, ownership, attempts, completed, slotSnapshots, phase, signal: stop.signal,
+  return { ...f, agents, group, workflow, ownership, attempts, completed, slotSnapshots, phase, signal: stop.signal,
     started: (count: number) => progress(`started-${count}`), answered: (count: number) => progress(`answered-${count}`),
     unavailable: (words: string) => new VerifierWait(words),
     finishBallot() {
@@ -138,9 +158,17 @@ export function verifierAdmissionFixture(options: VerifierAdmissionOptions = {})
       return f.finish(next ?? pending);
     },
     completeRound: f.close,
+    completeReview() {
+      if (phaseActive) return Promise.reject(new Error("A verifier phase is already running"));
+      phaseActive = true;
+      const work = Promise.resolve().then(() => workflow.run(task, f.stage, stop.signal));
+      finishing = work;
+      void work.then(() => { phaseActive = false; }, () => { phaseActive = false; });
+      return work;
+    },
     async close() {
       stop.abort();
-      const results = await Promise.allSettled([...(running ? [running] : []), ...[...sessions].map(async session => { await session.stop(); sessions.delete(session); })]);
+      const results = await Promise.allSettled([...(running ? [running] : []), ...(finishing ? [finishing] : []), ...[...sessions].map(async session => { await session.stop(); sessions.delete(session); })]);
       const errors = results.flatMap(result => result.status === "rejected" && !(result.reason instanceof VerifierWait) && !(result.reason instanceof Stopped) ? [result.reason] : []);
       if (errors.length) throw new AggregateError(errors, "Verifier policy fixture work did not settle");
     },

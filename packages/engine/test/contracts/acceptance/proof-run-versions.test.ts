@@ -2,7 +2,7 @@ import { afterAll, expect, it, spyOn } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { sameVersions } from "@petrina/core";
-import { git } from "../../fixtures.js";
+import * as gitOps from "@petrina/repositories/git";
 import { executionFor } from "@petrina/orchestrator";
 import { changesOf, versionsOf } from "../../../src/repositories.js";
 import { stepKey } from "../../../src/kernel.js";
@@ -59,7 +59,7 @@ for (const [shared, unrelated, result] of [[true, false, "pass"], [true, true, "
   const before = await versionsOf(f.task);
   const reply = testerReply(f, ids => ids.map(id => ({ id, result, evidence: "The scoped scenario and its nearby control were tried" })), async () => {
     const work = f.owners[unrelated ? 1 : 0]!.worktree;
-    writeFileSync(join(work, "during.txt"), "A new task change\n"); await git(work, "add", "."); await git(work, "commit", "-q", "-m", "Change during acceptance");
+    writeFileSync(join(work, "during.txt"), "A new task change\n"); await gitOps.commitChanges(work, "Change during acceptance");
   });
   try {
     await f.run(f.engine, () => f.engine["work"].runDo(f.scope, f.tester, signal()));

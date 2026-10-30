@@ -11,7 +11,7 @@ const { untilDelivery, lines } = reviewJourneyFixtures();
 describe.concurrent("reviews that converge", () => {
   it("has fresh agents vote on an Important finding, the builder answer it, and reviews only what changed next round", async () => {
     return cases.use("petrina-engine-case-", async owner => {
-      const { task, fakes, atOnce, voters } = await untilDelivery(owner, { reviewer: "important" });
+      const { task, fakes, atOnce, voters } = await untilDelivery(owner, { reviewer: "important" }, undefined, false, { entry: "builder" });
 
       const important = task.findings.filter((finding) => finding.severity === "blocking");
       expect(important.map((finding) => finding.text)).toEqual(["The greeting is missing on the welcome page."]);

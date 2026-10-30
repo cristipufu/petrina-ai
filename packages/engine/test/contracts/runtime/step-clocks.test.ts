@@ -1,8 +1,11 @@
+import { engineProcessCases, tempDir } from "../../support.js";
 import { timerObservation } from "../../fixtures/timer-observations.js";
 import { afterAll, expect, it, spyOn } from "bun:test";
 import { coordinatorRecordFixtures } from "../../fixtures/coordinator-records.js";
 const owners = coordinatorRecordFixtures();
 afterAll(() => owners.close());
+const timerCases = engineProcessCases();
+afterAll(() => timerCases.close());
 
 it("contains a step-clock save failure and lets the next clock checkpoint save again", async () => {
   return owners.use(async ({ engine, task, owner: lifetime }) => {
@@ -27,8 +30,9 @@ it("contains a step-clock save failure and lets the next clock checkpoint save a
 });
 
 it("registers the periodic step-clock checkpoint separately from other 15-second timers", async () => {
-  return owners.useRoot("petrina-clock-registration-", async ({ root }) => {
-    const observation = await timerObservation(root, "registration");
+  const root = tempDir("petrina-clock-registration-");
+  return timerCases.use(root, async owner => {
+    const observation = await timerObservation(root, "registration", argv => owner.nativeCommand(root, argv).completion);
     expect(observation.checkpointCalls).toBe(1);
   });
 });

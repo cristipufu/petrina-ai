@@ -1,6 +1,6 @@
 // Live projections, bounded archive ownership and revision/persistence bookkeeping.
 import { finishedTask, historyPageUsage, involvesProduct, type HistoryDependency, type Id, type State, type Task, type HistoryQuery, type HistoryPage } from "@petrina/core";
-import type { Kernel, MTask } from "./kernel.js";
+import type { Kernel, RuntimeTask } from "./kernel.js";
 import { settledHistoryTask } from "@petrina/storage/store";
 import { executionOf, restoreRepositoryState, taskView, type RepositoryContext } from "@petrina/orchestrator";
 
@@ -21,14 +21,14 @@ export interface ProjectionHost {
   tracking: Pick<Kernel["tracking"], "log">;
 }
 export class StateProjection {
-  constructor(private readonly k: ProjectionHost, private readonly normalize: (task: MTask) => void) {}
+  constructor(private readonly k: ProjectionHost, private readonly normalize: (task: RuntimeTask) => void) {}
   /** Explicit compatibility/debug snapshot. Production never loads all archived conversations. */
   getState = (): State => {
     this.k.activeState();
     const current = new Map<string, Task>([...this.archiveCache.values(), ...this.k.s.tasks].map((task) => [task.id, taskView(task) as Task]));
     // Shutdown closes SQLite before detached cleanup finishes. Reads used while waiting for that
     // cleanup keep the last in-memory work; stopping never loads an unbounded history snapshot.
-    const tasks = this.k.stopped ? [] : this.k.store.history.all().map((task) => { const known = current.get(task.id); if (known) return known; restoreRepositoryState(task as MTask); return taskView(task as MTask); });
+    const tasks = this.k.stopped ? [] : this.k.store.history.all().map((task) => { const known = current.get(task.id); if (known) return known; restoreRepositoryState(task as RuntimeTask); return taskView(task as RuntimeTask); });
     const ids = new Set(tasks.map((task) => task.id));
     tasks.push(...[...current.values()].filter((task) => !ids.has(task.id)));
     const { history: _history, ...state } = this.k.activeState();
@@ -42,7 +42,7 @@ export class StateProjection {
   private nextTaskRevision = 0;
   private dependencies: { key: string; items: HistoryDependency[] } | undefined;
 
-  changed(target?: MTask | RepositoryContext): void {
+  changed(target?: RuntimeTask | RepositoryContext): void {
     const revision = ++this.nextTaskRevision;
     if (target) {
       const task = executionOf(target).task;
@@ -88,10 +88,10 @@ export class StateProjection {
 
   taskDetails = (id: Id): Task | undefined => { const task = this.task(id); return task ? { ...taskView(task), detailsRevision: this.detailRevision(id) } : undefined; };
 
-  private readonly archiveCache = new Map<Id, MTask>();
+  private readonly archiveCache = new Map<Id, RuntimeTask>();
 
   /** A cleanup result for an already archived task must survive immediately, even after cache eviction. */
-  saveArchivedTask(task: MTask): void {
+  saveArchivedTask(task: RuntimeTask): void {
     if (this.k.stopped || this.k.s.tasks.includes(task)) return;
 
     this.k.store.saveArchivedTask(task as Task);
@@ -106,7 +106,7 @@ export class StateProjection {
     return this.k.s.tasks.filter((task) => settledHistoryTask(task as Task) && !this.k.drivers.has(task.id) && !this.k.settling.has(task.id) && !this.k.switching.has(task.id) && !this.k.copyCleanups.has(task.id) && !this.k.followsUpHeld(task.id)).map((task) => task.id);
   }
 
-  task(id: Id, ownedCleanup = false): MTask | undefined {
+  task(id: Id, ownedCleanup = false): RuntimeTask | undefined {
     const live = this.k.s.tasks.find((task) => task.id === id);
     if (live) return live;
     const cached = this.archiveCache.get(id);
@@ -116,7 +116,7 @@ export class StateProjection {
       return cached;
     }
     if (this.k.stopped && !ownedCleanup) return undefined;
-    const saved = this.k.store.history.get(id) as MTask | undefined;
+    const saved = this.k.store.history.get(id) as RuntimeTask | undefined;
     if (!saved) return undefined;
     restoreRepositoryState(saved);
     this.normalize(saved);

@@ -1,28 +1,27 @@
-import { nextReviewPlace, pendingReviewPlaces, plannedReviewPlaces, rememberReviewProfile } from "@petrina/orchestrator";
+import { ReviewConversations, nextReviewPlace, pendingReviewPlaces, plannedReviewPlaces, rememberReviewProfile } from "@petrina/orchestrator";
 import { ParallelAdmissionGroup } from "@petrina/orchestrator";
-import { ReviewRoundCompletion } from "@petrina/orchestrator";
+import { ReviewRoundCompletion, ReviewWorkflow } from "@petrina/orchestrator";
 import { createVerifierBallots } from "./verifier-host.js";
-import { executionFor, scopesFor, ReviewReports, type VerifierBallots, type PendingVerification, type RepositoryContext } from "@petrina/orchestrator";
+import { executionFor, ReviewReports, type VerifierBallots, type PendingVerification, type RepositoryContext } from "@petrina/orchestrator";
 import { changesOf, versionsOf } from "./repositories.js";
-import { refreshProofs } from "@petrina/core";
 // Review rounds: Petrina's tamper check and the product's checks first, then every reviewer at once, then
 // fresh agents voting on Important findings, and the round closing back to the builder or on to delivery.
 
-import { checkReviewEvidence, reopenFinding,  endAgentStep, exhaustedAcceptanceFailure, findingCount, inBallot, JOURNEY_WORDS as W, openStep,   reviewerAt, seatAnswered,  type ActiveAgent, type AgentProfile, type ConversationNote,  type Id, type ReadinessRecheck, type Role, type Stage, type Task } from "@petrina/core";
+import { checkReviewEvidence, inBallot, openStep,   reviewerAt, seatAnswered,  type ActiveAgent, type AgentProfile, type Id, type ReadinessRecheck, type Stage } from "@petrina/core";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { z } from "zod";
 import * as git from "@petrina/repositories/git";
 import { formatFindings } from "./prompts.js";
 import { contractFor, VerifyResult, ReviewResult } from "./roles.js";
-import { Kernel, type MStage, type MTask,  SourceRefreshRequired } from "./kernel.js";
+import { Kernel, type MutableStage, type RuntimeTask,  SourceRefreshRequired } from "./kernel.js";
 import type { Turns } from "./turn.js";
 import type { Context } from "./context.js";
 import { CheckPreparationChanged, type ProductChecks } from "./product-checks.js";
 import type { Learnings } from "./learnings.js";
 import type { Updates } from "./update.js";
-import { prepareReviewInput, readReviewInput, reviewBases, reviewBaseUpdates, reviewContextIntact, reviewScopeKey, type ReviewInput } from "./review-context.js";
-import { participantConversation, ParticipantUnavailable } from "./participant-conversation.js";
+import { prepareReviewInput, readReviewInput, reviewBaseUpdates, reviewContextIntact, type ReviewInput } from "./review-context.js";
+import { conversationDigest, ParticipantUnavailable } from "./participant-conversation.js";
 import { completeAll } from "@petrina/core";
 import { checkProofRequests, recordReviewProofs } from "@petrina/orchestrator";
 
@@ -33,7 +32,9 @@ export class Reviews {
   private readonly ballots: VerifierBallots;
   private readonly reports: ReviewReports;
   private readonly rounds: ReviewRoundCompletion;
-  private readonly inputs = new WeakMap<MTask, { digest: string; input: ReviewInput }>();
+  private readonly conversations: ReviewConversations;
+  private readonly workflow: ReviewWorkflow;
+  private readonly inputs = new WeakMap<RuntimeTask, { digest: string; input: ReviewInput }>();
   constructor(
     private readonly k: Kernel,
     private readonly turns: Turns,
@@ -42,6 +43,10 @@ export class Reviews {
     private readonly learnings: Learnings,
     private readonly updates: Updates,
   ) {
+    this.conversations = new ReviewConversations({
+      profiles: () => k.s.profiles, profile: id => k.profile(id), digest: conversationDigest,
+      checkpoint: () => k.commitNow(), unavailable: reason => new ParticipantUnavailable(reason),
+    }, { contextIntact: reviewContextIntact, baseUpdates: reviewBaseUpdates });
     this.reports = new ReviewReports({ roles: () => k.s.roles,
       hasPendingReviewers: (task, stage) => this.pendingReviewers(task, stage).length > 0,
       id: task => k.id(task.id), now: () => Date.now(),
@@ -60,16 +65,38 @@ export class Reviews {
       commitNow: task => k.commitNow(task), changed: () => k.commit(),
       openDeliveryDecision: task => k.gate(task, "delivery"), now: () => Date.now(),
     });
+    this.workflow = new ReviewWorkflow({
+      now: () => Date.now(), id: task => k.id(task.id), checkpoint: () => k.commitNow(), changed: () => k.commit(),
+      finishStep: task => k.finishStep(task), clearStep: task => k.clearStep(task), rerun: task => k.rerun(task),
+    }, {
+      prepareChecks: (scope, signal) => this.prepareChecks(scope, signal),
+      checks: async (scope, signal) => this.checks.failing(scope, signal, await this.checks.ensureChecks(scope, signal), "review", () => this.prepareChecks(scope, signal)),
+      preparationChanged: error => error instanceof CheckPreparationChanged,
+      backToBuilder: (scope, products) => this.checks.backToBuilder(scope, "before review", products), blocked: task => this.checks.blocked(task),
+      versions: versionsOf,
+      input: async (scope, signal) => {
+        const snapshot = await this.context.captureReview(scope);
+        const input = await prepareReviewInput(k.dataDir, scope, snapshot, signal);
+        this.inputs.set(scope.task, { digest: input.digest, input: snapshot });
+        return input;
+      },
+      pendingReviewers: (task, stage) => this.pendingReviewers(task, stage), hunt: (task, stage, reviewers, signal) => this.hunt(task, stage, reviewers, signal),
+      pendingVote: (task, stage) => this.pendingVote(task, stage), vote: (task, pending, signal) => this.vote(task, pending, signal),
+      finishBallot: (task, pending) => this.ballots.finish(task, pending),
+      closeRound: (task, stage, round, outcome, versions) => this.closeReviewRound(task, stage, round, outcome, versions),
+    });
   }
 
   /** Bring review checks onto their current source and reconcile Petrina's own findings. */
   private async prepareChecks(scope: RepositoryContext, signal: AbortSignal): Promise<boolean> {
     const { task, work } = scope;
+    this.updates.clearObservedHead(scope);
     if (await this.updates.upToDate(scope, signal) === "conflict") return false;
     // Repeat the whole review preflight on the code actually admitted, including Petrina's own findings.
     delete task.handChanges;
+    const knownHead = this.updates.consumeObservedHead(scope);
     const [problems, sha] = await Promise.all([
-      git.tamperCheck(work.worktree!, work.baseSha ?? work.base!), git.head(work.worktree!),
+      git.tamperCheck(work.worktree!, work.baseSha ?? work.base!), knownHead ?? git.head(work.worktree!),
     ]);
     work.tamper = { at: Date.now(), sha, problems };
     for (const finding of task.findings) {
@@ -89,123 +116,38 @@ export class Reviews {
    * its own; then fresh agents vote on the Important findings no second tool has backed yet; then the round
    * ends. What each reviewer and voter hands back is saved as it arrives, so a restart only redoes the rest.
    */
-  async runReview(task: MTask, stage: MStage, signal: AbortSignal): Promise<"continue" | "stop"> {
-    const scope = executionFor(task);
-    // Older saved tasks could reopen a fix while retaining the verdict on its previous code. An acceptance failure held for
-    // the delivery decision is no review's to reopen: acceptance testing already tested its claims.
-    for (const finding of task.findings) {
-      if (finding.raisedBy !== "petrina" && finding.status === "open" && finding.answer?.fixed && (finding.reopenedAt ?? -Infinity) < finding.answer.at && (!finding.verification || finding.verification.at < finding.answer.at) && !exhaustedAcceptanceFailure(task as unknown as Task, finding)) reopenFinding(finding, Date.now());
-    }
-    // Older saved port marks did not prove the feature had completed ordinary review.
-    if (scope.work.portReview && !scope.work.reviewedTree) {
-      delete scope.work.portReview;
-      delete task.hunt;
-      delete scope.work.reviewedSha;
-      // Its old conversation was briefed to look only at the port. A full review starts fresh,
-      // including for a one-person review that would otherwise resume with only "continue".
-      delete scope.work.conversation;
-      this.k.commitNow();
-    }
-    const round = task.rounds[stage.id] ?? 1;
-    if (task.hunt?.stageId !== stage.id || task.hunt.round !== round) {
-      // The work goes on top of the latest main before anyone reviews it: a conflict goes to the builder first,
-      // so a port after the review (and a review of that port) stays the exception.
-      let failedChecks = false;
-      const eligibleProducts = new Set<Id>();
-      for (const scope of scopesFor(task)) {
-        if (task.repositories) task.activeProductId = scope.work.productId;
-        if (!await this.prepareChecks(scope, signal)) return "continue";
-        // The product's checks run before any reviewer spends time: an agent's word never counts as passing.
-        // A failed run is evidence too: it returns to the builder without spending a review round.
-        try {
-          const result = await this.checks.failing(scope, signal, await this.checks.ensureChecks(scope, signal), "review", () => this.prepareChecks(scope, signal));
-          failedChecks = result.kind !== "passed" || failedChecks;
-          if (result.kind === "product-failed") eligibleProducts.add(result.productId);
-        } catch (error) { if (error instanceof CheckPreparationChanged) return "continue"; throw error; }
-      }
-      if (failedChecks) {
-        // The check fix can reach beyond the port's conflicted files, so its review must be ordinary.
-        for (const { work } of scopesFor(task)) {
-          delete work.portReview;
-          delete work.reviewedTree;
-        }
-        if (this.checks.backToBuilder(scope, "before review", eligibleProducts)) return "continue";
-        // The round has not started: it waits here with its number, its reviewers' conversations and its
-        // incremental anchor, and runs once the checks pass. No review is assumed from the Builder's answers.
-        return this.checks.blocked(task);
-      }
-      if (task.repositories) task.activeProductId = task.leadProductId ?? task.repositories[0]!.productId;
-      task.statusLine = "Preparing the review";
-      refreshProofs(task, await versionsOf(task));
-      this.k.commit();
-      const snapshot = await this.context.captureReview(executionFor(task));
-      const input = await prepareReviewInput(this.k.dataDir, executionFor(task), snapshot, signal);
-      this.inputs.set(task, { digest: input.digest, input: snapshot });
-      signal.throwIfAborted();
-      task.hunt = { id: this.k.id(task.id), stageId: stage.id, round, reported: {}, findings: task.findings.length, input };
-      this.k.commit();
-      // Checks use their own bounded lane. Re-enter the driver to admit the first real reviewer.
-      return "continue";
-    }
-    const reviewers = this.pendingReviewers(task, stage);
-    if (reviewers.length) {
-      await this.hunt(task, stage, reviewers, signal);
-      if (stage.profileIds.length === 1) this.k.finishStep(task);
-      else this.k.clearStep(task);
-      // Changes made by hand: the round's box ends, and the review starts again from the first reviewer.
-      if (task.rereview) endAgentStep(task, { outcome: this.raised(task), reason: W.reviewAgain }, Date.now());
-      this.k.rerun(task);
-      // The voters' first slot qualifies again, maybe on another tool: back to the driver.
-      return "continue";
-    }
-    const vote = this.pendingVote(task, stage);
-    if (vote?.voters.length) {
-      // The reviewers' box ends with what they raised; the voters get a box of their own.
-      const roleId = openStep(task)?.roleId;
-      if (roleId === stage.roleId || (roleId && stage.roleIds?.includes(roleId))) endAgentStep(task, { outcome: this.raised(task), reason: W.toCheck(vote.findings.length) }, Date.now());
-      await this.vote(task, vote, signal);
-      return "continue";
-    }
-    const outcome = vote ? this.ballots.finish(task, vote) : this.raised(task);
-    const reviewedVersions = task.hunt?.input?.trees;
-    delete task.hunt;
-    return this.closeReviewRound(task, stage, round, outcome, reviewedVersions);
-  }
-
-  /** What this round's reviewers raised, in plain counts. An acceptance failure held for the delivery decision is no review finding. */
-  private raised(task: MTask): string {
-    const recorded = openStep(task)?.result?.findings;
-    return findingCount((recorded ? recorded.filter((finding) => finding.status === "open") : task.findings.slice(task.hunt?.findings ?? 0)).filter((finding) => !exhaustedAcceptanceFailure(task as unknown as Task, finding)));
+  async runReview(task: RuntimeTask, stage: MutableStage, signal: AbortSignal): Promise<"continue" | "stop"> {
+    return this.workflow.run(task, stage, signal);
   }
 
   /** Who works on the review step next: a reviewer who has not reported yet, else a voter, else nobody. */
-  nextAgent(task: MTask, stage: MStage): { roleId: Id; profileId: Id; reviewerKey?: string; requiredToolId?: Id } | undefined {
+  nextAgent(task: RuntimeTask, stage: MutableStage): { roleId: Id; profileId: Id; reviewerKey?: string; requiredToolId?: Id } | undefined {
     return nextReviewPlace(task, stage, {
       roles: () => this.k.s.roles, profile: id => this.k.profile(id), pendingVoter: () => this.pendingVote(task, stage)?.voters[0],
     });
   }
 
   /** The stage's reviewers who have not reported this round, by their place in the stage. */
-  private pendingReviewers(task: MTask, stage: Stage): { key: string; profileId: Id }[] {
+  private pendingReviewers(task: RuntimeTask, stage: Stage): { key: string; profileId: Id }[] {
     return pendingReviewPlaces(task, stage, { roles: () => this.k.s.roles, profile: id => this.k.profile(id) });
   }
 
   /** Every reviewer place the round waits for: the whole stage, or a port review's one reviewer. */
-  private plannedReviewers(task: MTask, stage: Stage): { key: string; profileId: Id }[] {
+  private plannedReviewers(task: RuntimeTask, stage: Stage): { key: string; profileId: Id }[] {
     return plannedReviewPlaces(task, stage, { roles: () => this.k.s.roles, profile: id => this.k.profile(id) });
   }
 
   /** The positions the round's step expects a result from, recorded on the step as its participants are admitted. */
-  private plannedSeats(task: MTask, stage: Stage): string[] {
+  private plannedSeats(task: RuntimeTask, stage: Stage): string[] {
     return this.plannedReviewers(task, stage).map(({ key }) => `reviewer:${key}`);
   }
 
-  private rememberReviewer(task: MTask, key: string, profileId: Id): void {
+  private rememberReviewer(task: RuntimeTask, key: string, profileId: Id): void {
     rememberReviewProfile(task, key, profileId);
     this.k.commitNow();
   }
 
-  private releaseRoundInput(task: MTask): void {
+  private releaseRoundInput(task: RuntimeTask): void {
     this.inputs.delete(task);
     // Keep one completed conversation per stage seat for later check/coordinator returns,
     // including the same numbered round. Scope, context and ancestry are checked on reuse.
@@ -213,50 +155,11 @@ export class Reviews {
   }
 
   /** A seat returns only to its own completed conversation, with unchanged role and approved scope. */
-  private participant(scope: RepositoryContext, stage: MStage, seat: Id, plannedId: Id) {
-    const { task } = scope;
-    const round = task.rounds[stage.id] ?? 1;
-    const planned = structuredClone(this.k.profile(plannedId));
-    return {
-      reviewContext: true,
-      resume: async (actual: AgentProfile, role: Role) => {
-        if (!planned) return;
-        const saved = participantConversation(this.k, scope, role, planned, seat);
-        if (!saved || saved.reason || saved.actual?.id !== actual.id) return;
-        const prior = task.reviewSessions?.[stage.id]?.[seat];
-        if (!prior) return;
-        if (!prior.bases) throw new ParticipantUnavailable("its saved repository bases are unavailable");
-        if (!(await reviewContextIntact(prior.context))) throw new ParticipantUnavailable("its saved context is unavailable");
-        const updates = await reviewBaseUpdates(scope, prior.bases, task.hunt?.input?.heads ?? {});
-        if (updates.reason) throw new ParticipantUnavailable(updates.reason);
-        return { ...prior, reselect: true, continuedSections: updates.sections };
-      },
-      started: () => {
-        // An interrupted parallel attempt starts fresh unless it saved a screen conversation.
-        // Never return to an older round's reference after that native session has begun new work.
-        const saved = task.reviewSessions?.[stage.id];
-        const dropped = task.reviewFreshReasons?.[stage.id];
-        if (!saved?.[seat] && !dropped?.[seat]) return;
-        delete saved?.[seat];
-        // This start has said why it is fresh. A later start of the seat gives its own reason, not this one.
-        if (dropped?.[seat]) {
-          delete dropped[seat];
-          if (!Object.keys(dropped).length) delete task.reviewFreshReasons![stage.id];
-          if (!Object.keys(task.reviewFreshReasons!).length) delete task.reviewFreshReasons;
-        }
-        this.k.commitNow();
-      },
-      completed: (note: ConversationNote, actual: AgentProfile, role: Role) => {
-        task.reviewSessions = { ...task.reviewSessions, [stage.id]: {
-          ...task.reviewSessions?.[stage.id],
-          [seat]: { scope: reviewScopeKey(scope, stage.id, seat, role, planned, actual), bases: reviewBases(scope), round, plannedProfileId: plannedId, profileId: actual.id, toolId: note.toolId, model: note.model, sessionId: note.sessionId, ...(note.context ? { context: note.context } : {}) },
-        } };
-        this.k.commitNow();
-      },
-    };
+  private participant(scope: RepositoryContext, stage: MutableStage, seat: Id, plannedId: Id) {
+    return this.conversations.participant(scope, stage, seat, plannedId);
   }
 
-  private async input(task: MTask, signal: AbortSignal): Promise<ReviewInput> {
+  private async input(task: RuntimeTask, signal: AbortSignal): Promise<ReviewInput> {
     const cached = this.inputs.get(task);
     if (cached && cached.digest === task.hunt?.input?.digest) return cached.input;
     if (!task.hunt?.input) {
@@ -276,14 +179,10 @@ export class Reviews {
    * Every reviewer at once, each blind to what the others find this round, so they find things on their own.
    * A stage with one reviewer runs it as usual instead: it can pick up its conversation, or be taken over.
    */
-  private async hunt(task: MTask, stage: MStage, reviewers: readonly { key: string; profileId: Id }[], signal: AbortSignal): Promise<void> {
+  private async hunt(task: RuntimeTask, stage: MutableStage, reviewers: readonly { key: string; profileId: Id }[], signal: AbortSignal): Promise<void> {
     const scope = executionFor(task);
     const input = await this.input(task, signal);
     const check = (result: z.infer<typeof ReviewResult>) => checkReviewEvidence(input.findings, result, task) ?? checkProofRequests(this.k, task, result.proofRequests);
-    const reported = (key: string) => {
-      task.hunt = { ...task.hunt!, reported: { ...task.hunt!.reported, [key]: true } };
-      this.k.commitNow();
-    };
     // What the step waits for: every planned place, not only the participants that happen to start.
     const seats = this.plannedSeats(task, stage);
     if (stage.profileIds.length === 1 && !task.repositories) {
@@ -293,7 +192,7 @@ export class Reviews {
       let by = profileId;
       const result = await this.turns.turn(scope, roleId, profileId, () => this.context.sectionsFor(scope, roleId, undefined, undefined, `review-${key}`, input), ReviewResult, signal, { ...participant, check, reviewerKey: key, seats, used: (id) => { by = id; this.rememberReviewer(task, key, id); } });
       await this.applyReview(scope, stage, result, by, roleId, key);
-      reported(key);
+      this.reportAccepted(task, key);
       return;
     }
     // Named by the reviewers looking now: a port review's one reviewer, or the whole stage's.
@@ -318,7 +217,7 @@ export class Reviews {
             : await this.turns.parallel(scope, roleId, profileId, copy, given, ReviewResult, signal, { ...participant, check, key: `reviewer:${key}`, member: `review-${key}`, used, room, seat, ...selection, reviewerKey: key, seats, agent, refresh: false });
           await this.applyReview(scope, stage, result, by, roleId, key);
           this.k.finishReviewWork(task, `reviewer:${key}`);
-          reported(key);
+          this.reportAccepted(task, key);
         },
       })),
       signal,
@@ -326,8 +225,14 @@ export class Reviews {
     );
   }
 
+  /** Checkpoint the accepted normalized report at its original place in this round. */
+  private reportAccepted(task: RuntimeTask, key: string): void {
+    task.hunt = { ...task.hunt!, reported: { ...task.hunt!.reported, [key]: true } };
+    this.k.commitNow();
+  }
+
   /** What one reviewer reported: its confirmations and disputes of earlier findings, and its own. */
-  private async applyReview(scope: RepositoryContext, stage: MStage, result: z.infer<typeof ReviewResult>, profileId: Id, roleId: Id, reviewerKey: string): Promise<void> {
+  private async applyReview(scope: RepositoryContext, stage: MutableStage, result: z.infer<typeof ReviewResult>, profileId: Id, roleId: Id, reviewerKey: string): Promise<void> {
     recordReviewProofs(this.k, scope.task, stage, result.proofRequests, profileId, roleId, reviewerKey);
     const { task } = scope;
     await this.learnings.note(scope, result.learnings, roleId, profileId);
@@ -335,7 +240,7 @@ export class Reviews {
   }
 
   /** Settle reviewer reports before asking which saved ballot phase needs work. */
-  private pendingVote(task: MTask, stage: MStage): PendingVerification | undefined {
+  private pendingVote(task: RuntimeTask, stage: MutableStage): PendingVerification | undefined {
     this.settleReviews(task, stage);
     return this.ballots.next(task, stage);
   }
@@ -344,7 +249,7 @@ export class Reviews {
    * Fresh agents check their place's findings, all at once, each blind to its peers' answers. Every answer is saved
    * as it arrives with its place, so a limit or restart only asks for what that place still owes.
    */
-  private async vote(task: MTask, pending: PendingVerification, signal: AbortSignal): Promise<void> {
+  private async vote(task: RuntimeTask, pending: PendingVerification, signal: AbortSignal): Promise<void> {
     const scope = executionFor(task);
     const input = task.hunt?.input ? await this.input(task, signal) : undefined;
     // Every voter sees the same original claims and evidence, never a peer's ballot.
@@ -401,7 +306,7 @@ export class Reviews {
             refresh: false,
           });
           task.hunt = { ...task.hunt!, voted: { ...task.hunt?.voted, [by]: true } };
-          const own = openStep(task)?.agentResults?.findLast((entry) => entry.roleId === "verifier" && entry.profileId === by);
+          const own = openStep(task)?.agentResults?.findLast((entry) => (this.k.role(entry.roleId, task)?.result === "votes" || entry.roleId === "verifier") && entry.profileId === by);
           if (own) own.findings = structuredClone(task.findings.filter((finding) => assigned.has(finding.id)));
           this.k.finishReviewWork(task, reviewKey);
           this.k.commit();
@@ -424,7 +329,7 @@ export class Reviews {
    * ends while peers still work, the scheduler offers it a seat like other work in progress and it rejoins;
    * the task waits for it only once every peer has finished first.
    */
-  private async together(task: MTask, members: readonly { key: string; reviewKey: string; roleId: Id; profileId: Id; reviewerKey?: string; work: (copy: string, room: (toolId: Id, profile: AgentProfile) => boolean, seat: Id, used: (profileId: Id) => void, agent: ActiveAgent, continuing: boolean, signal: AbortSignal, selection?: SeatSelection) => Promise<void> }[], parentSignal: AbortSignal, status: (running: number, waiting: number) => string): Promise<void> {
+  private async together(task: RuntimeTask, members: readonly { key: string; reviewKey: string; roleId: Id; profileId: Id; reviewerKey?: string; work: (copy: string, room: (toolId: Id, profile: AgentProfile) => boolean, seat: Id, used: (profileId: Id) => void, agent: ActiveAgent, continuing: boolean, signal: AbortSignal, selection?: SeatSelection) => Promise<void> }[], parentSignal: AbortSignal, status: (running: number, waiting: number) => string): Promise<void> {
     const scope = executionFor(task);
     const root = this.k.repositoryOf(scope)!.path!;
     const copyFolder = (productId: Id) => join(this.k.dataDir, "worktrees", productId, `${task.id}.copies`);
@@ -483,6 +388,7 @@ export class Reviews {
         return {
           activate: () => {
             if (versions.length) this.turns.repositoryCopies.set(copy, copies);
+            if (!reuse) this.turns.copyHeads.set(copy, sha);
           },
           finish: () => {
             const saved = task.hunt?.screenTurns?.[member.key];
@@ -490,6 +396,7 @@ export class Reviews {
             // Primary and companion copies are reclaimed together by their owning repositories
             // when the group settles; saved screen turns retain their complete map.
             this.turns.repositoryCopies.delete(copy);
+            this.turns.copyHeads.delete(copy);
           },
         };
       },
@@ -527,12 +434,12 @@ export class Reviews {
   }
 
   /** Settle objections and shared repairs together, only after the whole reviewer group reports. */
-  private settleReviews(task: MTask, stage: MStage): void {
+  private settleReviews(task: RuntimeTask, stage: MutableStage): void {
     this.reports.settle(task, stage);
   }
 
   /** The task's own change per product, without main's; one that cannot be read is unavailable. */
-  private async ownChanges(task: MTask): Promise<Record<Id, string>> {
+  private async ownChanges(task: RuntimeTask): Promise<Record<Id, string>> {
     return changesOf(task).catch(() => ({}));
   }
 
@@ -540,7 +447,7 @@ export class Reviews {
    * The end of a review round: back to the builder with what is Important, or on towards delivery. `outcome`: what
    * the round's last box (its reviewers', or its voters') says.
    */
-  private async closeReviewRound(task: MTask, stage: MStage, round: number, outcome: string, reviewedVersions?: Readonly<Record<Id, string>>): Promise<"continue" | "stop"> {
+  private async closeReviewRound(task: RuntimeTask, stage: MutableStage, round: number, outcome: string, reviewedVersions?: Readonly<Record<Id, string>>): Promise<"continue" | "stop"> {
     return this.rounds.finish(task, stage, round, outcome, reviewedVersions);
   }
 }

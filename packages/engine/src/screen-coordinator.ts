@@ -1,8 +1,8 @@
 // Native ownership for screen-wait copies; portable arbitration lives in the orchestrator.
 import { join } from "node:path";
 import { ScreenArbitration, executionOf, scopesFor, type RepositoryContext } from "@petrina/orchestrator";
-import type { Id, ScreenMode } from "@petrina/core";
-import type { Kernel, MTask } from "./kernel.js";
+import type { ConversationNote, Id, ScreenMode } from "@petrina/core";
+import type { Kernel, RuntimeTask } from "./kernel.js";
 import * as git from "@petrina/repositories/git";
 import { completeAll } from "@petrina/core";
 import { runtimeClock } from "./clock.js";
@@ -17,7 +17,7 @@ export class ScreenCoordinator {
       sessionOwned: task => k.drivers.has(task.id) || k.settling.has(task.id),
       waitLine: task => k.taskAdmissionWait(task), column: task => k.columnFor(task),
       record: (task, tone, text, roleId, profileId) => k.log(task, tone, text, roleId, profileId),
-      inboxId: () => k.id("inbox"), checkpoint: () => k.commitNow(), schedule: () => k.schedule(),
+      inboxId: () => k.id("inbox"), checkpoint: scope => k.commitNow(scope), schedule: () => k.schedule(),
     }, runtimeClock);
   }
   get groups() { return this.arbitration.groups; }
@@ -25,15 +25,16 @@ export class ScreenCoordinator {
   setScreenUse(mode: ScreenMode, hourMs: number): void { this.arbitration.setScreenUse(mode, hourMs); }
   allowScreen(taskId: Id): void { this.arbitration.allowScreen(taskId); }
   setTaskScreen(taskId: Id, allowed: boolean): void { this.arbitration.setTaskScreen(taskId, allowed); }
-  askScreen(task: MTask, roleId: Id, profileId: Id, reason: string, member?: string): boolean { return this.arbitration.askScreen(task, roleId, profileId, reason, member); }
-  waitForScreen(task: MTask): void { this.arbitration.waitForScreen(task); }
+  askScreen(task: RuntimeTask, roleId: Id, profileId: Id, reason: string, member?: string): boolean { return this.arbitration.askScreen(task, roleId, profileId, reason, member); }
+  saveTurn(scope: RepositoryContext, roleId: Id, profileId: Id, member: string, copy: string, note: ConversationNote | undefined, reason: string): boolean { return this.arbitration.saveTurn(scope, roleId, profileId, member, copy, note, reason); }
+  waitForScreen(task: RuntimeTask): void { this.arbitration.waitForScreen(task); }
   syncScreen(): void { this.arbitration.syncScreen(); }
-  selectScreen(task: MTask): void { this.arbitration.selectScreen(task); }
-  releaseScreen(task: MTask): void { this.arbitration.releaseScreen(task); }
+  selectScreen(task: RuntimeTask): void { this.arbitration.selectScreen(task); }
+  releaseScreen(task: RuntimeTask): void { this.arbitration.releaseScreen(task); }
   armScreenTimer(): void { this.arbitration.armScreenTimer(); }
 
   /** A reopened reviewer or voter still works in its own copy, including during terminal take-over. */
-  agentWorktree(target: MTask | RepositoryContext): string {
+  agentWorktree(target: RuntimeTask | RepositoryContext): string {
     const scope = executionOf(target);
     const { task, work: repository } = scope;
     const member = task.screen?.member;
@@ -41,7 +42,7 @@ export class ScreenCoordinator {
   }
 
   /** Pause, cancel or failure discards saved screen conversations and their separate working copies. */
-  discardScreenTurns(task: MTask): void {
+  discardScreenTurns(task: RuntimeTask): void {
     if (!Object.keys(task.hunt?.screenTurns ?? {}).length) return;
     delete task.hunt!.screenTurns;
     const owners = scopesFor(task, { includeExcluded: true }).map((scope) => ({ productId: scope.work.productId, root: scope.work.source?.product.path ?? this.k.productOf(scope)?.path }));

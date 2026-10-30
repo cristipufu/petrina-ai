@@ -7,12 +7,11 @@ import { mcpTools } from "../../../src/mcp-catalog.js";
 import type { EngineClient } from "../../client.js";
 import { Fakes } from "../../fixtures.js";
 import { createFollowUpFixtures, settledSource } from "../../fixtures/follow-up-native.js";
-
-const { open, reopen, close, shutdown } = createFollowUpFixtures();
+const { open, reopen, close, use } = createFollowUpFixtures();
 afterAll(close);
-
 it("records a manual link from archived history to a running request without changing evidence or the request, and retains its receipt", async () => {
-  const world = await open();
+  return use(async caseOwner => {
+  const world = await open(caseOwner);
   try {
     const { engine } = world;
     const source = settledSource(engine, world.shop, { verification: { by: "sol-high", verdict: "pre-existing", reason: "Confirmed on base", at: 1 } });
@@ -29,7 +28,9 @@ it("records a manual link from archived history to a running request without cha
     const result = await c.call("task.track-finding", args);
     expect(result).toEqual({ outcome: "completed", ...args });
     const client = { call: (name: string, args: Record<string, unknown>) => c.call(name, args) } as EngineClient;
-    const output = spyOn(console, "log").mockImplementation(() => {});
+    const output = spyOn(console, "log");
+    caseOwner.onStop(() => output.mockRestore());
+    output.mockImplementation(() => {});
     try {
       expect(await coordinationCli(["task", "track-finding", "--task-id", source.id, "--finding-id", "old", "--target-task-id", targetId, "--request-id", args.requestId, "--json"], client)).toBe(0);
       expect(JSON.parse(output.mock.calls.at(-1)![0] as string)).toEqual(result);
@@ -54,5 +55,6 @@ it("records a manual link from archived history to a running request without cha
     expect(world.engine.task(source.id)!.findings[0]).toEqual({ ...original, tracking: { taskId: targetId } });
     expect(world.engine.task(targetId)!.followUp!.reports).toHaveLength(1);
     expect(world.prompts).toEqual([]);
-  } finally { await shutdown(world.engine); }
+  } finally { await caseOwner.stop(world.engine); }
+  });
 });

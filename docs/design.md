@@ -29,7 +29,7 @@ A failed automated check returns to the Builder at most twice in a row; a genuin
 
 ## State ownership
 
-`packages/core/src/task-model.ts` groups the task by responsibility and lifetime:
+`packages/core/src/task-model.ts` groups the task by responsibility and lifetime (consuming leaf domain contracts in `catalog-model.ts`, `check-model.ts`, `review-model.ts` and `journey-model.ts`, all re-exported through `model.ts`):
 
 | State | Owner and lifetime |
 |---|---|
