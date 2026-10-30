@@ -503,8 +503,9 @@ export class KernelCommits {
       this.k.saveTimer = undefined;
       try {
         if (!this.k.stopped) this.k.save(false);
-      } catch {
+      } catch (error) {
         // A full disk, for example: the next change saves again.
+        if (!this.k.stopped) console.warn("Deferred state save failed:", error);
       }
     }, 400);
   }

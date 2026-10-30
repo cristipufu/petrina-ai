@@ -216,8 +216,17 @@ export type {
   ParticipantInputHost,
   ParticipantInputEffects,
   ParticipantInputDetails,
+  ParticipantInputCaptureRequest,
   ParticipantContextPreparation
 } from "./ports/participant-input.js";
 export { openParticipantSession, type ParticipantSessionEffects } from "./participant-session.js";
 
 export { DesignConversations, recordDesignAnswers, recordDesignBrief, recordDesignObjections, type DesignConversationHost } from "./design-conversations.js";
+export { keepRecoveredInboxItem, recoverStartupWork, type StartupRecoveryEffects } from "./startup-recovery.js";
+export {
+  applyTakeOverHandChanges,
+  invalidateHandEditedRepositoryWork,
+  takeOverBranchProblem,
+  type TakeOverTamperObservation,
+  type TakeOverTamperOutcome,
+} from "./take-over-workflow.js";

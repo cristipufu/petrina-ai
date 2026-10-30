@@ -33,7 +33,7 @@ it("takes a compact review event to its matching checkpoint and original seat ev
   expect(view.supportingReview.nodeId).toBe(review.nodeId);
   expect(view.findings.counts.open).toEqual({ total: 2, important: 0, nits: 1, preExisting: 1 });
   task.findings[0]!.status = "fixed";
-  const report = (review.reports as any[]).find((report) => report.id === "old");
+  const report = (review.reports as { id: string; evidence: { read: Record<string, unknown> } }[]).find((entry) => entry.id === "old")!;
   const historical = await c.call("journey.finding", report.evidence.read);
   expect(JSON.parse(String(historical.text)).status).toBe("open");
   const current = await c.call("task.read", { taskId, section: "findings", findingId: "old" });

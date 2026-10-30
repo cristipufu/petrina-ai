@@ -161,14 +161,16 @@ export async function executeParallelTurnAttempt<T>(
     deps.copyHeads.delete(copy);
     const head = (!options.took && !held ? knownHead : undefined) ?? (await git.head(copy).catch(() => undefined));
     if (signal.aborted || !k.task(taskId)) throw new Aborted();
-    const givenSections = [
+    const rawSections = [
       ...currentStepAssignment(task, roleId),
       ...(await given()),
       ...(wentBack ? (offered?.continuedSections ?? []) : []),
       ...(repository.prBackground ? [{ title: "Pull request background", body: pullRequestBackground(repository.prBackground) }] : []),
       { title: OWN_COPY, body: ownCopy(head ?? "") },
     ];
-    const openingMessages = deps.reserveOpening(scope, givenSections, options.member, wentBack);
+    const reserved = deps.reserveOpening(scope, rawSections, options.member, wentBack);
+    const givenSections = reserved.sections;
+    const openingMessages = reserved.messages;
     if (signal.aborted) throw new Aborted();
     if (options.took) givenSections.push({ title: TOOK_OVER, body: formatReviewTakeOver(options.took.from, options.took.words, options.took.refusal) });
     const copies = deps.repositoryCopies.get(copy);
@@ -219,19 +221,19 @@ export async function executeParallelTurnAttempt<T>(
       ...(options.readiness ? { readiness: options.readiness } : {}),
     };
     const recordJob = (job: string, supplied: readonly Section[]) => {
-      pending = deps.recordJourneyInput(
+      pending = deps.recordJourneyInput({
         scope,
         roleId,
         profileId,
         sections,
-        wentBack ? "continued" : "fresh",
-        options.plannedId,
-        options.selectionReason,
-        options.reviewerKey,
-        run.settings,
-        job,
-        { ...extraMeta, supplied, omitted: prepared.omitted, ...(freshReason ? { freshReason } : {}) },
-      );
+        mode: wentBack ? "continued" : "fresh",
+        plannedId: options.plannedId,
+        selectionReason: options.selectionReason,
+        reviewerKey: options.reviewerKey,
+        confirmedSettings: run.settings,
+        instructions: job,
+        extra: { ...extraMeta, supplied, omitted: prepared.omitted, ...(freshReason ? { freshReason } : {}) },
+      });
     };
     const continued = capacityContinuePrompt();
     const opening = capacityBack
@@ -240,27 +242,38 @@ export async function executeParallelTurnAttempt<T>(
         ? continuePrompt(promptContext, { refreshRole: prepared.refreshRole, recordJob })
         : buildPrompt(promptContext, recordJob);
     if (capacityBack) {
-      pending = deps.recordJourneyInput(
+      pending = deps.recordJourneyInput({
         scope,
         roleId,
         profileId,
-        currentStepAssignment(task, roleId),
-        "continued",
-        options.plannedId,
-        options.selectionReason,
-        options.reviewerKey,
-        run.settings,
-        continued,
-        { ...extraMeta, resumed: true },
-      );
+        sections: currentStepAssignment(task, roleId),
+        mode: "continued",
+        plannedId: options.plannedId,
+        selectionReason: options.selectionReason,
+        reviewerKey: options.reviewerKey,
+        confirmedSettings: run.settings,
+        instructions: continued,
+        extra: { ...extraMeta, resumed: true },
+      });
     }
-    const result = await deps.converse(scope, run, agent, opening, capacityBack ? "continue" : "first", role, profileId, schema, signal, {
-      ...options,
-      main: false,
-      openingMessages,
-      reviewKey: options.key,
-      askScreen: (reason) => k.screens.saveTurn(scope, role.id, profile.id, options.member, copy, note, reason),
-      pendingInput: () => pending,
+    const result = await deps.converse({
+      scope,
+      run,
+      agent,
+      opening,
+      reason: capacityBack ? "continue" : "first",
+      role,
+      profileId,
+      schema,
+      signal,
+      options: {
+        ...options,
+        main: false,
+        openingMessages,
+        reviewKey: options.key,
+        askScreen: (reason) => k.screens.saveTurn(scope, role.id, profile.id, options.member, copy, note, reason),
+        pendingInput: () => pending,
+      },
     });
     options.completed?.(note, profile, role);
     return result;

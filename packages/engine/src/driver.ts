@@ -3,6 +3,7 @@ import {
   DeliveryCheckpoint,
   AcceptancePreflight,
   AgentWorkflow,
+  recoverStartupWork,
   type AgentAdmissionCatalog,
   type AgentAdmissionReadiness,
   type AgentAdmissionErrors,
@@ -18,7 +19,7 @@ import { committedCodeOf, versionsOf, designWorkKey, invalidateAcceptance } from
 import { shipsUnasked } from "@petrina/core";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { withdrawAsks, type Id, type InboxItem } from "@petrina/core";
+import type { Id } from "@petrina/core";
 import * as git from "@petrina/repositories/git";
 import { Kernel, Aborted, type RuntimeTask, type MutableStage, PLANNER_PROFILE, ScreenWait, SourceRefreshRequired } from "./kernel.js";
 import { WaitingForUsage, WaitingForCapacity, waitingFor } from "./usage.js";
@@ -428,51 +429,16 @@ export class Driver {
    * inbox for the conversation that asked it, without a slot; an open permission request goes.
    */
   recover(): void {
-    const keep = (item: InboxItem) => {
-      if (!item.blocking || item.kind === "maintenance-settings") return true;
-      const task = this.k.task(item.taskId);
-      return item.kind === "question" && task?.state === "needs-you" && (
-        executionFor(task).work.conversation?.asked?.itemId === item.id
-        || task.queued.some(message => Object.values(message.deliveries ?? {}).some(receipt => receipt.decisionId === item.id))
-      );
-    };
-    for (const item of this.k.s.inbox.filter((entry) => !keep(entry))) {
-      const task = this.k.task(item.taskId);
-      if (!task) continue;
-      // On the journey too: what went unanswered hangs under its step as withdrawn.
-      withdrawAsks(task, [item.id], Date.now());
-      if (item.kind === "permission") this.k.log(
-        task,
-        "warn",
-        `Petrina restarted before you answered “${item.title}”, so it left your inbox. The agent will ask again if it still needs to`,
-        item.roleId,
-        item.profileId
-      );
-    }
-    this.k.s.inbox = this.k.s.inbox.filter(keep);
-    for (const task of this.k.s.tasks) {
-      if (task.workValidating) {
-        task.workValidating = false;
-        task.workError = "Validation was interrupted. Apply the saved choices to check them again.";
-      }
-      if (task.driving) {
-        // Still in the coordinator's hands: the step keeps its seat, and Hand back works as before.
-        task.state = "needs-you";
-        task.holdsSlot = true;
-        continue;
-      }
-      if (this.k.s.inbox.some((item) => item.taskId === task.id && item.blocking)) {
-        task.statusLine = "Waiting for your answer";
-        delete task.agent;
-      } else if (["running", "waiting"].includes(task.state) || (task.state === "needs-you" && !this.k.s.inbox.some((item) => item.taskId === task.id))) {
-        task.state = "waiting";
-        task.statusLine = "Waiting for a free slot";
-        delete task.agent;
-      }
-      task.holdsSlot = false;
-      // Nothing runs after a restart: agents that worked beside the main one are gone too.
-      delete task.helpers;
-    }
+    this.k.s.inbox = recoverStartupWork(this.k.s.tasks, this.k.s.inbox, {
+      onDroppedPermission: (task, item) =>
+        this.k.log(
+          task,
+          "warn",
+          `Petrina restarted before you answered “${item.title}”, so it left your inbox. The agent will ask again if it still needs to`,
+          item.roleId,
+          item.profileId,
+        ),
+    });
   }
 
   /** Low-risk work skips the delivery check only where the coordinator opted in, with nothing left that needs them. */

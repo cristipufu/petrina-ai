@@ -224,7 +224,17 @@ it("reacquires the destination outside check capacity when discovery resumes aft
     checks.ensureChecks = async (scope, signal) => {
       if (scope.task.id !== first.id || discovered) return ensure(scope, signal);
       // Use the real question boundary: no manual state change or scheduling wake can hide a delay.
-      await f.engine()["turns"]["wait"](scope, "question", "Which checks should run?", true, {}, signal, "Waiting for your answer", { roleId: "check-finder", profileId: "sol-high" }, false);
+      await f.engine()["turns"]["wait"]({
+        scope,
+        kind: "question",
+        title: "Which checks should run?",
+        blocking: true,
+        extra: {},
+        signal,
+        status: "Waiting for your answer",
+        by: { roleId: "check-finder", profileId: "sol-high" },
+        main: false,
+      });
       discovered = true;
       return cached(scope)!;
     };

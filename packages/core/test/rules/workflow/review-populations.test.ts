@@ -39,7 +39,7 @@ describe("review reports name the populations they count", () => {
     expect(event).toMatchObject({ opening: 0, closing: 2, raised: ["old", "nit"], stillOpen: [], stillOpenPopulation: "open-important", openImportant: [], openNits: ["nit"], openPreExisting: ["old"], reportCounts: { opening: { total: 0 }, closing: { total: 2, open: { total: 2, important: 0, nits: 1, preExisting: 1 }, fixed: 0, dismissed: 0, unverified: 0 } } });
     expect(event.summary).toContain("2 open reports (0 Important, 1 nit, 1 pre-existing follow-up)");
     expect(event.reports).toEqual([closing[1]!, closing[0]!].map((finding) => expect.objectContaining({ id: finding.id, severity: finding.severity, status: "open", productIds: ["shop", "api"], evidence: { read: { taskId: event.taskId, nodeId: "review", findingId: finding.id } } })));
-    expect((event.reports as any[])[1].tracking).toEqual({ taskId: "follow-up" });
+    expect((event.reports as { tracking?: { taskId: string } }[])[1]!.tracking).toEqual({ taskId: "follow-up" });
   });
 
   for (const severity of ["suggestion", "pre-existing"] as const) it(`keeps all ${severity} reports open without implying Important work remains`, () => {
@@ -78,7 +78,7 @@ describe("review reports name the populations they count", () => {
       { ...report("invalid", "blocking"), productIds: ["shop", "unknown"] },
     ];
     const event = reviewEvent([], reports, shared);
-    expect((event.reports as any[]).map((entry) => entry.productIds)).toEqual(shared ? [[], [], ["shop"], []] : [["shop"], ["shop"], ["shop"], ["shop"]]);
+    expect((event.reports as { productIds: string[] }[]).map((entry) => entry.productIds)).toEqual(shared ? [[], [], ["shop"], []] : [["shop"], ["shop"], ["shop"], ["shop"]]);
     expect(reports[0]!.productIds).toBeUndefined();
   });
 });

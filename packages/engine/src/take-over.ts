@@ -1,12 +1,17 @@
 import { completeAll } from "@petrina/core";
-import { executionFor, repositoryView } from "@petrina/orchestrator";
+import {
+  applyTakeOverHandChanges,
+  executionFor,
+  invalidateHandEditedRepositoryWork,
+  repositoryView,
+  takeOverBranchProblem,
+} from "@petrina/orchestrator";
 // Take over in the terminal: the coordinator drives a step's agent by hand, then hands it back. The
 // launcher scripts and terminals are in terminal.ts.
 
 import { join } from "node:path";
 import {
   runtimeWaitHolds,
-  lastIndexWhere,
   TAKE_OVER_TOOLS,
   TAKE_OVER_WORDS,
   takeOverBlock,
@@ -337,11 +342,7 @@ export class TakeOver {
           await this.k.rememberVersion({ task, work: kept.work }, { head: kept.sha, tree: kept.tree });
           knownHeads[kept.work.productId] = kept.sha;
           changedProducts.add(kept.work.productId);
-          if (kept.work.checks) kept.work.checks.current = false;
-          delete kept.work.reviewedTree;
-          delete kept.work.checkedSha;
-          delete kept.work.checkedPatch;
-          task.handChanges = true;
+          invalidateHandEditedRepositoryWork(task, kept.work);
         }));
         for (const kept of prepared) {
           driving.repositoryCopies[kept.work.productId]!.head = kept.head;
@@ -408,47 +409,25 @@ export class TakeOver {
       const known = knownHeads?.[productId];
       const [problems, sha] = await Promise.all([
         git.tamperCheck(
-        scope.work.worktree!,
-        scope.work.baseSha ?? scope.work.base!
-      ),
-        known ? Promise.resolve(known) : git.head(scope.work.worktree!)
+          scope.work.worktree!,
+          scope.work.baseSha ?? scope.work.base!,
+        ),
+        known ? Promise.resolve(known) : git.head(scope.work.worktree!),
       ]);
-      return { scope, problems, sha };
+      return { productId, problems, sha };
     }));
-    for (const { scope, problems, sha } of inspected) {
-      const productId = scope.work.productId;
-      scope.work.tamper = { at: Date.now(), sha, problems };
-      for (const problem of problems) {
-        if (!task.findings.some((finding) => finding.text === problem && finding.status === "open" && (!task.repositories || finding.productIds?.includes(productId)))) {
-          task.findings.push({
-            ...(task.repositories ? { productIds: [productId] } : {}),
-            id: this.k.id(task.id),
-            text: problem,
-            severity: "blocking",
-            raisedBy: "petrina",
-            confirmedBy: [],
-            status: "open"
-          });
-        }
-      }
+    const outcomes = applyTakeOverHandChanges(task, inspected, {
+      nextFindingId: () => this.k.id(task.id),
+    });
+    for (const { scope, problems } of outcomes) {
       this.k.log(
         scope,
         problems.length ? "warn" : "done",
-        problems.length ? `Tests check on your changes: ${problems.length} problem${problems.length === 1 ? "" : "s"}` : "Tests check on your changes passed: no tests removed or skipped"
+        problems.length
+          ? `Tests check on your changes: ${problems.length} problem${problems.length === 1 ? "" : "s"}`
+          : "Tests check on your changes passed: no tests removed or skipped",
       );
-
     }
-    task.handChanges = true;
-    const stages = task.plan?.stages ?? [];
-    if (stages.some((stage, index) => index > task.stageIndex && stage.kind === "review-chain")) return;
-    const chain = stages[task.stageIndex]?.kind === "review-chain" ? task.stageIndex : lastIndexWhere(
-      stages,
-      (
-      stage,
-      index
-    ) => index < task.stageIndex && stage.kind === "review-chain"
-    );
-    if (chain >= 0) task.rereview = stages[chain]!.id;
   }
 
   /** One take-over step at a time per task: taking over, opening the terminal again, or handing back. */
@@ -519,10 +498,6 @@ export class TakeOver {
   /** Why hand back cannot go on with the working copy as it is, in plain words. */
   private branchProblem(task: RuntimeTask, where: { branch?: string; busy?: string }): string | undefined {
     const scope = executionFor(task);
-    if (where.busy) return `The working copy is in the middle of ${where.busy}. Finish it or abort it in your terminal, then hand back.`;
-    const separate = this.k.agentWorktree(task) !== scope.work.worktree;
-    if (separate && where.branch) return "The reviewer's working copy switched to a branch. Return it to where the reviewer was working, then hand back.";
-    if (!separate && where.branch !== scope.work.branch) return "The working copy is no longer on the task's branch. Switch back to it in your terminal, then hand back.";
-    return undefined;
+    return takeOverBranchProblem(scope.work, this.k.agentWorktree(task), where);
   }
 }

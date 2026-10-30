@@ -8,8 +8,6 @@ import {
   type ConversationNote,
   type Finding,
   type Id,
-  type InboxKind,
-  type ReadinessRecheck,
   type Role,
   type TurnReason,
 } from "@petrina/core";
@@ -57,6 +55,7 @@ import {
   discardUnavailableTurnParticipant,
   openTurnAgentRun,
   waitForCoordinatorReply,
+  type CoordinatorReplyRequest,
   type OpenAgentRunOptions,
   type PendingInput,
 } from "./turn-session.js";
@@ -340,23 +339,34 @@ export class Turns implements TurnAttemptCollaborators {
     agent: TurnAgent,
     options: OpenAgentRunOptions,
   ): Promise<{ run: AgentSession; off?: string; reopenFailure?: string }> {
-    return openTurnAgentRun(this.k, this.tools, scope, role, profile, cwd, signal, agent, options, {
-      onMessage: this.messageStream(scope, role.id, profile.id, options.reviewerKey, signal, options.main),
-      markBriefed: (s) => this.briefed(s),
-      wait: (...args) => this.wait(...args),
+    return openTurnAgentRun({
+      k: this.k,
+      tools: this.tools,
+      scope,
+      role,
+      profile,
+      cwd,
+      signal,
+      agent,
+      options,
+      hooks: {
+        onMessage: this.messageStream(scope, role.id, profile.id, options.reviewerKey, signal, options.main),
+        markBriefed: (s) => this.briefed(s),
+        wait: (request) => this.wait(request),
+      },
     });
   }
 
-  converse<T>(
-    scope: RepositoryContext,
-    run: AgentSession,
-    agent: TurnAgent,
-    opening: string,
-    reason: TurnReason,
-    role: Role,
-    profileId: Id,
-    schema: z.ZodType<T>,
-    signal: AbortSignal,
+  converse<T>(request: {
+    scope: RepositoryContext;
+    run: AgentSession;
+    agent: TurnAgent;
+    opening: string;
+    reason: TurnReason;
+    role: Role;
+    profileId: Id;
+    schema: z.ZodType<T>;
+    signal: AbortSignal;
     options: {
       check?: Check<T>;
       main: boolean;
@@ -367,14 +377,18 @@ export class Turns implements TurnAttemptCollaborators {
       reviewerKey?: string;
       beforeContinue?: (reply: TurnResult) => Promise<void>;
       pendingInput?: () => PendingInput | undefined;
-    },
-  ): Promise<T> {
-    return runTurnConversation(this.k, scope, run, agent, opening, reason, role, profileId, schema, signal, {
-      ...options,
-      attachInput: (s, pending, text, additions, openingSections) =>
-        this.attachInput(s, pending, text, additions, openingSections),
-      markBriefed: (s) => this.briefed(s),
-      wait: (...args) => this.wait(...args),
+    };
+  }): Promise<T> {
+    return runTurnConversation({
+      ...request,
+      k: this.k,
+      options: {
+        ...request.options,
+        attachInput: (s, pending, text, additions, openingSections) =>
+          this.attachInput(s, pending, text, additions, openingSections),
+        markBriefed: (s) => this.briefed(s),
+        wait: (replyRequest) => this.wait(replyRequest),
+      },
     });
   }
 
@@ -388,72 +402,39 @@ export class Turns implements TurnAttemptCollaborators {
     return this.inputs.attach(scope, pending, text, additions, openingSections);
   }
 
-  private wait(
-    scope: RepositoryContext,
-    kind: InboxKind,
-    title: string,
-    blocking: boolean,
-    extra: { body?: string; options?: string[]; detail?: string },
-    signal: AbortSignal,
-    status: string,
-    by: { roleId: Id; profileId: Id },
-    main: boolean,
-    reviewKey?: string,
-  ): Promise<string> {
-    return waitForCoordinatorReply(this.k, scope, kind, title, blocking, extra, signal, status, by, main, reviewKey);
+  private wait(request: CoordinatorReplyRequest): Promise<string> {
+    return waitForCoordinatorReply(this.k, request);
   }
 
   whereYouWere(scope: RepositoryContext, role: Role, since: number): WhereYouWere {
     return buildWhereYouWere(scope, role, since);
   }
 
-  recordJourneyInput(
-    scope: RepositoryContext,
-    roleId: Id,
-    profileId: Id,
-    sections: readonly Section[],
-    mode: "fresh" | "continued",
-    plannedId: Id,
-    selectionReason: string | undefined,
-    reviewerKey: string | undefined,
-    confirmedSettings: { model?: string; modelName?: string; effort?: string },
-    instructions: string,
-    extra: {
-      omitted?: readonly ContextOmission[];
-      freshReason?: string;
-      sessionId?: string;
-      resumed?: boolean;
-      supplied?: readonly Section[];
-      place?: string;
-      readiness?: ReadinessRecheck;
-    } = {},
-  ): PendingInput | undefined {
-    return this.inputs.capture(
-      scope,
-      roleId,
-      profileId,
-      sections,
-      mode,
-      plannedId,
-      selectionReason,
-      reviewerKey,
-      confirmedSettings,
-      instructions,
-      extra,
-    );
+  recordJourneyInput(request: Parameters<ParticipantInputs["capture"]>[0]): PendingInput | undefined {
+    return this.inputs.capture(request);
   }
 
   reserveOpening(
     scope: RepositoryContext,
-    sections: Section[],
+    sections: readonly Section[],
     member: string | undefined,
     earlierCarried: boolean,
-  ): ReturnType<typeof takeMessages> {
+  ): { sections: Section[]; messages: ReturnType<typeof takeMessages> } {
     const index = sections.findIndex((section) => section.title.startsWith("The coordinator's notes on this task"));
-    if (index >= 0) sections.splice(index, 1, ...coordinatorNotes(scope, member, earlierCarried));
+    const resolvedSections =
+      index >= 0
+        ? [
+            ...sections.slice(0, index),
+            ...coordinatorNotes(scope, member, earlierCarried),
+            ...sections.slice(index + 1),
+          ]
+        : [...sections];
     const maintenance = scope.task.maintenance;
-    if (maintenance?.pendingReply && maintenance.settingsDecision?.choice === "keep") return [];
-    return takeMessages(scope.task, member, Infinity);
+    const messages =
+      maintenance?.pendingReply && maintenance.settingsDecision?.choice === "keep"
+        ? []
+        : takeMessages(scope.task, member, Infinity);
+    return { sections: resolvedSections, messages };
   }
 
   async prepareTurnPrompt(

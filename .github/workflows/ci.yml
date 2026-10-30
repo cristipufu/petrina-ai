@@ -4,6 +4,7 @@ on:
   push:
     branches: [main, 'repair/**', 'petrina/validation/**']
   pull_request:
+  merge_group:
 
 # Read-only token: CI only checks the code, it never writes to the repository.
 permissions:
@@ -11,11 +12,11 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   web:
-    name: Typecheck, build
+    name: Format, conventions, typecheck, build
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -26,6 +27,8 @@ jobs:
         with:
           bun-version: 1.4.2
       - run: bun install --frozen-lockfile
+      - run: bun run format:check
+      - run: bun run test:conventions
       - run: bun run typecheck
       - run: bun run build
 
@@ -33,6 +36,7 @@ jobs:
   # on every system the desktop app supports.
   test:
     name: Tests (${{ matrix.os }})
+    needs: web
     strategy:
       fail-fast: false
       matrix:
@@ -43,6 +47,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Base branch for affected-test observation
+        if: github.event_name == 'pull_request'
+        run: git fetch --no-tags --depth=1 origin "${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}"
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.4.2
@@ -52,6 +59,8 @@ jobs:
       - name: Chromium for the browser tests
         run: bun run test:install-browser ${{ runner.os == 'Linux' && '--with-deps' || '' }}
       - name: Full configured test suite
+        env:
+          PETRINA_TEST_BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || '' }}
         run: bun run test
       - name: Test evidence
         if: always()
@@ -93,5 +102,6 @@ jobs:
       - name: Check and test the Rust host
         working-directory: apps/desktop/src-tauri
         run: |
-          cargo check --locked
+          cargo fmt --check
+          cargo clippy --locked --all-targets -- -D warnings
           cargo test --locked

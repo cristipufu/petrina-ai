@@ -28,7 +28,7 @@ import {
 } from "@petrina/core";
 import type { TurnNotes, TurnResult, AgentSession } from "@petrina/orchestrator";
 import type { Kernel, MutableStage, RuntimeTask } from "./kernel.js";
-import { WaitClock, WorkLog } from "@petrina/storage/worklog";
+import { WaitClock, type WorkLog } from "@petrina/storage/worklog";
 
 /** A stage that started and hasn't ended: kept in the work log, mirrored here. */
 interface OpenStage {
@@ -64,7 +64,7 @@ export class Tracking {
   private readonly counted = new WeakSet<object>();
 
   constructor(private readonly k: Kernel) {
-    this.log = new WorkLog(k.store.database);
+    this.log = k.store.openWorkLog();
   }
 
   /**

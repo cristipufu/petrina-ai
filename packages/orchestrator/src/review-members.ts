@@ -36,7 +36,8 @@ export function nextReviewPlace(task: RuntimeTask, stage: Stage, catalog: Review
   const reviewer = pendingReviewPlaces(task, stage, catalog)[0];
   if (reviewer) return { roleId: reviewerAt(stage, Number(reviewer.key)), profileId: reviewer.profileId, reviewerKey: reviewer.key };
   const voter = catalog.pendingVoter(task, stage);
-  return voter ? { roleId: "verifier", profileId: voter, requiredToolId: catalog.profile(voter)?.toolId } : undefined;
+  const votesRoleId = catalog.roles().find((role) => !role.removed && role.result === "votes")?.id ?? "verifier";
+  return voter ? { roleId: votesRoleId, profileId: voter, requiredToolId: catalog.profile(voter)?.toolId } : undefined;
 }
 export function rememberReviewProfile(task: RuntimeTask, key: string, profileId: Id): void {
   task.hunt = { ...task.hunt!, profiles: { ...task.hunt!.profiles, [key]: profileId } };

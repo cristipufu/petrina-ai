@@ -176,9 +176,9 @@ describe("choosing who continues after a model fills up", () => {
         { toolId: "codex", modelId: "gpt-6-astra", profileId: "astra-xhigh", until: soon },
       ];
       task.capacityPaused = [{ toolId: "codex", modelId: "gpt-6-astra", profileId: "astra-xhigh", roleId: "builder", plannedId: "sol-xhigh" }];
-      expect(engine.choose("sol-xhigh", task, "builder")).toEqual({ kind: "none", waiting: capacityWaiting(soon, Date.now()) });
-      expect(engine.choose("astra-xhigh", task, "builder")).toEqual({ kind: "none", waiting: capacityWaiting(soon, Date.now()) });
-      expect(engine.choose("sol-xhigh", task, "code-reviewer")).not.toEqual({ kind: "none", waiting: capacityWaiting(soon, Date.now()) });
+      expect(engine.choose("sol-xhigh", task, "builder")).toEqual({ kind: "none", waiting: capacityWaiting(soon, Date.now()), capacity: true });
+      expect(engine.choose("astra-xhigh", task, "builder")).toEqual({ kind: "none", waiting: capacityWaiting(soon, Date.now()), capacity: true });
+      expect(engine.choose("sol-xhigh", task, "code-reviewer")).not.toEqual({ kind: "none", waiting: capacityWaiting(soon, Date.now()), capacity: true });
       task.modelCapacity = [{ toolId: "codex", modelId: "gpt-6-astra", profileId: "astra-xhigh", until: soon }];
       task.capacityPaused = [{ toolId: "codex", modelId: "gpt-6-astra", profileId: "astra-xhigh", roleId: "builder", plannedId: "astra-xhigh" }];
       expect(engine.choose("astra-xhigh", task, "builder")?.kind).toBe("none");

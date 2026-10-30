@@ -14,7 +14,7 @@ export {
 import { CARD_OPENING, historyGuidance, type CompactReviewHistory } from "./review-history-format.js";
 import { formatFindings } from "./prompts.js";
 import type { ReviewInput } from "./review-context.js";
-import { saveImmutable } from "./immutable-file.js";
+import { ImmutableEvidenceChangedError, saveImmutable } from "./immutable-file.js";
 import type { Section } from "./context.js";
 import type { RepositoryContext } from "@petrina/orchestrator";
 
@@ -43,7 +43,7 @@ export async function readReviewHistory(ref: Pick<CompactReviewHistory, "file" |
     ref.file,
     "utf8"
   ).catch(() => { throw new Error("The frozen review history is unavailable. No newer evidence is substituted."); });
-  if (createHash("sha256").update(body).digest("hex") !== ref.digest) throw new Error("The frozen review history changed. No newer evidence is substituted.");
+  if (createHash("sha256").update(body).digest("hex") !== ref.digest) throw new ImmutableEvidenceChangedError("The frozen review history changed. No newer evidence is substituted.");
   return body;
 }
 

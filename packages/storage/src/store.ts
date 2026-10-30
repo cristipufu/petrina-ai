@@ -4,6 +4,7 @@ import { dirname } from "node:path";
 import { copyNoLongerNeeded, displayTask, finishedTask, type ExtraValidation, type Id, type State, type Task, type TimelineEntry } from "@petrina/core";
 import { TaskHistory } from "./history-store.js";
 import { logSqlExecutions, SqlExecutionLog } from "./sql-log.js";
+import { WorkLog } from "./worklog.js";
 
 /** A stopped/finished task still involved in delivery or removing its copy stays in runtime state. */
 export function settledHistoryTask(task: Task): boolean {
@@ -64,7 +65,12 @@ export class Store {
     const row = this.db.query<{ value: string }, [string]>("SELECT value FROM kv WHERE key = ?").get("state");
     if (!row) return undefined;
     let saved: State & { taskIds?: Id[] };
-    try { saved = JSON.parse(row.value); } catch { return undefined; }
+    try {
+      saved = JSON.parse(row.value);
+    } catch {
+      // A lost state snapshot recovers to a fresh board while the work log protects historical IDs.
+      return undefined;
+    }
     if (!saved.taskIds) return { state: saved, split: false };
     const rows = new Map(this.db.query<{ id: string; body: string }, []>("SELECT id, body FROM active_tasks").all().map((row) => [row.id, row.body]));
     const { taskIds, ...state } = saved;
@@ -191,6 +197,38 @@ export class Store {
 
   noteHandled(ids: readonly string[]): void {
     for (const id of ids) this.db.query("INSERT OR IGNORE INTO coordination_handled_items VALUES (?)").run(id);
+  }
+
+  readReceipt(id: string): { fingerprint: string; result: string } | undefined {
+    return (
+      this.db
+        .query<{ fingerprint: string; result: string }, [string]>(
+          "SELECT fingerprint, result FROM coordination_receipts WHERE id = ?",
+        )
+        .get(id) ?? undefined
+    );
+  }
+
+  hasReceipt(id: string): boolean {
+    return Boolean(this.db.query("SELECT id FROM coordination_receipts WHERE id = ?").get(id));
+  }
+
+  saveReceipt(id: string, fingerprint: string, result: string): void {
+    this.db
+      .query("INSERT INTO coordination_receipts VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET result=excluded.result")
+      .run(id, fingerprint, result);
+  }
+
+  updateReceiptResult(id: string, result: string): void {
+    this.db.query("UPDATE coordination_receipts SET result = ? WHERE id = ?").run(result, id);
+  }
+
+  inTransaction<T>(work: () => T): T {
+    return this.db.transaction(work)();
+  }
+
+  openWorkLog(): WorkLog {
+    return new WorkLog(this.db);
   }
 
   get database(): Database {

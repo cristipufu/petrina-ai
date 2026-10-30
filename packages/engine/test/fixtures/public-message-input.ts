@@ -56,8 +56,18 @@ export function publicMessageInput() {
         callbacks: { onMessage: stream, onActivity() {}, onPlanStep() {}, onPermission: async () => { throw new Error("Unexpected permission"); } } }, role);
       active.add(run);
       const prompt = `Declared public-message turn for ${roleId} (${profileId}${reviewerKey ? `#${reviewerKey}` : ""})`;
-      const captured = inputs.capture(scope, roleId, profileId, [], "fresh", profileId, undefined, reviewerKey,
-        run.settings, prompt, { sessionId: run.sessionId });
+      const captured = inputs.capture({
+        scope,
+        roleId,
+        profileId,
+        sections: [],
+        mode: "fresh",
+        plannedId: profileId,
+        reviewerKey,
+        confirmedSettings: run.settings,
+        instructions: prompt,
+        extra: { sessionId: run.sessionId },
+      });
       await inputs.attach(scope, captured, prompt);
       const inputIndex = step.agentInputs!.length - 1;
       return { step, inputIndex, input: step.agentInputs![inputIndex]!, sessionId: run.sessionId, stream };

@@ -28,7 +28,7 @@ export function checkLogRevision(dataDir: string, taskId: string, paths: readonl
 
 export type CheckLogSubject = Pick<Task, "id" | "checks" | "checkSetup" | "journey" | "repositories"> & Partial<Pick<Task, "productId">>;
 
-export async function readCheckLog(dataDir: string, task: CheckLogSubject, a: {
+export async function readCheckLog(dataDir: string, task: CheckLogSubject, args: {
   nodeId?: string;
   productId?: string;
   setupAttemptId?: string;
@@ -39,44 +39,44 @@ export async function readCheckLog(dataDir: string, task: CheckLogSubject, a: {
   ifRevision?: string;
   preview?: "ends"
 }): Promise<Result> {
-  const node = a.nodeId ? task.journey?.find((node) => node.id === a.nodeId) : undefined;
-  if (a.nodeId && !node) return { outcome: "missing", message: "That journey node does not exist." };
-  const work = a.productId ? (task.repositories ?? [task]).find((work) => work.productId === a.productId) : task;
-  if (a.productId && !work) return { outcome: "missing", message: "That product has no repository record on this task." };
-  const setupScope = a.setupAttemptId === undefined ? [] : [a.setupAttemptId];
-  const setups = a.setupAttemptId === undefined ? undefined : a.nodeId
-    ? (node?.checkSetups ?? []).filter(attempt => attempt.id === a.setupAttemptId && (!a.productId || attempt.productId === a.productId))
-    : work?.checkSetup?.id === a.setupAttemptId ? [work.checkSetup] : [];
+  const node = args.nodeId ? task.journey?.find((node) => node.id === args.nodeId) : undefined;
+  if (args.nodeId && !node) return { outcome: "missing", message: "That journey node does not exist." };
+  const work = args.productId ? (task.repositories ?? [task]).find((work) => work.productId === args.productId) : task;
+  if (args.productId && !work) return { outcome: "missing", message: "That product has no repository record on this task." };
+  const setupScope = args.setupAttemptId === undefined ? [] : [args.setupAttemptId];
+  const setups = args.setupAttemptId === undefined ? undefined : args.nodeId
+    ? (node?.checkSetups ?? []).filter(attempt => attempt.id === args.setupAttemptId && (!args.productId || attempt.productId === args.productId))
+    : work?.checkSetup?.id === args.setupAttemptId ? [work.checkSetup] : [];
   if (setups && setups.length !== 1) return {
     outcome: "missing",
     message: "That exact local setup attempt is not recorded here. No newer attempt is substituted."
   };
   const setup = setups?.[0];
-  const setupResult = Array.isArray(setup?.results) ? setup.results[a.index] : undefined;
-  if (setupResult && setupResult.requirementId !== setup?.requirements?.[a.index]?.id)
+  const setupResult = Array.isArray(setup?.results) ? setup.results[args.index] : undefined;
+  if (setupResult && setupResult.requirementId !== setup?.requirements?.[args.index]?.id)
     return { outcome: "unavailable", message: "The recorded setup result does not match its requirement manifest." };
-  const entry = a.setupAttemptId === undefined && a.nodeId ? node?.productChecks?.[a.index] : undefined;
-  const run = setup ? setupResult?.run : a.setupAttemptId !== undefined ? undefined : a.nodeId ? entry?.run : work?.checks?.results[a.index];
-  if (a.ifRevision && (!run || fingerprint(run) !== a.ifRevision)) return {
+  const entry = args.setupAttemptId === undefined && args.nodeId ? node?.productChecks?.[args.index] : undefined;
+  const run = setup ? setupResult?.run : args.setupAttemptId !== undefined ? undefined : args.nodeId ? entry?.run : work?.checks?.results[args.index];
+  if (args.ifRevision && (!run || fingerprint(run) !== args.ifRevision)) return {
     outcome: "changed",
     message: "That saved check changed. Inspect the checkpoint again. No newer run is substituted."
   };
   const metadata = {
     commandOutcome: entry ? checkEntryCommandOutcome(entry) : checkCommandOutcome(run),
     reportedOk: run?.ok ?? null,
-    relevance: a.nodeId ? "historical" : setup ? setup.input.sha || setup.input.tree ? "recorded-version-only" : "unverified" : work?.checks?.sha || work?.checks?.tree ? "recorded-version-only" : "unverified",
+    relevance: args.nodeId ? "historical" : setup ? setup.input.sha || setup.input.tree ? "recorded-version-only" : "unverified" : work?.checks?.sha || work?.checks?.tree ? "recorded-version-only" : "unverified",
     command: run?.command ?? null,
     ...(setup ? { setupAttemptId: setup.id, requirementId: setupResult?.requirementId ?? null } : {}),
     ...(run && unreportedCheckExit(run) ? { exitUnreported: true } : {}),
   };
   if (!run) return { outcome: "unavailable", ...metadata, completeness: "missing", message: "This older evidence has no original diagnostic link." };
-  const resultScope = [task.id, a.nodeId, a.productId, a.index, ...setupScope, "saved-result"];
-  if (a.section === "result")
-    return readText(run.output, a, resultScope, { ...metadata, source: "saved-result", completeness: "excerpt-only", unit: "characters" });
+  const resultScope = [task.id, args.nodeId, args.productId, args.index, ...setupScope, "saved-result"];
+  if (args.section === "result")
+    return readText(run.output, args, resultScope, { ...metadata, source: "saved-result", completeness: "excerpt-only", unit: "characters" });
   // Focused reads retain their ordinary first page and cursor. A compact decision splits that
   // same budget between the beginning and ending, where the runner appends its explanations.
-  const previewLimit = Math.min(a.limit ?? 8000, SAVED_RESULT_PREVIEW);
-  const split = a.preview === "ends" && run.output.length > previewLimit;
+  const previewLimit = Math.min(args.limit ?? 8000, SAVED_RESULT_PREVIEW);
+  const split = args.preview === "ends" && run.output.length > previewLimit;
   let headLimit = split ? Math.ceil(previewLimit / 2) : previewLimit;
   if (bisectsCharacter(run.output, headLimit)) headLimit--;
   const savedResult = { ...readText(run.output, { limit: headLimit }, resultScope), section: "result" };
@@ -102,7 +102,7 @@ export async function readCheckLog(dataDir: string, task: CheckLogSubject, a: {
   const details = { ...metadata, savedResult, ...(savedResultEnding ? { savedResultEnding } : {}) };
   const path = run.logPath && resolve(run.logPath);
   if (!path || !path.startsWith(resolve(dataDir, "checks", task.id) + sep))
-    return readText(run.output, a, [task.id, a.nodeId, a.productId, a.index, ...setupScope], {
+    return readText(run.output, args, [task.id, args.nodeId, args.productId, args.index, ...setupScope], {
       ...details,
       completeness: "excerpt-only",
       message: "No complete diagnostic log was recorded. This is the saved excerpt.",
@@ -110,7 +110,7 @@ export async function readCheckLog(dataDir: string, task: CheckLogSubject, a: {
   // Facts are captured only when the log is created, never reconstructed from a current path.
   const { logFileIdentity, logFileLength, logFileBeginning } = run;
   if (!logFileIdentity || logFileLength === undefined || !logFileBeginning)
-    return readText(run.output, a, [task.id, a.nodeId, a.productId, a.index, ...setupScope, "unverified-log"], {
+    return readText(run.output, args, [task.id, args.nodeId, args.productId, args.index, ...setupScope, "unverified-log"], {
       ...details,
       completeness: run.logError || run.logComplete === false ? "incomplete" : "legacy-unverified",
       message: logFileIdentity
@@ -138,15 +138,26 @@ export async function readCheckLog(dataDir: string, task: CheckLogSubject, a: {
           file,
           size
         ) !== logFileBeginning) throw new Error("The diagnostic file is not the file Petrina created for this check.");
-      const key = fingerprint([task.id, a.nodeId, a.productId, a.index, ...setupScope, path, exact.dev.toString(), exact.ino.toString(), size, modified]);
+      const key = fingerprint([
+        task.id,
+        args.nodeId,
+        args.productId,
+        args.index,
+        ...setupScope,
+        path,
+        exact.dev.toString(),
+        exact.ino.toString(),
+        size,
+        modified
+      ]);
       const completeness = run.logError || run.logComplete === false ? "incomplete" : run.logComplete ? "complete" : "legacy-unverified";
       if (size === 0 && run.output)
-        return readText(run.output, a, [resultScope, path, exact.dev.toString(), exact.ino.toString(), modified], {
+        return readText(run.output, args, [resultScope, path, exact.dev.toString(), exact.ino.toString(), modified], {
           ...details, completeness, logError: run.logError ?? null, source: "saved-result", unit: "characters",
           message: "The process log is empty. This is the saved result, including any failure to start.",
         });
-      if (a.preview === "ends" && !a.cursor) {
-        const limit = a.limit ?? 8000;
+      if (args.preview === "ends" && !args.cursor) {
+        const limit = args.limit ?? 8000;
         const buffer = Buffer.alloc(Math.min(size, limit * 4));
         const { bytesRead } = await file.read(buffer, 0, buffer.length, Math.max(0, size - buffer.length));
         let start = 0;
@@ -156,14 +167,14 @@ export async function readCheckLog(dataDir: string, task: CheckLogSubject, a: {
         return { outcome: "completed", ...details, completeness, logError: run.logError ?? null,
           text, offset, total: size, unit: "bytes", shortened: false, omittedBefore: offset, source: "process-log" };
       }
-      const at = position(a.cursor, key);
+      const at = position(args.cursor, key);
       if (at === undefined) return { outcome: "changed", message: "The diagnostic changed. Read it again from the beginning." };
-      const buffer = Buffer.alloc((a.limit ?? 8000) * 4),
+      const buffer = Buffer.alloc((args.limit ?? 8000) * 4),
         { bytesRead } = await file.read(buffer, 0, buffer.length, at);
       // Limit text by characters while continuations retain exact byte positions. A page
       // reads at most four bytes per requested character and never splits valid UTF-8.
       let end = 0;
-      for (let characters = 0; characters < (a.limit ?? 8000) && end < bytesRead; characters++) {
+      for (let characters = 0; characters < (args.limit ?? 8000) && end < bytesRead; characters++) {
         const first = buffer[end]!;
         let width = first >= 0xf0 && first <= 0xf4 ? 4 : first >= 0xe0 ? 3 : first >= 0xc2 ? 2 : 1;
         if (end + width > bytesRead) {
@@ -193,7 +204,7 @@ export async function readCheckLog(dataDir: string, task: CheckLogSubject, a: {
       await file.close();
     }
   } catch {
-    return readText(run.output, a, [task.id, a.nodeId, a.productId, a.index, ...setupScope], {
+    return readText(run.output, args, [task.id, args.nodeId, args.productId, args.index, ...setupScope], {
       ...details,
       completeness: "missing-file",
       message: "The original diagnostic file could not be verified or is unavailable. This is the saved excerpt.",

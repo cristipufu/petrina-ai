@@ -13,10 +13,12 @@ export {
 export {
   CHECK_TIMEOUT_MS,
   runChecks,
+  runCheckBatch,
   checkLogBeginning,
   type CheckProgress,
   type CheckCommandExecutor,
   type CheckCommandRequest,
-  type CheckCommandOutcome
+  type CheckCommandOutcome,
+  type RunCheckBatchOptions,
 } from "@petrina/repositories/check-runner";
 export { CHECKS_SEEN, detectChecks, checksFor, checksFingerprint } from "@petrina/repositories/check-discovery";

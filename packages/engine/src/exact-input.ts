@@ -30,7 +30,7 @@ export async function saveExactMessage(dataDir: string, taskId: Id, text: string
 }
 
 /** Read one seat's saved input, manifest or update, checking the saved file against its recorded identity. */
-export async function readExactInput(task: Task, roles: readonly Pick<Role, "id" | "name" | "result">[], a: {
+export async function readExactInput(task: Task, roles: readonly Pick<Role, "id" | "name" | "result">[], args: {
   nodeId: string;
   seat?: string;
   index?: number;
@@ -39,15 +39,15 @@ export async function readExactInput(task: Task, roles: readonly Pick<Role, "id"
   cursor?: string;
   limit?: number
 }): Promise<Result> {
-  const node = task.journey?.find((step) => step.id === a.nodeId);
+  const node = task.journey?.find((step) => step.id === args.nodeId);
   if (!node) return { outcome: "missing", message: "That journey node does not exist." };
   const inputs = (node.agentInputs ?? []).map((input, index) => ({ input, index, seat: seatOf(input, roles, task) }));
-  const onSeat = inputs.filter((entry) => !a.seat || entry.seat === a.seat);
+  const onSeat = inputs.filter((entry) => !args.seat || entry.seat === args.seat);
   if (!onSeat.length) return {
     outcome: "unavailable",
-    message: a.seat ? "No input is recorded for that seat on this node." : "This node recorded no agent input."
+    message: args.seat ? "No input is recorded for that seat on this node." : "This node recorded no agent input."
   };
-  const chosen = a.index !== undefined ? onSeat[a.index] : onSeat.at(-1);
+  const chosen = args.index !== undefined ? onSeat[args.index] : onSeat.at(-1);
   if (!chosen) return { outcome: "missing", message: "That input attempt does not exist on this seat." };
   const { input, index, seat } = chosen;
   const identity = {
@@ -61,7 +61,7 @@ export async function readExactInput(task: Task, roles: readonly Pick<Role, "id"
     at: input.at ?? null,
     ...(input.sessionId ? { conversation: input.sessionId } : {})
   };
-  if (a.section === "manifest") {
+  if (args.section === "manifest") {
     if (!input.manifest) return {
       outcome: "unavailable",
       ...identity,
@@ -73,11 +73,11 @@ export async function readExactInput(task: Task, roles: readonly Pick<Role, "id"
     };
     return readText(
       input.manifest,
-      a,
+      args,
       [
       "journey.input",
       task.id,
-      a.nodeId,
+      args.nodeId,
       index,
       "manifest"
     ],
@@ -88,10 +88,10 @@ export async function readExactInput(task: Task, roles: readonly Pick<Role, "id"
     }
     );
   }
-  if (a.section === "update") {
+  if (args.section === "update") {
     const updates = input.updates ?? [];
     if (!updates.length) return { outcome: "unavailable", ...identity, message: "No later update was sent on this input." };
-    const position = a.update ?? updates.length - 1;
+    const position = args.update ?? updates.length - 1;
     const update = updates[position];
     if (!update) return { outcome: "missing", ...identity, message: "That update does not exist on this input." };
     const meta = {
@@ -102,14 +102,14 @@ export async function readExactInput(task: Task, roles: readonly Pick<Role, "id"
       ...(update.messageId ? { messageId: update.messageId } : {}),
       ...(update.delivery ? { delivery: update.delivery } : {})
     };
-    if (update.exact) return readSaved(update.exact, a, ["journey.input", task.id, a.nodeId, index, "update", position], meta);
+    if (update.exact) return readSaved(update.exact, args, ["journey.input", task.id, args.nodeId, index, "update", position], meta);
     return readText(
       update.text,
-      a,
+      args,
       [
       "journey.input",
       task.id,
-      a.nodeId,
+      args.nodeId,
       index,
       "update",
       position,
@@ -129,11 +129,11 @@ export async function readExactInput(task: Task, roles: readonly Pick<Role, "id"
   };
   return readSaved(
     input.exact,
-    a,
+    args,
     [
     "journey.input",
     task.id,
-    a.nodeId,
+    args.nodeId,
     index,
     "message"
   ],
@@ -144,7 +144,7 @@ export async function readExactInput(task: Task, roles: readonly Pick<Role, "id"
   );
 }
 
-async function readSaved(exact: ExactMessage, a: { cursor?: string; limit?: number }, scope: unknown, extra: Record<string, unknown>): Promise<Result> {
+async function readSaved(exact: ExactMessage, args: { cursor?: string; limit?: number }, scope: unknown, extra: Record<string, unknown>): Promise<Result> {
   let text: string;
   try { text = await readFile(exact.file, "utf8"); }
   catch { return {
@@ -165,7 +165,7 @@ async function readSaved(exact: ExactMessage, a: { cursor?: string; limit?: numb
   };
   return readText(
     text,
-    a,
+    args,
     [
     scope,
     exact.digest

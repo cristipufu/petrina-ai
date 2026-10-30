@@ -11,61 +11,16 @@ import { applyTheme, type Theme } from "./theme";
 
 type ActiveArea = ReturnType<typeof keyArea>;
 
-export function useWorkspaceFocus({
-  state,
-  theme,
-  onTheme,
-  area,
-  view,
-  overlay,
-  sheet,
-  boardIds,
-  inboxIds,
-  currentBoardId,
-  currentInboxId,
-  sheetOrder,
-  focusArea,
-  inboxButton,
-  inboxPanel,
-  palette,
-  paletteTask,
-  shortcuts,
-  modalWithoutShortcuts,
-  singleKeys,
-  focusedTask,
-  historyPage,
-  visible,
-  sendAction,
-  setBoardKeyboard,
-  setBoardId,
-  setInboxId,
-  setOwner,
-  setPalette,
-  setShortcuts,
-  setMessageFocus,
-  openPalette,
-  open,
-  openBoard,
-  openItem,
-  openInbox,
-  closeSheet,
-  closeInbox,
-  inboxKey,
-  newTask,
-  openSettings,
-  move,
-  go,
-  pause,
-  message,
-  toast,
-}: {
-  state: State;
+export interface WorkspaceFocusLayout {
   theme: Theme;
   onTheme: (theme: Theme) => void;
   area: ActiveArea;
   view: Page;
   overlay: boolean;
   sheet: AppRoute["sheet"];
+}
+
+export interface WorkspaceFocusLists {
   boardIds: readonly string[];
   inboxIds: readonly string[];
   currentBoardId: string | undefined;
@@ -74,15 +29,20 @@ export function useWorkspaceFocus({
   focusArea: MutableRefObject<KeyArea | undefined>;
   inboxButton: RefObject<HTMLButtonElement | null>;
   inboxPanel: RefObject<HTMLElement | null>;
+  historyPage: unknown;
+  visible: (task: Task) => boolean;
+}
+
+export interface WorkspaceFocusDialogs {
   palette: boolean;
   paletteTask: Task | undefined;
   shortcuts: boolean;
   modalWithoutShortcuts: boolean;
   singleKeys: boolean;
   focusedTask: Task | undefined;
-  historyPage: unknown;
-  visible: (task: Task) => boolean;
-  sendAction: (action: () => unknown, title: string, detail?: string) => Promise<boolean>;
+}
+
+export interface WorkspaceFocusSetters {
   setBoardKeyboard: (value: boolean) => void;
   setBoardId: (id: string | undefined) => void;
   setInboxId: (id: string | undefined) => void;
@@ -90,6 +50,10 @@ export function useWorkspaceFocus({
   setPalette: (open: boolean) => void;
   setShortcuts: (open: boolean) => void;
   setMessageFocus: (taskId: string | undefined) => void;
+}
+
+export interface WorkspaceFocusCommands {
+  sendAction: (action: () => unknown, title: string, detail?: string) => Promise<boolean>;
   openPalette: () => void;
   open: (taskId: string, tab?: SheetTab, list?: "board" | "inbox" | "history", itemId?: string) => void;
   openBoard: (id: string) => void;
@@ -105,7 +69,57 @@ export function useWorkspaceFocus({
   pause: (task: Task) => void;
   message: (task: Task) => void;
   toast: (title: string, detail?: string) => void;
+}
+
+export function useWorkspaceFocus({
+  state,
+  layout,
+  lists,
+  dialogs,
+  setters,
+  commands,
+}: {
+  state: State;
+  layout: WorkspaceFocusLayout;
+  lists: WorkspaceFocusLists;
+  dialogs: WorkspaceFocusDialogs;
+  setters: WorkspaceFocusSetters;
+  commands: WorkspaceFocusCommands;
 }) {
+  const { theme, onTheme, area, view, overlay, sheet } = layout;
+  const {
+    boardIds,
+    inboxIds,
+    currentBoardId,
+    currentInboxId,
+    sheetOrder,
+    focusArea,
+    inboxButton,
+    inboxPanel,
+    historyPage,
+    visible,
+  } = lists;
+  const { palette, paletteTask, shortcuts, modalWithoutShortcuts, singleKeys, focusedTask } = dialogs;
+  const { setBoardKeyboard, setBoardId, setInboxId, setOwner, setPalette, setShortcuts, setMessageFocus } = setters;
+  const {
+    sendAction,
+    openPalette,
+    open,
+    openBoard,
+    openItem,
+    openInbox,
+    closeSheet,
+    closeInbox,
+    inboxKey,
+    newTask,
+    openSettings,
+    move,
+    go,
+    pause,
+    message,
+    toast,
+  } = commands;
+
   useEffect(() => startClock(), []);
   // Setup is done: a first task draft left behind (its reply was lost) has nothing to come back to.
   // Only this mode's draft: the demo never clears one still being written for the real engine.

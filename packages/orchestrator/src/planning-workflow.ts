@@ -81,17 +81,18 @@ export class PlanningWorkflow {
     } else {
       delete task.sourcePointers;
     }
+    const plannerRoleId = this.host.roles().find((role) => !role.removed && role.result === "plan")?.id ?? "planner";
     if (hints.left) {
-      this.host.note(task, "status", hints.left, "planner", actualPlanner);
+      this.host.note(task, "status", hints.left, plannerRoleId, actualPlanner);
     }
     task.plan = this.normalizePlan(task, result, actualPlanner);
     const count = task.plan.stages.filter((stage) => stage.kind !== "gate").length;
-    this.host.note(task, "milestone", `Plan ready: ${count} stages. ${result.rationale}`, "planner", actualPlanner);
+    this.host.note(task, "milestone", `Plan ready: ${count} stages. ${result.rationale}`, plannerRoleId, actualPlanner);
     this.host.note(
       task,
       "milestone",
       `${this.host.riskWord[risk.level]} risk: ${risk.why}`,
-      "planner",
+      plannerRoleId,
       actualPlanner,
     );
     endAgentStep(task, { outcome: JOURNEY_WORDS.planned(count), reason: JOURNEY_WORDS.planReady }, this.host.now());

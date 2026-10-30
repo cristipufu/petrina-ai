@@ -368,13 +368,24 @@ export async function executeMainTurnAttempt<T>(
     const askScreen = options.member
       ? (reason: string) => k.screens.saveTurn(scope, role.id, profile.id, options.member!, worktree, repository.conversation, reason)
       : undefined;
-    const result = await deps.converse(scope, run, agent, opening, picked && !wentBack ? "continue" : "first", role, profileId, schema, signal, {
-      ...options,
-      main: !options.copy,
-      openingMessages,
-      beforeContinue: checkSettings,
-      ...(askScreen ? { askScreen } : {}),
-      pendingInput: () => pending,
+    const result = await deps.converse({
+      scope,
+      run,
+      agent,
+      opening,
+      reason: picked && !wentBack ? "continue" : "first",
+      role,
+      profileId,
+      schema,
+      signal,
+      options: {
+        ...options,
+        main: !options.copy,
+        openingMessages,
+        beforeContinue: checkSettings,
+        ...(askScreen ? { askScreen } : {}),
+        pendingInput: () => pending,
+      },
     });
     await checkSettings(undefined, result);
     if (repository.conversation) options.completed?.(repository.conversation, profile, role);

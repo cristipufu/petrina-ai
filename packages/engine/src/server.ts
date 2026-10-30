@@ -1,4 +1,4 @@
-import { CheckSetupRequirementsSchema } from "./operations.js";
+import { allowsLongWait, CheckSetupRequirementsSchema } from "./operations.js";
 import { StartFromSchema, WorkChoiceSchema } from "./source-schema.js";
 // The local API the UI (and scripts) use. It only listens on 127.0.0.1, every request
 // needs the random token, and Host/Origin are checked so a web page cannot reach it.
@@ -403,7 +403,7 @@ export function serve(engine: Engine, options: { port: number; token: string; ui
             const { name, args } = await request.json() as { name: string; args: unknown };
             // A wait stays open for its whole requested deadline, past the ordinary idle cutoff; other
             // requests keep the server's usual behavior. Disconnecting releases the wait through its signal.
-            if (typeof name === "string" && (name.startsWith("watch.") || (name === "validation.run" && typeof args === "object" && args !== null && "wait" in args && args.wait === true))) server.timeout(
+            if (typeof name === "string" && allowsLongWait(name, args)) server.timeout(
               request,
               0
             );

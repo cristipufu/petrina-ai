@@ -7,7 +7,7 @@ import { openStep, runtimeWaitHolds, type DeepMutable, type ExtraValidation } fr
 import type { Kernel } from "./kernel.js";
 import { executionFor, ValidationRun } from "@petrina/orchestrator";
 import * as git from "@petrina/repositories/git";
-import { runChecks, CHECK_TIMEOUT_MS, checkLogBeginning } from "./checks.js";
+import { runCheckBatch, CHECK_TIMEOUT_MS, checkLogBeginning } from "./checks.js";
 import { containerEnv, ExtraContainer } from "./extra-container.js";
 import type { Result } from "./coordination.js";
 
@@ -71,9 +71,9 @@ export class ExtraValidations {
       : `Extra validation “${record.name}” queued at place ${record.queuePosition}. Working edits are not included.`;
   }
 
-  async submit(a: ExtraRequest, saveReceipt: (result: Result) => void): Promise<Result> {
+  async submit(request: ExtraRequest, saveReceipt: (result: Result) => void): Promise<Result> {
     if (process.platform === "win32") throw new Error("Extra full validation currently requires a local Linux container on a Unix host.");
-    const task = this.k.s.tasks.find(task => task.id === a.taskId);
+    const task = this.k.s.tasks.find(task => task.id === request.taskId);
     if (!task) throw new Error("That current task does not exist.");
     if ([
       "done",
@@ -82,8 +82,8 @@ export class ExtraValidations {
       "backlog",
       "paused"
     ].includes(task.state)) throw new Error("Extra validation needs an unfinished, unpaused task outside Backlog.");
-    if (task.repositories && task.repositories.length > 1 && !a.productId) throw new Error("Name the product for this shared task.");
-    const scope = executionFor(task, a.productId);
+    if (task.repositories && task.repositories.length > 1 && !request.productId) throw new Error("Name the product for this shared task.");
+    const scope = executionFor(task, request.productId);
     const product = this.k.productOf(scope);
     const source = this.k.repositoryOf(scope)?.path;
     if (!product || !source) throw new Error("That task product is unavailable.");
@@ -104,8 +104,8 @@ export class ExtraValidations {
     const id = randomUUID();
     const queueOrder = this.k.checkQueue.reserveOrder();
     const waitingReason = this.prerequisiteWait(task.id);
-    const record: Record = { id, requestId: a.requestId, taskId: task.id, productId: scope.work.productId, productName: product.name,
-      repository: product.repo, source, nodeId: openStep(task)?.id, name: a.name, reason: a.reason, image: a.image, argv: [...a.argv],
+    const record: Record = { id, requestId: request.requestId, taskId: task.id, productId: scope.work.productId, productName: product.name,
+      repository: product.repo, source, nodeId: openStep(task)?.id, name: request.name, reason: request.reason, image: request.image, argv: [...request.argv],
       ...saved, versionNote: VERSION_NOTE, workingEdits, host: { system: platform(), arch: arch() },
       containerName: `petrina-extra-${id}`, owner: createHash("sha256").update(realpathSync(this.k.dataDir)).digest("hex"),
       snapshot: join(this.k.dataDir, "extra-snapshots", id), state: "queued", queuedAt: Date.now(), queueOrder,
@@ -125,7 +125,7 @@ export class ExtraValidations {
     const record = this.records.find(record => record.requestId === requestId);
     if (record) return this.reply(record);
     // Terminal receipts retain the complete result, even after task history is removed.
-    const receipt = this.k.store.database.query<{ result: string }, [string]>("SELECT result FROM coordination_receipts WHERE id = ?").get(requestId);
+    const receipt = this.k.store.readReceipt(requestId);
     const saved = receipt ? JSON.parse(receipt.result) as Result : undefined;
     return saved?.validation && saved.requestId === requestId ? saved : undefined;
   }
@@ -215,10 +215,22 @@ export class ExtraValidations {
       prepare: record => this.container.prepare(record),
       snapshot: record => (this.k.options.validationSnapshots ?? this.container).snapshot(record),
       cleanup: record => this.container.cleanup(record),
-      run: async (record, signal, callbacks) => (await runChecks(record.snapshot,
-        [{ name: record.name, argv: this.container.runCommand(record) }], containerEnv(),
-        this.k.options.checkTimeoutMs ?? CHECK_TIMEOUT_MS, signal, join(this.k.dataDir, "checks", record.taskId), undefined, undefined,
-        this.k.options.machineRecords, callbacks.spawned, callbacks.log, callbacks.admitted, this.k.options.runCheckCommand))[0],
+      run: async (record, signal, callbacks) =>
+        (
+          await runCheckBatch({
+            cwd: record.snapshot,
+            checks: [{ name: record.name, argv: this.container.runCommand(record) }],
+            env: containerEnv(),
+            timeoutMs: this.k.options.checkTimeoutMs ?? CHECK_TIMEOUT_MS,
+            signal,
+            logDirectory: join(this.k.dataDir, "checks", record.taskId),
+            machineRecords: this.k.options.machineRecords,
+            onSpawn: callbacks.spawned,
+            onLog: callbacks.log,
+            beforeStart: callbacks.admitted,
+            executeCommand: this.k.options.runCheckCommand,
+          })
+        )[0],
     });
     return run.execute(record, signal);
   }
@@ -248,7 +260,7 @@ export class ExtraValidations {
         "finished",
         `Extra validation “${record.name}” ${result} (${Math.round(record.durationMs / 1000)} seconds). This is extra evidence only.`
       );
-      this.k.store.database.query("UPDATE coordination_receipts SET result = ? WHERE id = ?").run(JSON.stringify(this.reply(record)), record.requestId);
+      this.k.store.updateReceiptResult(record.requestId, JSON.stringify(this.reply(record)));
       this.k.s.extraValidations = this.records.filter(entry => entry.id !== record.id);
       this.persist();
     });
@@ -274,7 +286,7 @@ export class ExtraValidations {
     const notices: (() => void)[] = [];
     this.notices = notices;
     let result: T;
-    try { result = this.k.store.database.transaction(apply)(); }
+    try { result = this.k.store.inTransaction(apply); }
     catch (error) {
       this.k.s.extraValidations = records;
       for (const key of Object.keys(record)) Reflect.deleteProperty(record, key);

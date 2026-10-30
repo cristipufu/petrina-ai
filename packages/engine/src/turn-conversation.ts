@@ -58,63 +58,44 @@ export interface TurnConversationOptions<T> {
   wait: WaitForCoordinatorFn;
 }
 
+export interface TurnConversationRequest<T> {
+  k: Kernel;
+  scope: RepositoryContext;
+  run: AgentSession;
+  agent: TurnAgent;
+  opening: string;
+  reason: TurnReason;
+  role: Role;
+  profileId: Id;
+  schema: z.ZodType<T>;
+  signal: AbortSignal;
+  options: TurnConversationOptions<T>;
+}
+
 /**
  * Turns until the agent hands back a valid result: its words go to the session, its questions to the
  * coordinator, and an unusable result back to it twice at most. Each parallel conversation hears
  * its own share of the coordinator's messages. An open question stays with the conversation that asked it.
  */
-export async function runTurnConversation<T>(
-  k: Kernel,
-  scope: RepositoryContext,
-  run: AgentSession,
-  agent: TurnAgent,
-  opening: string,
-  reason: TurnReason,
-  role: Role,
-  profileId: Id,
-  schema: z.ZodType<T>,
-  signal: AbortSignal,
-  options: TurnConversationOptions<T>,
-): Promise<T> {
+export async function runTurnConversation<T>(request: TurnConversationRequest<T>): Promise<T> {
+  const { k, scope, run, agent, role, signal, options } = request;
   const messages =
     options.main || options.member
       ? new MessageTurn(k, scope, run, agent.profile, role.id, options.member, options.reviewerKey, signal)
       : undefined;
   messages?.start();
   try {
-    return await executeConversationLoop(
-      k,
-      scope,
-      run,
-      agent,
-      opening,
-      reason,
-      role,
-      profileId,
-      schema,
-      signal,
-      options,
-      messages,
-    );
+    return await executeConversationLoop(request, messages);
   } finally {
     messages?.dispose();
   }
 }
 
 async function executeConversationLoop<T>(
-  k: Kernel,
-  scope: RepositoryContext,
-  run: AgentSession,
-  agent: TurnAgent,
-  opening: string,
-  reason: TurnReason,
-  role: Role,
-  profileId: Id,
-  schema: z.ZodType<T>,
-  signal: AbortSignal,
-  options: TurnConversationOptions<T>,
+  request: TurnConversationRequest<T>,
   messages?: MessageTurn,
 ): Promise<T> {
+  const { k, scope, run, agent, opening, reason, role, profileId, schema, signal, options } = request;
   const { task, work: repository } = scope;
   const by = { roleId: role.id, profileId };
   // Every message to the agent and the reply it waits for is one entry in the work log.
@@ -321,18 +302,18 @@ async function executeConversationLoop<T>(
     if (parsed.ok === "input") {
       k.participantSay(scope, "agent", parsed.question, role.id, profileId, options.reviewerKey);
       k.log(scope, "warn", `Asked you: ${parsed.question}`, role.id, profileId);
-      const answer = await options.wait(
+      const answer = await options.wait({
         scope,
-        "question",
-        parsed.question,
-        true,
-        { options: parsed.options },
+        kind: "question",
+        title: parsed.question,
+        blocking: true,
+        extra: { options: parsed.options },
         signal,
-        "Waiting for your answer",
+        status: "Waiting for your answer",
         by,
-        options.main,
-        options.reviewKey,
-      );
+        main: options.main,
+        reviewKey: options.reviewKey,
+      });
       await holdUnconfirmed(k, scope, options.member, signal, options.reviewKey);
       // Heard from here on: a restart does not hand the answer over again.
       const note = repository.conversation;

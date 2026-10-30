@@ -81,6 +81,8 @@ export interface ToolAdapter {
    */
   login: "report" | "open";
   models: readonly string[];
+  /** Whether this tool reports its own sandbox state for the Session tab. */
+  reportsSandbox?: boolean;
   /**
    * The session option that carries Claude Code's own sandbox settings to its adapter. Unset: the
    * tool keeps its own setup (including Codex's workspace sandbox) and gets no sandbox settings from Petrina.

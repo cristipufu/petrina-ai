@@ -30,9 +30,12 @@ it("inspects per-seat tool evidence without putting commands or invocation lists
     a.update({ toolCallId: "first", status: "completed" }, false);
     a.update({ toolCallId: "second", kind: "execute" }, true);
     e.commitNow(task);
-    const inspection = (await c.call("task.inspect", { taskId })).task as any;
+    const inspection = (await c.call("task.inspect", { taskId })).task as {
+      activity: { actionCount: number };
+      workers: { activity: { actionCount: number } }[];
+    };
     expect(inspection.activity.actionCount).toBe(2);
-    expect(inspection.workers.map((worker: any) => worker.activity.actionCount)).toEqual([2, 1]);
+    expect(inspection.workers.map((worker) => worker.activity.actionCount)).toEqual([2, 1]);
     const first = await c.call("task.activity", { taskId, limit: 1 });
     expect(first.actionCount).toBe(3);
     expect(first.total).toBe(3);

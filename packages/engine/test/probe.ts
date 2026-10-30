@@ -31,13 +31,22 @@ const conn = new acp.ClientSideConnection(
 const init = await conn.initialize({ protocolVersion: acp.PROTOCOL_VERSION, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false } });
 console.log("INIT", JSON.stringify(init, null, 1).slice(0, 3000));
 const session = await conn.newSession({ cwd, mcpServers: [] });
-const s = session as any;
-console.log("MODELS", s.models?.currentModelId, JSON.stringify((s.models?.availableModels ?? []).map((m: any) => m.modelId)));
-for (const o of s.configOptions ?? []) console.log("OPTION", o.id, o.currentValue, JSON.stringify((o.options ?? []).map((x: any) => x.value)));
-console.log("MODES", s.modes?.currentModeId, JSON.stringify((s.modes?.availableModes ?? []).map((m: any) => m.id)));
+interface ProbeSessionView {
+  models?: { currentModelId?: string; availableModels?: { modelId?: string }[] };
+  configOptions?: { id: string; currentValue?: string; options?: { value?: string }[] }[];
+  modes?: { currentModeId?: string; availableModes?: { id?: string }[] };
+}
+interface ProbeMessageChunk {
+  sessionUpdate?: string;
+  content?: { text?: string };
+}
+const s = session as unknown as ProbeSessionView;
+console.log("MODELS", s.models?.currentModelId, JSON.stringify((s.models?.availableModels ?? []).map((m) => m.modelId)));
+for (const o of s.configOptions ?? []) console.log("OPTION", o.id, o.currentValue, JSON.stringify((o.options ?? []).map((x) => x.value)));
+console.log("MODES", s.modes?.currentModeId, JSON.stringify((s.modes?.availableModes ?? []).map((m) => m.id)));
 if (prompt) {
   const result = await conn.prompt({ sessionId: session.sessionId, prompt: [{ type: "text", text: prompt }] });
-  const text = updates.filter((u: any) => u.sessionUpdate === "agent_message_chunk").map((u: any) => u.content?.text ?? "").join("");
+  const text = (updates as ProbeMessageChunk[]).filter((u) => u.sessionUpdate === "agent_message_chunk").map((u) => u.content?.text ?? "").join("");
   console.log("PROMPT RESULT", JSON.stringify(result), "TEXT:", text.slice(0, 500));
 }
 child.kill();

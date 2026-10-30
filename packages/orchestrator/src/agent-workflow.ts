@@ -352,7 +352,7 @@ export class AgentWorkflow {
           ? { roleId: stage.roleId, profileId: stage.profileIds[0] ?? this.dependencies.plannerProfileId }
           : {
             roleId: stage.reviewerRoleId ?? (this.host.state().roles.find((role) => !role.removed && role.result === "objections")?.id ?? "design-reviewer"),
-            profileId: stage.reviewerProfileIds?.[0] ?? "sol-xhigh"
+            profileId: stage.reviewerProfileIds?.[0] ?? stage.profileIds[0] ?? this.dependencies.plannerProfileId
           };
       case "review-chain":
         return this.phases.nextReviewer(task, stage);

@@ -17,6 +17,7 @@ import {
   repositoryView,
   type AgentSession,
   type MaintenanceSettings,
+  type ParticipantInputCaptureRequest,
   type RepositoryContext,
   type TurnRecovery,
   type TurnResult,
@@ -134,45 +135,25 @@ export interface TurnAttemptCollaborators {
       supplyHistory?: boolean;
     },
   ): Promise<{ sections: Section[]; refreshRole: boolean; omitted?: readonly ContextOmission[] }>;
-  recordJourneyInput(
-    scope: RepositoryContext,
-    roleId: Id,
-    profileId: Id,
-    sections: readonly Section[],
-    mode: "fresh" | "continued",
-    plannedId: Id,
-    selectionReason: string | undefined,
-    reviewerKey: string | undefined,
-    confirmedSettings: { model?: string; modelName?: string; effort?: string },
-    instructions: string,
-    extra?: {
-      omitted?: readonly ContextOmission[];
-      freshReason?: string;
-      sessionId?: string;
-      resumed?: boolean;
-      supplied?: readonly Section[];
-      place?: string;
-      readiness?: ReadinessRecheck;
-    },
-  ): PendingInput | undefined;
+  recordJourneyInput(request: ParticipantInputCaptureRequest): PendingInput | undefined;
   reserveOpening(
     scope: RepositoryContext,
-    sections: Section[],
+    sections: readonly Section[],
     member: string | undefined,
     earlierCarried: boolean,
-  ): ReturnType<typeof takeMessages>;
+  ): { sections: Section[]; messages: ReturnType<typeof takeMessages> };
   lastWords(scope: RepositoryContext, roleId: Id, profileId: Id, since: number): string;
   whereYouWere(scope: RepositoryContext, role: Role, since: number): WhereYouWere;
-  converse<T>(
-    scope: RepositoryContext,
-    run: AgentSession,
-    agent: TurnAgent,
-    opening: string,
-    reason: TurnReason,
-    role: Role,
-    profileId: Id,
-    schema: z.ZodType<T>,
-    signal: AbortSignal,
+  converse<T>(request: {
+    scope: RepositoryContext;
+    run: AgentSession;
+    agent: TurnAgent;
+    opening: string;
+    reason: TurnReason;
+    role: Role;
+    profileId: Id;
+    schema: z.ZodType<T>;
+    signal: AbortSignal;
     options: {
       check?: Check<T>;
       main: boolean;
@@ -183,8 +164,8 @@ export interface TurnAttemptCollaborators {
       reviewerKey?: string;
       beforeContinue?: (reply: TurnResult) => Promise<void>;
       pendingInput?: () => PendingInput | undefined;
-    },
-  ): Promise<T>;
+    };
+  }): Promise<T>;
 }
 
 export async function prepareTurnOpeningPrompt<T>(params: {
@@ -262,15 +243,16 @@ export async function prepareTurnOpeningPrompt<T>(params: {
 
   let openingMessages: ReturnType<typeof takeMessages> = [];
   const withBackground = async (): Promise<Section[]> => {
-    const sections = [
+    const rawSections = [
       ...currentStepAssignment(task, roleId),
       ...(await given()),
       ...(repository.prBackground
         ? [{ title: "Pull request background", body: pullRequestBackground(repository.prBackground) }]
         : []),
     ];
-    openingMessages = deps.reserveOpening(scope, sections, options.member, true);
-    return sections;
+    const reserved = deps.reserveOpening(scope, rawSections, options.member, true);
+    openingMessages = reserved.messages;
+    return reserved.sections;
   };
   const freshReason =
     wentBack || picked
@@ -322,23 +304,23 @@ export async function prepareTurnOpeningPrompt<T>(params: {
       {
         refreshRole: prepared.refreshRole,
         recordJob: (job, supplied) => {
-          pending = deps.recordJourneyInput(
+          pending = deps.recordJourneyInput({
             scope,
             roleId,
             profileId,
             sections,
-            "continued",
-            requestedPlan,
-            options.selectionReason,
-            options.reviewerKey,
-            run.settings,
-            job,
-            {
+            mode: "continued",
+            plannedId: requestedPlan,
+            selectionReason: options.selectionReason,
+            reviewerKey: options.reviewerKey,
+            confirmedSettings: run.settings,
+            instructions: job,
+            extra: {
               ...extraMeta,
               supplied,
               omitted: prepared.omitted,
             },
-          );
+          });
         },
       },
     );
@@ -367,22 +349,22 @@ export async function prepareTurnOpeningPrompt<T>(params: {
         ? [{ title: "Refreshed pull request background", body: pullRequestBackground(repository.prBackground) }]
         : []),
     ];
-    pending = deps.recordJourneyInput(
+    pending = deps.recordJourneyInput({
       scope,
       roleId,
       profileId,
       sections,
-      "continued",
-      requestedPlan,
-      options.selectionReason,
-      options.reviewerKey,
-      run.settings,
-      opening,
-      {
+      mode: "continued",
+      plannedId: requestedPlan,
+      selectionReason: options.selectionReason,
+      reviewerKey: options.reviewerKey,
+      confirmedSettings: run.settings,
+      instructions: opening,
+      extra: {
         ...extraMeta,
         resumed: true,
       },
-    );
+    });
     opening += sections.map(({ title, body }) => `\n\n## ${title}\n${body}`).join("");
   } else {
     const files = where && !handback && head && worktree ? await git.changedSince(worktree, head) : [];
@@ -434,23 +416,23 @@ export async function prepareTurnOpeningPrompt<T>(params: {
       ).sections;
     }
     opening = buildPrompt({ ...promptBase, worktree: workingCopy, sections }, (job, supplied) => {
-      pending = deps.recordJourneyInput(
+      pending = deps.recordJourneyInput({
         scope,
         roleId,
         profileId,
         sections,
-        "fresh",
-        requestedPlan,
-        options.selectionReason,
-        options.reviewerKey,
-        run.settings,
-        job,
-        {
+        mode: "fresh",
+        plannedId: requestedPlan,
+        selectionReason: options.selectionReason,
+        reviewerKey: options.reviewerKey,
+        confirmedSettings: run.settings,
+        instructions: job,
+        extra: {
           ...extraMeta,
           supplied,
           ...(freshReason ? { freshReason } : {}),
         },
-      );
+      });
     });
   }
 

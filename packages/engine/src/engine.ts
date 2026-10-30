@@ -12,12 +12,9 @@
 
 import * as library from "@petrina/core";
 import {
-  legacyJourney,
-  recoverMessages,
   SCREEN_HOUR_MS,
   stopCheckProgress,
   type AskAnswer,
-  type CheckId,
   type Clone,
   type Commands,
   type DeliveryMode,
@@ -34,7 +31,6 @@ import {
   type UsageViewFor,
   type WorkChoice,
 } from "@petrina/core";
-import { CODEX_USAGE_EVERY_MS } from "@petrina/agent-runtime/codex-usage";
 import { AcceptedPoints } from "./accepted-points.js";
 import { CatalogCommands } from "./catalog-commands.js";
 import { Checkpoints } from "./checkpoints.js";
@@ -43,11 +39,12 @@ import { Connections } from "./connection.js";
 import { Context } from "./context.js";
 import { Design } from "./design.js";
 import { Driver } from "./driver.js";
+import { prepareRecoveredTasks, startEngineBackgroundLoops } from "./engine-startup.js";
 import { ExtraValidations } from "./extra-validations.js";
 import { FollowUps } from "./follow-ups.js";
 import { GuideKeeper } from "./guide-keeper.js";
 import { InboxCommands } from "./inbox-commands.js";
-import { Kernel, type EngineOptions, type RuntimeTask } from "./kernel.js";
+import { Kernel, type EngineOptions } from "./kernel.js";
 import { Learnings } from "./learnings.js";
 import { Planning } from "./planning.js";
 import { ProductChecks } from "./product-checks.js";
@@ -166,63 +163,22 @@ export class Engine extends Kernel implements Commands {
     };
     this.beforeCaptureRemoval = (task) => this.followUps.beforeRemoval(task);
     this.acceptedPoints = new AcceptedPoints(this);
-    // Tasks from before journeys were recorded: one step per finished stage, and the step under way, so new steps follow on from there.
-    for (const task of this.s.tasks) {
-      if (!task.journey && task.startedAt !== undefined) {
-        task.journey = legacyJourney(task, this.s.inbox, this.s.roles) as RuntimeTask["journey"];
-      }
-    }
-    // Deliveries a Petrina from before this version left halfway: never acted on by themselves.
-    this.shipping.carryOverShipping();
-    for (const task of this.s.tasks) recoverMessages(task);
+    prepareRecoveredTasks(this, this.shipping);
     this.extraValidations = new ExtraValidations(this);
-    this.driver.recover();
-    void this.trackWork(this.checks.restoreEvidence().catch(() => undefined));
-    // Recovered Builders get a short login check on their saved tool before fallback selection.
-    // Other roles keep their existing recovery rules; the usual check timeout bounds this wait.
-    for (const task of this.s.tasks.filter((entry) => entry.state === "waiting")) {
-      const planned = task.plan?.stages[task.stageIndex]?.profileIds[0];
-      const own = planned ? this.builderConversation(task, planned) : undefined;
-      if (own) {
-        void this.tools.check(own.toolId as CheckId).then(() => {
-          if (!this.stopped) this.schedule();
-        });
-      }
-    }
-    this.timers.push(
-      setInterval(() => {
-        try {
-          this.pollRoutines();
-          this.schedule();
-        } catch (error) {
-          console.error("Could not save maintenance admission:", error);
-        }
-      }, 15_000),
-    );
-    this.armScreenTimer();
-    this.timers.push(
-      setInterval(() => {
-        this.pollPullRequests();
-        this.shipping.monitor.settleCancelledTasks();
-        // Apart from GitHub: a slow lookup never holds up removing copies.
-        // Confirmed older bugs are linked before a finished task's pictures are removed.
-        void this.trackWork(this.followUps.catchUp().catch(() => undefined).then(() => this.cleanup.sweep()));
-        void this.trackWork(this.acceptedPoints.sweep());
-      }, options.checkEveryMs ?? 60_000),
-      // Codex's usage, every ten minutes while any agent runs (Claude Code reports its own on every turn).
-      setInterval(() => {
-        if (this.runs.size || [...this.helperRuns.values()].some((runs) => runs.size)) this.readUsage();
-      }, CODEX_USAGE_EVERY_MS),
-    );
-    // A long command may send no activity. Save its working time too, so a forced stop loses little of it.
-    this.timers.push(setInterval(() => this.checkpointStepTimes(), 15_000));
-    this.shipping.monitor.settleCancelledTasks();
-    this.pollPullRequests();
-    this.schedule();
-    this.readUsage();
-    // Catch up at start: link any older bug saved only part-way, then remove finished working copies.
-    this.startupSweep = this.trackWork(this.followUps.catchUp().catch(() => undefined).then(() => this.cleanup.sweep())).catch(() => undefined);
-    void this.trackWork(this.acceptedPoints.sweep());
+    this.startupSweep = startEngineBackgroundLoops({
+      kernel: this,
+      options,
+      shipping: this.shipping,
+      driver: this.driver,
+      checks: this.checks,
+      tools: this.tools,
+      followUps: this.followUps,
+      cleanup: this.cleanup,
+      acceptedPoints: this.acceptedPoints,
+      pollRoutines: () => this.pollRoutines(),
+      pollPullRequests: () => this.pollPullRequests(),
+      checkpointStepTimes: () => this.checkpointStepTimes(),
+    });
   }
 
   private checkpointStepTimes(): void {

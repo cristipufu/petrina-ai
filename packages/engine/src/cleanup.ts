@@ -94,8 +94,9 @@ export class Cleanup {
       // On a full disk even this save fails; removing the copy is what frees the space, and the next change saves.
       try {
         this.k.commitNow();
-      } catch {
+      } catch (error) {
         // Saved with the next change.
+        if (!this.k.stopped) console.warn("Best-effort state save before worktree cleanup failed:", error);
       }
       const root = this.k.productOf(task)?.path ?? (await git.mainClone(path));
       if (!root) throw new Error("the product's repository could not be found");
@@ -163,9 +164,21 @@ export class Cleanup {
         }
         changed = true;
         // Disk pressure must not prevent freeing the remaining repositories' space.
-        try { this.k.commitNow(task); } catch { /* The next save retains the pending result. */ }
+        try {
+          this.k.commitNow(task);
+        } catch (error) {
+          /* The next save retains the pending result. */
+          if (!this.k.stopped) console.warn("Best-effort state save during worktree cleanup failed:", error);
+        }
       }
-      if (changed) try { this.k.saveArchivedTask(task); } catch { /* Retried with the next save or sweep. */ }
+      if (changed) {
+        try {
+          this.k.saveArchivedTask(task);
+        } catch (error) {
+          /* Retried with the next save or sweep. */
+          if (!this.k.stopped) console.warn("Best-effort archived task save after cleanup failed:", error);
+        }
+      }
     } finally {
       this.removing.delete(task.id);
       this.k.cleanupJobs.delete(task.id);

@@ -37,31 +37,38 @@ const AGAIN = "Read it again from the beginning for current data.";
 const OTHER_READ = `This continuation belongs to a different analytics read. Use the same task, product and period as its first page, or ${AGAIN.toLowerCase()}`;
 const HOLD_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
-export function readAnalytics(e: Engine, a: { taskId?: string; productId?: string; period: UsagePeriod; cursor?: string; limit: number }): Result {
-  const scope: Scope = { ...(a.taskId ? { taskId: a.taskId } : {}), ...(a.productId ? { productId: a.productId } : {}), period: a.period };
-  const ref = a.cursor === undefined ? undefined : decode(a.cursor);
+export function readAnalytics(
+  engine: Engine,
+  args: { taskId?: string; productId?: string; period: UsagePeriod; cursor?: string; limit: number },
+): Result {
+  const scope: Scope = {
+    ...(args.taskId ? { taskId: args.taskId } : {}),
+    ...(args.productId ? { productId: args.productId } : {}),
+    period: args.period,
+  };
+  const ref = args.cursor === undefined ? undefined : decode(args.cursor);
   if (ref === null) return { outcome: "invalid", message: `This analytics continuation is malformed or unsupported. ${AGAIN}` };
   const asOf = ref ? { asOf: ref.asOf } : {};
-  if (a.taskId && !e.taskDetails(a.taskId)) return { outcome: "missing", message: "That task does not exist.", ...asOf };
-  if (a.productId && !e.s.products.some((product) => product.id === a.productId)) return {
+  if (args.taskId && !engine.taskDetails(args.taskId)) return { outcome: "missing", message: "That task does not exist.", ...asOf };
+  if (args.productId && !engine.s.products.some((product) => product.id === args.productId)) return {
     outcome: "missing",
     message: "That product does not exist.",
     ...asOf
   };
-  return ref ? next(e, scope, ref, a.limit) : first(e, scope, a.limit);
+  return ref ? next(engine, scope, ref, args.limit) : first(engine, scope, args.limit);
 }
 
-function first(e: Engine, scope: Scope, limit: number): Result {
+function first(engine: Engine, scope: Scope, limit: number): Result {
   // As the window's page does: ask for fresh account usage. This read keeps the readings it uses now.
-  if (!scope.taskId) e.readUsage(undefined, ACCOUNT_ON_PAGE_MS);
+  if (!scope.taskId) engine.readUsage(undefined, ACCOUNT_ON_PAGE_MS);
   const asOf = Date.now();
-  const live = scope.taskId ? undefined : Object.freeze(structuredClone(e.activeState().pool.usage ?? []).map((report) => Object.freeze(report)));
-  const source = report(e, scope, asOf, live);
+  const live = scope.taskId ? undefined : Object.freeze(structuredClone(engine.activeState().pool.usage ?? []).map((report) => Object.freeze(report)));
+  const source = report(engine, scope, asOf, live);
   const key = identity(scope, asOf, source);
   if (!live || source.length <= limit) return page(source, 0, limit, asOf, { key });
   const hold: AnalyticsHold = { id: randomBytes(9).toString("base64url"), scope, asOf, live, key, total: source.length, bytes: 0 };
   hold.bytes = Buffer.byteLength(JSON.stringify(hold));
-  if (!analyticsHolds(e).keep(hold, asOf))
+  if (!analyticsHolds(engine).keep(hold, asOf))
     return {
       outcome: "unavailable",
       reason: "too-large",
@@ -69,16 +76,16 @@ function first(e: Engine, scope: Scope, limit: number): Result {
       asOf,
       total: source.length
     };
-  return page(source, 0, limit, asOf, { key, hold: hold.id, run: e.boot });
+  return page(source, 0, limit, asOf, { key, hold: hold.id, run: engine.boot });
 }
 
-function next(e: Engine, scope: Scope, ref: Reference, limit: number): Result {
+function next(engine: Engine, scope: Scope, ref: Reference, limit: number): Result {
   const asOf = { asOf: ref.asOf };
   let live: readonly UsageReport[] | undefined;
   let key = ref.key;
   if (scope.taskId ? ref.hold : !ref.hold) return { outcome: "invalid", message: OTHER_READ, ...asOf };
   if (ref.hold) {
-    if (ref.run !== e.boot) return {
+    if (ref.run !== engine.boot) return {
       outcome: "unavailable",
       reason: "engine-restarted",
       message: `The engine restarted after this read began, so the allowance readings it used are gone. No current data is substituted. ${AGAIN}`,
@@ -91,7 +98,7 @@ function next(e: Engine, scope: Scope, ref: Reference, limit: number): Result {
       message: `This paged read expired ten minutes after its first page. No current data is substituted. ${AGAIN}`,
       ...asOf
     };
-    const hold = analyticsHolds(e).get(ref.hold, now);
+    const hold = analyticsHolds(engine).get(ref.hold, now);
     if (!hold) return {
       outcome: "unavailable",
       reason: "evicted",
@@ -106,7 +113,7 @@ function next(e: Engine, scope: Scope, ref: Reference, limit: number): Result {
     live = hold.live;
     key = hold.key;
   }
-  const source = report(e, scope, ref.asOf, live);
+  const source = report(engine, scope, ref.asOf, live);
   if (identity(scope, ref.asOf, source) !== key)
     return {
       outcome: "changed",
@@ -117,8 +124,8 @@ function next(e: Engine, scope: Scope, ref: Reference, limit: number): Result {
   return page(source, ref.at, limit, ref.asOf, { key, ...(ref.hold ? { hold: ref.hold, run: ref.run } : {}) });
 }
 
-function report(e: Engine, scope: Scope, asOf: number, live: readonly UsageReport[] | undefined): string {
-  const view = e.tracking.usageAt(
+function report(engine: Engine, scope: Scope, asOf: number, live: readonly UsageReport[] | undefined): string {
+  const view = engine.tracking.usageAt(
     scope.taskId ? {
     view: "task",
     taskId: scope.taskId

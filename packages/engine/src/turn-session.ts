@@ -102,9 +102,10 @@ export function resolveSandboxState(
 ): ActiveAgent["sandbox"] {
   const { task } = scope;
   const toolId = k.profile(profileId)?.toolId;
-  if (toolId !== "claude-code" && toolId !== "codex") return undefined;
+  const adapter = toolId ? ADAPTERS[toolId] : undefined;
+  if (!adapter?.reportsSandbox) return undefined;
   if (off === undefined) return { on: true };
-  const line = `Running without Claude Code's sandbox: ${off}`;
+  const line = `Running without ${adapter.name}'s sandbox: ${off}`;
   const said =
     reopened
     && task.session.some(
@@ -156,19 +157,21 @@ function showRetrying(
   k.commit(scope);
 }
 
-export async function waitForCoordinatorReply(
-  k: Kernel,
-  scope: RepositoryContext,
-  kind: InboxKind,
-  title: string,
-  blocking: boolean,
-  extra: { body?: string; options?: string[]; detail?: string },
-  signal: AbortSignal,
-  status: string,
-  by: { roleId: Id; profileId: Id },
-  main: boolean,
-  reviewKey?: string,
-): Promise<string> {
+export interface CoordinatorReplyRequest {
+  scope: RepositoryContext;
+  kind: InboxKind;
+  title: string;
+  blocking: boolean;
+  extra: { body?: string; options?: string[]; detail?: string };
+  signal: AbortSignal;
+  status: string;
+  by: { roleId: Id; profileId: Id };
+  main: boolean;
+  reviewKey?: string;
+}
+
+export async function waitForCoordinatorReply(k: Kernel, request: CoordinatorReplyRequest): Promise<string> {
+  const { scope, kind, title, blocking, extra, signal, status, by, main, reviewKey } = request;
   if (signal.aborted) throw new Aborted();
   const { task, work: repository } = scope;
   const id = k.raise(scope, kind, title, blocking, { ...extra, ...(reviewKey ? { reviewKey } : {}) }, by);
@@ -209,18 +212,7 @@ export async function waitForCoordinatorReply(
   }
 }
 
-export type WaitForCoordinatorFn = (
-  scope: RepositoryContext,
-  kind: InboxKind,
-  title: string,
-  blocking: boolean,
-  extra: { body?: string; options?: string[]; detail?: string },
-  signal: AbortSignal,
-  status: string,
-  by: { roleId: Id; profileId: Id },
-  main: boolean,
-  reviewKey?: string,
-) => Promise<string>;
+export type WaitForCoordinatorFn = (request: CoordinatorReplyRequest) => Promise<string>;
 
 /** The tool's own safety check flagged something: the coordinator decides. Petrina adds no rules of its own. */
 async function askToolPermission(
@@ -242,41 +234,46 @@ async function askToolPermission(
   // Waiting for the coordinator is not agent work: the wait is left out of the turn's working time.
   waits.start(taskId);
   try {
-    const answer = await waitFn(
+    const answer = await waitFn({
       scope,
-      "permission",
-      info.title,
-      true,
-      { body: `${tool}'s own safety check wants your OK before this.`, ...(detail ? { detail } : {}) },
+      kind: "permission",
+      title: info.title,
+      blocking: true,
+      extra: { body: `${tool}'s own safety check wants your OK before this.`, ...(detail ? { detail } : {}) },
       signal,
-      "Waiting for your permission",
+      status: "Waiting for your permission",
       by,
       main,
       reviewKey,
-    );
+    });
     return answer === "allow" ? "allow" : "deny";
   } finally {
     waits.stop(taskId);
   }
 }
 
-/** Shared startup, callbacks and reopen fallback for main turns and parallel members. */
-export async function openTurnAgentRun(
-  k: Kernel,
-  tools: ToolChecks,
-  scope: RepositoryContext,
-  role: Role,
-  profile: AgentProfile,
-  cwd: string,
-  signal: AbortSignal,
-  agent: TurnAgent,
-  options: OpenAgentRunOptions,
+export interface OpenTurnAgentRunRequest {
+  k: Kernel;
+  tools: ToolChecks;
+  scope: RepositoryContext;
+  role: Role;
+  profile: AgentProfile;
+  cwd: string;
+  signal: AbortSignal;
+  agent: TurnAgent;
+  options: OpenAgentRunOptions;
   hooks: {
     onMessage: (message: AgentMessage) => void;
     markBriefed: (scope: RepositoryContext) => void;
     wait: WaitForCoordinatorFn;
-  },
+  };
+}
+
+/** Shared startup, callbacks and reopen fallback for main turns and parallel members. */
+export async function openTurnAgentRun(
+  request: OpenTurnAgentRunRequest,
 ): Promise<{ run: AgentSession; off?: string; reopenFailure?: string }> {
+  const { k, tools, scope, role, profile, cwd, signal, agent, options, hooks } = request;
   const { task } = scope;
   const roleId = role.id;
   const profileId = profile.id;

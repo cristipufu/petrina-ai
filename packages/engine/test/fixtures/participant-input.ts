@@ -100,8 +100,26 @@ export function participantInputFixture(host: ContextHost, now: () => number, sc
         worktree: work.worktree ?? "scripted:product", branch: work.branch ?? "main", base: work.baseSha ?? work.base ?? "", defaultBranch: "main", sections: prepared.sections };
       let pending: ReturnType<ParticipantInputs["capture"]>;
       const recordJob = (instructions: string, supplied: readonly InputSection[]) => {
-        pending = inputs.capture(scope, role.id, profile.id, prepared.sections, wentBack ? "continued" : "fresh", plannedId, options.selectionReason, options.reviewerKey, run.settings, instructions,
-          { sessionId: run.sessionId, supplied, omitted: prepared.omitted, ...(!wentBack && (opened.reopenFailure ?? options.freshReason) ? { freshReason: opened.reopenFailure ?? options.freshReason } : {}) });
+        pending = inputs.capture({
+          scope,
+          roleId: role.id,
+          profileId: profile.id,
+          sections: prepared.sections,
+          mode: wentBack ? "continued" : "fresh",
+          plannedId,
+          selectionReason: options.selectionReason,
+          reviewerKey: options.reviewerKey,
+          confirmedSettings: run.settings,
+          instructions,
+          extra: {
+            sessionId: run.sessionId,
+            supplied,
+            omitted: prepared.omitted,
+            ...(!wentBack && (opened.reopenFailure ?? options.freshReason)
+              ? { freshReason: opened.reopenFailure ?? options.freshReason }
+              : {}),
+          },
+        });
       };
       const text = wentBack ? continuePrompt(promptContext, { refreshRole: prepared.refreshRole, recordJob }) : buildPrompt(promptContext, recordJob);
       await inputs.attach(scope, pending, text);

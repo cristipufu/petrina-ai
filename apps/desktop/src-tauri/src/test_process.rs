@@ -243,6 +243,36 @@ pub fn start_child(mode: &str, address: &str) -> Started {
     }
 }
 
+pub fn controlled_child(mode: &str) -> (Started, Control) {
+    let listener = Listener::new();
+    let mut started = start_child(mode, &listener.address());
+    match listener.accept() {
+        Ok(control) if started.owner.child.id() == control.pid => (started, control),
+        Ok(_) => {
+            if !reap_fixture(&mut started.owner.child) {
+                eprintln!("controlled child cleanup was not confirmed");
+            }
+            panic!("a different process connected to the fixture's listener");
+        }
+        Err(error) => {
+            if !reap_fixture(&mut started.owner.child) {
+                eprintln!("controlled child cleanup was not confirmed");
+            }
+            panic!("controlled child did not connect: {error}");
+        }
+    }
+}
+
+/// Reap a fixture's own outer process on assertion failure as well as success.
+pub struct OwnedOuter(pub Child);
+impl Drop for OwnedOuter {
+    fn drop(&mut self) {
+        if !reap_fixture(&mut self.0) {
+            eprintln!("private outer cleanup was not confirmed");
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -313,6 +343,7 @@ mod tests {
         if mode == "held-stderr" {
             let helper = std::env::var("PETRINA_STARTUP_HELPER").unwrap();
             // Its private control is independently held by the parent; stderr is the actual inherited pipe.
+            #[allow(clippy::zombie_processes)]
             let _helper = actor_command("stderr-holder", &helper, None)
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
@@ -483,13 +514,23 @@ mod tests {
     #[test]
     fn an_exited_handoff_owner_cannot_keep_reusing_its_obsolete_address() {
         let (result, mut control, worker) = begin("ready", None);
-        control.ping(); control.go();
-        let mut started = match result.recv_timeout(Duration::from_secs(3)).unwrap() { Ok(started) => started, Err(failure) => panic!("{}", failure.message) };
-        started.owner.handoff.store(true, std::sync::atomic::Ordering::Release);
+        control.ping();
+        control.go();
+        let mut started = match result.recv_timeout(Duration::from_secs(3)).unwrap() {
+            Ok(started) => started,
+            Err(failure) => panic!("{}", failure.message),
+        };
+        started
+            .owner
+            .handoff
+            .store(true, std::sync::atomic::Ordering::Release);
         control.quit();
         let deadline = Instant::now() + IO;
         while started.owner.observe() != ChildObservation::Exited {
-            assert!(Instant::now() < deadline, "the privately released child actually exits");
+            assert!(
+                Instant::now() < deadline,
+                "the privately released child actually exits"
+            );
             thread::sleep(Duration::from_millis(5));
         }
         let connection = EngineConnection::default();
@@ -497,7 +538,10 @@ mod tests {
         let mut called = false;
         let next = connection.connect_with(false, || {
             called = true;
-            Err(StartupFailure { message: "replacement starter reached".into(), remaining: None })
+            Err(StartupFailure {
+                message: "replacement starter reached".into(),
+                remaining: None,
+            })
         });
         assert!(called, "a confirmed ended owner cannot block a later start");
         assert_eq!(next.unwrap_err(), "replacement starter reached");
@@ -547,35 +591,5 @@ mod tests {
         assert_eq!(next.unwrap_err(), "the next explicit starter was called");
         assert_eq!(starts.load(std::sync::atomic::Ordering::SeqCst), 1);
         worker.join().unwrap();
-    }
-}
-
-pub fn controlled_child(mode: &str) -> (Started, Control) {
-    let listener = Listener::new();
-    let mut started = start_child(mode, &listener.address());
-    match listener.accept() {
-        Ok(control) if started.owner.child.id() == control.pid => (started, control),
-        Ok(_) => {
-            if !reap_fixture(&mut started.owner.child) {
-                eprintln!("controlled child cleanup was not confirmed");
-            }
-            panic!("a different process connected to the fixture's listener");
-        }
-        Err(error) => {
-            if !reap_fixture(&mut started.owner.child) {
-                eprintln!("controlled child cleanup was not confirmed");
-            }
-            panic!("controlled child did not connect: {error}");
-        }
-    }
-}
-
-/// Reap a fixture's own outer process on assertion failure as well as success.
-pub struct OwnedOuter(pub Child);
-impl Drop for OwnedOuter {
-    fn drop(&mut self) {
-        if !reap_fixture(&mut self.0) {
-            eprintln!("private outer cleanup was not confirmed");
-        }
     }
 }

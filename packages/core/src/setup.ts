@@ -8,7 +8,7 @@ import type { Id, InboxItem, State } from "./model.js";
 /** What Petrina checks: the agent tools, the GitHub CLI, and what Petrina itself needs. */
 export type CheckId = "claude-code" | "codex" | "grok" | "antigravity" | "gh" | "git" | "node";
 
-/** The two starter tools, in the order the squad prefers them; Grok joins once its check finds it (see agentTools). */
+/** The two starter tools, in the order the squad prefers them; Grok and Antigravity join once their checks find them (see agentTools). */
 export const AGENT_TOOLS = ["claude-code", "codex"] as const;
 
 /**
@@ -186,8 +186,8 @@ export function checkOf(checks: readonly ToolCheck[] | undefined, id: CheckId): 
 const present = (status: CheckStatus) => status === "ready" || status === "unknown";
 
 /**
- * The agent tools on this machine's list: Claude Code and Codex always, and Grok once its check has
- * found it installed. The squad can run a whole task on any one of them.
+ * The agent tools on this machine's list: Claude Code and Codex always, and Grok and Antigravity once their
+ * checks have found them installed. The squad can run a whole task on any one of them.
  */
 export function agentTools(checks: readonly ToolCheck[] | undefined): CheckId[] {
   const extras = (["grok", "antigravity"] as const).filter(id => checks?.some(check => check.id === id && check.status !== "not-installed"));
@@ -208,9 +208,9 @@ export function usableAgentTools(checks: readonly ToolCheck[] | undefined): Chec
 
 /**
  * Whether the Tools screen may go on, what is missing in one sentence, and the notes under Continue,
- * one sentence each. Continue needs Git, Node.js and one agent tool (Claude Code, Codex, or Grok when
- * it is installed) that is Ready or that Petrina couldn't check. The notes describe what the squad will
- * really use (see usableAgentTools).
+ * one sentence each. Continue needs Git, Node.js and one agent tool (Claude Code, Codex, or Grok or
+ * Antigravity when installed) that is Ready or that Petrina couldn't check. The notes describe what
+ * the squad will really use (see usableAgentTools).
  */
 export function toolsGate(checks: readonly ToolCheck[] | undefined): { ok: boolean; missing?: string; notes: string[] } {
   const status = (id: CheckId) => checkOf(checks, id).status;

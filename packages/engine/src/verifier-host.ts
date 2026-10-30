@@ -1,13 +1,15 @@
 import { VerifierBallots, type VerifierSelection } from "@petrina/orchestrator";
 import { verifierProfiles, type Id, type Stage } from "@petrina/core";
 import type { Kernel } from "./kernel.js";
-import { CAPACITY_WAIT } from "@petrina/agent-runtime/failures";
 
 /** Native composition only: the controller receives its existing narrow catalog/selection/recording ports. */
 type SelectionHost = Pick<Kernel, "profile" | "choose" | "usableTools" | "taskAdmissionsClosed"> & {
-  readonly s: Pick<Kernel["s"], "tools" | "profiles">;
+  readonly s: Pick<Kernel["s"], "tools" | "profiles" | "roles">;
 };
 type VerifierHost = SelectionHost & Pick<Kernel, "named" | "role" | "commitNow" | "commit" | "log">;
+
+const votesRoleId = (k: SelectionHost): Id =>
+  k.s.roles.find((role) => !role.removed && role.result === "votes")?.id ?? "verifier";
 
 /** Prefer the tool's high-effort profile for claims; discovery keeps the stage's configured effort. */
 function candidates(k: SelectionHost, stage: Stage): Id[] {
@@ -19,10 +21,10 @@ export function createVerifierSelection(k: SelectionHost): VerifierSelection {
   return {
     candidates: stage => candidates(k, stage), admissionsClosed: task => k.taskAdmissionsClosed(task),
     resolve: (task, id) => {
-      const choice = k.choose(id, task, "verifier");
+      const choice = k.choose(id, task, votesRoleId(k));
       if (!choice) return undefined;
       return choice.kind === "none"
-        ? { kind: choice.waiting.startsWith(CAPACITY_WAIT) ? "capacity" : "unavailable", waiting: choice.waiting }
+        ? { kind: choice.capacity ? "capacity" : "unavailable", waiting: choice.waiting }
         : { kind: "selected", profile: { id: choice.profile.id, toolId: choice.profile.toolId } };
     },
   };

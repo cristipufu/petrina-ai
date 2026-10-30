@@ -31,6 +31,40 @@ export type CheckCommandExecutor = (
   request: CheckCommandRequest,
 ) => Promise<CheckCommandOutcome | undefined> | CheckCommandOutcome | undefined;
 
+export interface RunCheckBatchOptions {
+  cwd: string;
+  checks: readonly ProductCheck[];
+  env: NodeJS.ProcessEnv;
+  timeoutMs?: number;
+  signal?: AbortSignal;
+  logDirectory?: string;
+  processList?: (timeout: number) => Promise<string | undefined>;
+  onProgress?: (event: CheckProgress) => void;
+  machineRecords?: MachineRecords;
+  onSpawn?: (pid: number) => void;
+  onLog?: (facts: Pick<CheckRun, "logPath" | "logFileIdentity" | "logFileLength" | "logFileBeginning">) => void;
+  beforeStart?: () => boolean;
+  executeCommand?: CheckCommandExecutor;
+}
+
+export function runCheckBatch(options: RunCheckBatchOptions): Promise<CheckRun[]> {
+  return runChecks(
+    options.cwd,
+    options.checks,
+    options.env,
+    options.timeoutMs,
+    options.signal,
+    options.logDirectory,
+    options.processList,
+    options.onProgress,
+    options.machineRecords,
+    options.onSpawn,
+    options.onLog,
+    options.beforeStart,
+    options.executeCommand,
+  );
+}
+
 export async function runChecks(
   cwd: string,
   checks: readonly ProductCheck[],

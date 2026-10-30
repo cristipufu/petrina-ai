@@ -14,6 +14,31 @@ import {
 } from "./coordination-views.js";
 import type { Engine } from "./engine.js";
 import type { RuntimeTask } from "./kernel.js";
+import type { MutationOperationName } from "./operations.js";
+
+export type LifecycleOnlyMutationName = "engine.start" | "engine.stop" | "engine.restart";
+export type DirectMutationName = "validation.run" | "task.track-finding";
+export type DelegatedMutationName = Exclude<
+  MutationOperationName,
+  LifecycleOnlyMutationName | DirectMutationName
+>;
+
+type InboxMutationName =
+  | "inbox.answer"
+  | "inbox.allow"
+  | "inbox.deny"
+  | "inbox.approve"
+  | "inbox.changes"
+  | "inbox.rerun-checks"
+  | "inbox.retry"
+  | "inbox.recovery"
+  | "learning.accept"
+  | "learning.decline"
+  | "review-guide.accept"
+  | "review-guide.decline"
+  | "screen.allow";
+
+type StateMutationName = Exclude<DelegatedMutationName, InboxMutationName>;
 
 interface InboxMutationContext {
   readonly engine: Engine;
@@ -42,7 +67,7 @@ const declineInboxItem: InboxMutationHandler = ({ engine, itemId }) => {
   engine.decline(itemId);
 };
 
-export const INBOX_MUTATION_HANDLERS: Readonly<Record<string, InboxMutationHandler>> = {
+export const INBOX_MUTATION_HANDLERS: Readonly<Record<InboxMutationName, InboxMutationHandler>> = {
   "inbox.answer": ({ engine, itemId, args }) => {
     engine.answer(itemId, args.answer!, { clientId: args.requestId });
   },
@@ -148,7 +173,7 @@ const updatePlanAssignment: StateMutationHandler = ({ engine, task, name, args, 
   engine.addReviewer(args.taskId!, args.stageId!, args.profileId!);
 };
 
-export const STATE_MUTATION_HANDLERS: Readonly<Record<string, StateMutationHandler>> = {
+export const STATE_MUTATION_HANDLERS: Readonly<Record<StateMutationName, StateMutationHandler>> = {
   "engine.pause": ({ engine, done }) => {
     engine.setPoolPaused(true);
     return done({ ...drainStatus(engine) });
@@ -336,14 +361,14 @@ export function executeCoordinationMutation(
     ) {
       return unavailable(`That is a ${item.kind} request. Use its available decisions.`);
     }
-    const handler = INBOX_MUTATION_HANDLERS[name];
+    const handler = (INBOX_MUTATION_HANDLERS as Readonly<Record<string, InboxMutationHandler | undefined>>)[name];
     if (!handler) {
       return unavailable(`That is a ${item.kind} request. Use its available decisions.`);
     }
     const outcome = handler({ engine, item: item as InboxItem, itemId, itemTask, args, done, unavailable });
     return outcome ?? done({ itemId });
   }
-  const handler = STATE_MUTATION_HANDLERS[name];
+  const handler = (STATE_MUTATION_HANDLERS as Readonly<Record<string, StateMutationHandler | undefined>>)[name];
   if (!handler) {
     return unavailable("This operation requires the running engine's lifecycle host.");
   }

@@ -34,11 +34,7 @@ export class Coordination {
   constructor(
     readonly engine: Engine,
     readonly lifecycle?: LifecycleControl,
-  ) {
-    engine.store.database.run(
-      "CREATE TABLE IF NOT EXISTS coordination_receipts (id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, result TEXT NOT NULL)",
-    );
-  }
+  ) {}
 
   /** `signal`: the caller went away or cancelled; a wait releases its subscription and timer at once. */
   async call(name: string, raw: unknown, signal?: AbortSignal): Promise<Result> {
@@ -105,14 +101,10 @@ export class Coordination {
       if (this.lifecycle?.receipt?.(requestId)) {
         return { outcome: "conflict", requestId, message: "That reference belongs to a lifecycle request." };
       }
-      const db = this.engine.store.database;
+      const store = this.engine.store;
       const { wait: _wait, timeoutMs: _timeout, ...details } = args;
       const hash = fingerprint([name, name === "validation.run" ? details : args]);
-      const old = db
-        .query<{ fingerprint: string; result: string }, [string]>(
-          "SELECT fingerprint, result FROM coordination_receipts WHERE id = ?",
-        )
-        .get(requestId);
+      const old = store.readReceipt(requestId);
       if (old) {
         return old.fingerprint === hash
           ? name === "validation.run"
@@ -129,12 +121,10 @@ export class Coordination {
           && ["completed", "pending"].includes(savedResult.outcome)
           && !this.engine.s.inbox.some((item) => item.id === args.itemId)
         ) {
-          this.engine.store.noteHandled([args.itemId]);
+          store.noteHandled([args.itemId]);
         }
         this.engine.save();
-        db.query(
-          "INSERT INTO coordination_receipts VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET result=excluded.result",
-        ).run(requestId, hash, JSON.stringify(savedResult));
+        store.saveReceipt(requestId, hash, JSON.stringify(savedResult));
       };
       const errorResult = (error: unknown): Result => ({
         outcome: "invalid",
@@ -146,7 +136,7 @@ export class Coordination {
           result = await this.engine.extraValidations.submit(args as unknown as ExtraRequest, save);
         } catch (error) {
           result = errorResult(error);
-          db.transaction(() => save(result))();
+          store.inTransaction(() => save(result));
         }
       } else if (name === "task.track-finding") {
         try {
@@ -157,9 +147,9 @@ export class Coordination {
           });
         } catch (error) {
           result = errorResult(error);
-          db.transaction(() => save(result))();
+          store.inTransaction(() => save(result));
         }
-      } else if (["task.source", "inbox.retry"].includes(name)) {
+      } else if (spec.submissionReceipt) {
         // Save submission before asynchronous validation, so a crash never blindly repeats it.
         save({
           outcome: "pending",
@@ -168,28 +158,25 @@ export class Coordination {
             "Submitted. Inspect the task before making a new request if the engine stops before its outcome is recorded.",
         });
         try {
-          result = { ...(await executeCoordinationMutation(this.engine, name, args)), requestId };
+          result = { ...(await executeCoordinationMutation(this.engine, spec.name, args)), requestId };
         } catch (error) {
           result = errorResult(error);
         }
-        db.transaction(() => save(result))();
+        store.inTransaction(() => save(result));
       } else {
-        result = db.transaction(() => {
+        result = store.inTransaction(() => {
           let savedResult: Result;
           try {
-            savedResult = { ...(executeCoordinationMutation(this.engine, name, args) as Result), requestId };
+            savedResult = { ...(executeCoordinationMutation(this.engine, spec.name, args) as Result), requestId };
           } catch (error) {
             savedResult = errorResult(error);
           }
           save(savedResult);
           return savedResult;
-        })();
+        });
       }
       // Task creation and its retry receipt are durable before the first admission pass.
-      if (
-        (["task.add", "task.wait"].includes(name) && result.outcome === "completed")
-        || (name === "validation.run" && result.outcome === "pending")
-      ) {
+      if (spec.schedulesOn && spec.schedulesOn === result.outcome) {
         this.engine.schedule();
       }
       return clone(result);

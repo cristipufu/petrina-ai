@@ -17,7 +17,7 @@ import {
 } from "@petrina/core";
 import { FollowUpLinks, type AgentSession, type AgentSessionOptions } from "@petrina/orchestrator";
 import { AgentRun } from "@petrina/agent-runtime/acp-run";
-import { agentCommandFor } from "@petrina/agent-runtime/tools";
+import { ADAPTERS, agentCommandFor } from "@petrina/agent-runtime/tools";
 import type { Kernel } from "./kernel.js";
 import { parseResult } from "./prompts.js";
 import { agentEnv } from "@petrina/platform/process-environment";
@@ -39,7 +39,7 @@ export class FollowUps extends FollowUpLinks {
       hold: id => k.holdFollowUp(id), track: work => k.trackWork(work),
       id: prefix => k.id(prefix), taskIdTaken: id => k.tracking.taskIdTaken(id), now: () => Date.now(),
       checkpoint: () => k.commitNow(), changed: task => k.commit(task), saveArchived: task => k.saveArchivedTask(task),
-      atomic: work => k.store.database.transaction(work)(), match: ask => answer(k, stopped.signal, matchingJobs, ask),
+      atomic: work => k.store.inTransaction(work), match: ask => answer(k, stopped.signal, matchingJobs, ask),
       picturePresent: image => existsSync(join(k.dataDir, "captures", image.sourceTaskId, `${image.sourceImageId}.png`)),
       keepPicture: (target, image) => keepPicture(k.dataDir, target, image, k.files),
       dropCreditedPicture: (target, imageId) => unlinkSync(join(k.dataDir, "captures", target, `${imageId}.png`)),
@@ -93,8 +93,9 @@ async function askAgent(k: Kernel, stopped: AbortSignal, matchingJobs: Set<Id>, 
     const answerDeadline = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
+      const votesRole = k.s.roles.find((role) => !role.removed && role.result === "votes") ?? k.role("verifier")!;
       k.s.backgroundAgents ??= [];
-      k.s.backgroundAgents.push({ id, roleId: "verifier", profileId: profile.id, label: "Matching older bugs", since: Date.now() });
+      k.s.backgroundAgents.push({ id, roleId: votesRole.id, profileId: profile.id, label: "Matching older bugs", since: Date.now() });
       k.commit();
       const parent = join(k.dataDir, "matching");
       await mkdir(parent, { recursive: true });
@@ -111,11 +112,11 @@ async function askAgent(k: Kernel, stopped: AbortSignal, matchingJobs: Set<Id>, 
         browser: false,
       };
       run = k.options.startAgentSession
-        ? await k.options.startAgentSession(launch, k.role("verifier")!)
+        ? await k.options.startAgentSession(launch, votesRole)
         : await AgentRun.start({
             ...launch,
             env: agentEnv(process.env),
-            ...(profile.toolId === "claude-code" ? { sandbox: claudeSandbox() } : {}),
+            ...(ADAPTERS[profile.toolId]?.sandboxMeta ? { sandbox: claudeSandbox() } : {}),
             ...(command ? { command } : {}),
           });
       cleanup.attach(run);

@@ -9,12 +9,19 @@ import { join } from "node:path";
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
 const absent = (error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; };
 
+export class ImmutableEvidenceChangedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ImmutableEvidenceChangedError";
+  }
+}
+
 /** Save the body as `<digest>.<suffix>` in the folder, or a private `<digest>.<id>.<suffix>` without hard links; a failed write leaves no new file. */
 export async function saveImmutable(folder: string, suffix: string, body: string, changed: string): Promise<{ file: string; digest: string }> {
   const hash = digest(body);
   const file = join(folder, `${hash}.${suffix}`);
   const same = (text: string) => {
-    if (digest(text) !== hash) throw new Error(changed);
+    if (digest(text) !== hash) throw new ImmutableEvidenceChangedError(changed);
     return { file, digest: hash };
   };
   await mkdir(folder, { recursive: true, mode: 0o700 });
@@ -36,7 +43,7 @@ export async function saveImmutable(folder: string, suffix: string, body: string
     // there now is checked the same way; otherwise this caller's own copy, still complete, is the saved file.
     const now = await readFile(file, "utf8").catch(absent);
     if (now !== undefined) return same(now);
-    if (digest(await readFile(own, "utf8")) !== hash) throw new Error(changed);
+    if (digest(await readFile(own, "utf8")) !== hash) throw new ImmutableEvidenceChangedError(changed);
     kept = true;
     return { file: own, digest: hash };
   } finally {

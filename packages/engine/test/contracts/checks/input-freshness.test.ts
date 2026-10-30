@@ -25,7 +25,14 @@ it("requires a fresh execution when a saved complete pass has no recorded check 
     const required = await checks.ensureChecks(f.scope, new AbortController().signal);
     expect((await checks.current(f.scope)).inputs.kind).not.toBe("matches");
     const captured = await checks["captureState"](f.scope, required);
-    const live = await checks["observeSetup"](f.scope, required, captured, new AbortController().signal, {}, "before-checks");
+    const live = await checks["observeSetup"]({
+      scope: f.scope,
+      checks: required,
+      state: captured,
+      signal: new AbortController().signal,
+      env: {},
+      position: "before-checks",
+    });
     expect(await checks["savedProductResults"](f.scope, required, captured, live)).toBeUndefined();
     expect(saved.definition).toBeUndefined();
     expect(saved.at).toBe(originalAt); expect(saved.results).toEqual(originalResult);

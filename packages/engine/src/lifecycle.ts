@@ -26,36 +26,47 @@ export class EngineLifecycle implements LifecycleControl {
     }
   }
   status(): Result {
-    const e = this.engine,
-      operation = this.store.current,
-      drain = drainStatus(e);
+    const engine = this.engine;
+    const operation = this.store.current;
+    const drain = drainStatus(engine);
     return {
       outcome: "completed",
       status:
-        operation?.phase === "failed" ? "failed" : e.draining || (e.s.pool.paused && !drain.drained) ? "draining" : e.s.pool.paused ? "paused" : "running",
-      scheduling: e.s.pool.paused ? "paused" : "running",
+        operation?.phase === "failed"
+          ? "failed"
+          : engine.draining || (engine.s.pool.paused && !drain.drained)
+            ? "draining"
+            : engine.s.pool.paused
+              ? "paused"
+              : "running",
+      scheduling: engine.s.pool.paused ? "paused" : "running",
       operation: operation ?? null,
-      boot: e.boot,
+      boot: engine.boot,
       ...drain,
     };
   }
-  request(name: string, a: Record<string, unknown>): Promise<Result> {
+  request(name: string, args: Record<string, unknown>): Promise<Result> {
     return serial(this.engine, async () => {
-      const e = this.engine;
-      const requestId = String(a.requestId);
-      if (e.store.database.query("SELECT id FROM coordination_receipts WHERE id = ?").get(requestId))
+      const engine = this.engine;
+      const requestId = String(args.requestId);
+      if (engine.store.hasReceipt(requestId))
         return { outcome: "conflict", requestId, message: "That reference belongs to another coordination request." };
-      const result = this.store.begin(name, { requestId }, name === "pause" ? "paused" : name === "resume" ? "running" : e.s.pool.paused ? "paused" : "running", () => {
-        if (name === "pause") e.setPoolPaused(true);
-        else if (name === "resume") e.setPoolPaused(false);
-        else if (name === "stop" || name === "restart") {
-          e.drainReason = name;
-          e.draining = true;
-          e.stopRequested.abort();
-          e.checkQueue.pump();
-          e.commitNow();
-        }
-      });
+      const result = this.store.begin(
+        name,
+        { requestId },
+        name === "pause" ? "paused" : name === "resume" ? "running" : engine.s.pool.paused ? "paused" : "running",
+        () => {
+          if (name === "pause") engine.setPoolPaused(true);
+          else if (name === "resume") engine.setPoolPaused(false);
+          else if (name === "stop" || name === "restart") {
+            engine.drainReason = name;
+            engine.draining = true;
+            engine.stopRequested.abort();
+            engine.checkQueue.pump();
+            engine.commitNow();
+          }
+        },
+      );
       const current = this.store.current;
       if (current && current.kind === name && ["stop", "restart"].includes(name) && ["draining", "stopping"].includes(current.phase)) this.onHandoff?.(true);
       if (

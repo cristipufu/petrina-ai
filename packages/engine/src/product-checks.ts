@@ -3,7 +3,7 @@
 
 import {
   checkInputApplicability, openStep, recordedCheckBatch,
-  type CheckRun, type CheckSetupAttempt, type CheckSetupInput, type Id, type JourneyCheckReuse, type ProductCheck,
+  type CheckRun, type CheckSetupInput, type Id, type JourneyCheckReuse, type ProductCheck,
 } from "@petrina/core";
 import {
   CheckDecision, CheckDelivery, CheckEvidence, CheckRepairs, type CheckVerification, type RepositoryContext,
@@ -16,11 +16,12 @@ import { Aborted, type Kernel, type RuntimeTask } from "./kernel.js";
 import {
   acquireCheckTurnToRun, cachedProductChecks, computeAcceptanceVersion, ensureProductChecks, executeAllChecks,
   executePreparedChecks, noteRepositoryHooks, refreshCheckInterruptions, restoreCheckEvidence, type CheckBatchHooks,
+  type ExecuteAllChecksRequest,
 } from "./product-check-execution.js";
 import {
   buildCheckSetupInput, captureCheckState, checkExecutionEnvironment, CheckPreparationChanged, computeCheckDefinition,
-  expectedCommandsWithHooks, observeProductCheckSetup, type CheckEntries, type CheckPreparation, type CheckState,
-  type LiveSetup, type RecordedChecksApplicability,
+  expectedCommandsWithHooks, observeProductCheckSetup, type CheckPreparation, type CheckState,
+  type LiveSetup, type ObserveCheckSetupRequest, type RecordedChecksApplicability,
 } from "./product-check-setup.js";
 import type { Turns } from "./turn.js";
 import { WaitingForUsage } from "./usage.js";
@@ -93,12 +94,10 @@ export class ProductChecks {
       cachedChecks: (scope) => this.cachedChecks(scope),
       ensureChecks: (scope, signal) => this.ensureChecks(scope, signal),
       captureState: (scope, checks) => this.captureState(scope, checks),
-      observeSetup: (scope, checks, state, signal, env, position, restore, ownsPlace) =>
-        this.observeSetup(scope, checks, state, signal, env, position, restore, ownsPlace),
+      observeSetup: (request) => this.observeSetup(request),
       ranOn: (scope, checks, state) => this.ranOn(scope, checks, state),
       savedProductResults: (scope, checks, state, live) => this.savedProductResults(scope, checks, state, live),
-      runAll: (scope, checks, state, signal, entries, kept, attemptId, purpose, ownsPlace) =>
-        this.runAll(scope, checks, state, signal, entries, kept, attemptId, purpose, ownsPlace),
+      runAll: (request) => this.runAll(request),
     };
   }
 
@@ -179,18 +178,8 @@ export class ProductChecks {
     return executePreparedChecks(this.batchHooks(), scope, checks, signal, kept, prepared, prepare, purpose);
   }
 
-  private runAll(
-    scope: RepositoryContext,
-    checks: readonly ProductCheck[],
-    state: CheckState,
-    signal: AbortSignal,
-    entries: CheckEntries,
-    kept?: readonly CheckRun[],
-    attemptId = entries.values().next().value?.attemptId,
-    purpose: JourneyCheckReuse["purpose"] = "acceptance",
-    ownsPlace: () => boolean = () => false,
-  ): Promise<CheckVerification> {
-    return executeAllChecks(this.batchHooks(), scope, checks, state, signal, entries, kept, attemptId, purpose, ownsPlace);
+  private runAll(request: ExecuteAllChecksRequest): Promise<CheckVerification> {
+    return executeAllChecks(this.batchHooks(), request);
   }
 
   private settleFindings(scope: RepositoryContext, results: readonly CheckRun[]): readonly CheckRun[] {
@@ -216,17 +205,8 @@ export class ProductChecks {
     return buildCheckSetupInput(state);
   }
 
-  private observeSetup(
-    scope: RepositoryContext,
-    checks: readonly ProductCheck[],
-    state: CheckState,
-    signal: AbortSignal,
-    env: NodeJS.ProcessEnv,
-    position: CheckSetupAttempt["position"],
-    restore?: () => Promise<void>,
-    ownsPlace: () => boolean = () => false,
-  ): Promise<LiveSetup> {
-    return observeProductCheckSetup(this.k, (s, c) => this.captureState(s, c), scope, checks, state, signal, env, position, restore, ownsPlace);
+  private observeSetup(request: ObserveCheckSetupRequest): Promise<LiveSetup> {
+    return observeProductCheckSetup(this.k, (s, c) => this.captureState(s, c), request);
   }
 
   async repairVersion(scope: RepositoryContext): Promise<(Pick<CheckState, "sha" | "tree" | "definition"> & { commands: string[] }) | undefined> {
@@ -310,7 +290,14 @@ export class ProductChecks {
       setupContract: () => checkSetupContract(product?.checkSetup),
       setupRequired: () => Boolean(product?.checkSetup?.requirements.length),
       applies: (state) => this.ranOn(scope, required, state),
-      observe: async (state) => this.observeSetup(scope, required, state, signal, await checkExecutionEnvironment(this.k), "before-checks"),
+      observe: async (state) => this.observeSetup({
+        scope,
+        checks: required,
+        state,
+        signal,
+        env: await checkExecutionEnvironment(this.k),
+        position: "before-checks",
+      }),
       execute: (state) => this.runProductChecks(scope, required, signal, undefined, state, prepare, purpose),
     });
   }

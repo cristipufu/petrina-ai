@@ -1,5 +1,6 @@
 import type { BuilderContext, ConversationNote, Id, InputManifestEntry, JourneyAgentInput, ReadinessRecheck } from "@petrina/core";
 import type { RepositoryContext } from "../repository-context.js";
+import type { SessionSettings } from "./agents.js";
 
 export interface InputSection { title: string; body: string }
 export interface InputOmission { title: string; digest: string; noteId?: string }
@@ -12,6 +13,19 @@ export interface ParticipantInputDetails {
   supplied?: readonly InputSection[];
   place?: string;
   readiness?: ReadinessRecheck;
+}
+export interface ParticipantInputCaptureRequest {
+  scope: RepositoryContext;
+  roleId: Id;
+  profileId: Id;
+  sections: readonly InputSection[];
+  mode: "fresh" | "continued";
+  plannedId: Id;
+  selectionReason?: string;
+  reviewerKey?: string;
+  confirmedSettings: SessionSettings;
+  instructions: string;
+  extra?: ParticipantInputDetails;
 }
 export interface ParticipantInputHost {
   now(): number;

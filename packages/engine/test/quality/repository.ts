@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { runGit } from "@petrina/test-support/commands";
 import { conventions as sourceConventions } from "./conventions.js";
+import { docContracts } from "./docs.js";
 import { impactRuntime } from "./impact-runtime.js";
 import { impactPlan, isSource, type CoverageMap, type ImpactPlan } from "./impact.js";
 import { layerStructure, TEST_LAYER_INVENTORY } from "./layers.js";
@@ -30,7 +31,11 @@ export async function inputs(root: string): Promise<Map<string, string>> {
   for (const file of [...files].sort()) {
     try {
       const body = readFileSync(join(root, file));
-      const keepText = isSource(file) || file.endsWith("package.json") || file === TEST_LAYER_INVENTORY;
+      const keepText =
+        isSource(file)
+        || file.endsWith("package.json")
+        || file === TEST_LAYER_INVENTORY
+        || (file.startsWith("docs/") && file.endsWith(".md"));
       result.set(file, keepText ? body.toString("utf8") : createHash("sha256").update(body).digest("hex"));
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
@@ -41,7 +46,7 @@ export async function inputs(root: string): Promise<Map<string, string>> {
 
 /** The repository scan also requires every not-yet-migrated file to remain in the audit inventory. */
 export function conventions(files: ReadonlyMap<string, string>): string[] {
-  return [...sourceConventions(files), ...layerStructure(files)].sort();
+  return [...sourceConventions(files), ...layerStructure(files), ...docContracts(files)].sort();
 }
 
 export async function observe(

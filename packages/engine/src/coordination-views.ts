@@ -525,35 +525,35 @@ export function taskHealthView(engine: Engine, task: Task): Result {
   };
 }
 
-export function filteredInbox(engine: Engine, a: CoordinationArgs): InboxItem[] {
+export function filteredInbox(engine: Engine, args: CoordinationArgs): InboxItem[] {
   const state = engine.activeState();
   return state.inbox
     .filter((item) => {
-      if (a.productId) {
+      if (args.productId) {
         const task = state.tasks.find((candidate) => candidate.id === item.taskId);
         const archived = task ? undefined : engine.store.history.item(item.taskId);
         const products = task ? taskProductIds(task) : (archived?.productIds ?? (archived ? [archived.productId] : []));
-        if (!products.includes(a.productId)) return false;
+        if (!products.includes(args.productId)) return false;
       }
       return (
-        (!a.taskId || item.taskId === a.taskId)
-        && (!a.kinds || (a.kinds as string[]).includes(item.kind))
-        && (a.blocking === undefined || item.blocking === a.blocking)
-        && (!a.search || item.title.toLowerCase().includes(a.search.toLowerCase()))
+        (!args.taskId || item.taskId === args.taskId)
+        && (!args.kinds || (args.kinds as string[]).includes(item.kind))
+        && (args.blocking === undefined || item.blocking === args.blocking)
+        && (!args.search || item.title.toLowerCase().includes(args.search.toLowerCase()))
       );
     })
     .sort((left, right) => left.at - right.at || left.id.localeCompare(right.id));
 }
 
-export function readHistoryPage(engine: Engine, a: CoordinationArgs): Result {
-  const states = a.states?.filter((state): state is "done" | "cancelled" => state === "done" || state === "cancelled");
+export function readHistoryPage(engine: Engine, args: CoordinationArgs): Result {
+  const states = args.states?.filter((state): state is "done" | "cancelled" => state === "done" || state === "cancelled");
   const request: HistoryQuery = {
-    productId: a.productId,
-    taskId: a.taskId,
+    productId: args.productId,
+    taskId: args.taskId,
     states,
-    held: a.held,
-    query: a.search,
-    limit: a.limit,
+    held: args.held,
+    query: args.search,
+    limit: args.limit,
   };
   // The engine flushes newly finished work before this indexed, lightweight read.
   let page = engine.historyPage(request);
@@ -566,9 +566,9 @@ export function readHistoryPage(engine: Engine, a: CoordinationArgs): Result {
     request.query,
     engine.store.history.info().revision,
   ]);
-  if (a.cursor) {
+  if (args.cursor) {
     try {
-      const saved = JSON.parse(Buffer.from(a.cursor, "base64url").toString()) as { key?: unknown; after?: unknown };
+      const saved = JSON.parse(Buffer.from(args.cursor, "base64url").toString()) as { key?: unknown; after?: unknown };
       if (saved.key !== key || typeof saved.after !== "string") throw new Error();
       page = engine.historyPage({ ...request, cursor: saved.after });
     } catch {

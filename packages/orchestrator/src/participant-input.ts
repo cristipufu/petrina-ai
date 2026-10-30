@@ -1,10 +1,10 @@
 import { openStep, type Id } from "@petrina/core";
 import type { RepositoryContext } from "./repository-context.js";
-import type { AgentMessage, SessionSettings } from "./ports/agents.js";
+import type { AgentMessage } from "./ports/agents.js";
 import type {
   InputSection,
   PendingParticipantInput,
-  ParticipantInputDetails,
+  ParticipantInputCaptureRequest,
   ParticipantInputEffects,
   ParticipantInputHost,
   ParticipantContextPreparation
@@ -14,7 +14,20 @@ import type {
 export class ParticipantInputs {
   constructor(private readonly host: ParticipantInputHost, private readonly effects: ParticipantInputEffects) {}
 
-  capture(scope: RepositoryContext, roleId: Id, profileId: Id, sections: readonly InputSection[], mode: "fresh" | "continued", plannedId: Id, selectionReason: string | undefined, reviewerKey: string | undefined, confirmedSettings: SessionSettings, instructions: string, extra: ParticipantInputDetails = {}): PendingParticipantInput | undefined {
+  capture(request: ParticipantInputCaptureRequest): PendingParticipantInput | undefined {
+    const {
+      scope,
+      roleId,
+      profileId,
+      sections,
+      mode,
+      plannedId,
+      selectionReason,
+      reviewerKey,
+      confirmedSettings,
+      instructions,
+      extra = {},
+    } = request;
     const { task, work } = scope;
     const step = openStep(task);
     if (step?.kind !== "agent") return undefined;

@@ -1,5 +1,22 @@
 import { promptSection as section, answersTo, findingIds } from "./scripted-findings.js";
 import type { WorkChoice } from "@petrina/core";
+import {
+  block,
+  checkFinderPayload,
+  defaultConfigOptions,
+  designReviewerPayload,
+  DISPUTE_REASON,
+  guideKeeperPayload,
+  NOTES,
+  objectionIds,
+  plannerPayload,
+  roleOf,
+  SCREEN_REASON,
+  SECURITY_FINDING,
+  selectOption as select,
+  slug,
+  verifierVerdictsPayload,
+} from "./fixtures/fake-agent-scenarios.js";
 // A scripted ACP agent for tests. It reads which role it is from the prompt and answers
 // like that role would, so the engine can be tested end to end without spending tokens.
 //
@@ -243,7 +260,6 @@ const traceStartup = (stage: string, sessionId?: string) => {
 traceStartup("started");
 const sessions = new Map<string, Conversation>();
 const cancels = new Map<string, () => void>();
-const block = (value: unknown, prose = "Done.") => `${prose}\n\n\`\`\`petrina\n${JSON.stringify(value)}\n\`\`\``;
 /** Codex's own sentence when the selected model is full. The whole turn ends on it. */
 const CODEX_MODEL_CAPACITY = "Selected model is at capacity. Please try a different model.";
 const scenario = (): Scenario => (dir && existsSync(join(dir, "scenario.json")) ? (JSON.parse(readFileSync(join(dir, "scenario.json"), "utf8")) as Scenario) : {});
@@ -371,14 +387,12 @@ async function nativeSteps(client: acp.AgentContext, sessionId: string, steps: r
   }
 }
 
-/** The settings Petrina sets: model, effort (each tool's name for it) and the automatic safety mode. */
-const select = (id: string, values: string[], names: string[] = values): ConfigOption => ({ type: "select", id, name: id, currentValue: values[0]!, options: values.map((value, index) => ({ value, name: names[index]! })) });
 /** With --tool, that tool's own choices: Claude Code offers Opus and Sonnet; this Codex only gpt-6.1, at up to high effort. */
 const configOptions = (): ConfigOption[] => {
   if (tool === "codex") return [select("mode", ["read-only", "agent"]), select("model", ["gpt-6.1"]), { ...select("reasoning_effort", ["low", "medium", "high"]), currentValue: "medium" }];
   if (tool === "claude-code") return [select("mode", ["default", "auto"]), { ...select("model", ["opus", "sonnet"], ["Opus 5.5", "Sonnet 5.5"]), currentValue: "sonnet" }, { ...select("effort", ["low", "medium", "high", "xhigh"]), currentValue: "medium" }];
   if (tool === "antigravity") return [select("model", ["gemini-4-argon", "gemini-3.8-flash"], ["Gemini 4 Argon", "Gemini 3.8 Flash"]), select("thinking_level", ["low", "medium", "high"]), select("mode", ["default", "auto_edit", "yolo"])];
-  return [select("model", ["default", "opus", "sonnet", "gpt-6-astra", ...(scenario().maintenance?.unsupported ? [] : ["gpt-6.1-sol"]), "grok-4.7", "gemini-4-argon", "gemini-3.8-flash"]), select("effort", ["high", "xhigh"]), select("reasoning_effort", ["low", "medium", "high", "xhigh", "ultra"]), select("thinking_level", ["low", "medium", "high"]), select("mode", ["default", "auto", "agent", "auto_edit", "yolo"])];
+  return defaultConfigOptions(scenario());
 };
 
 /** A turn that only ends when the engine cancels it, or the engine goes away. */
@@ -387,36 +401,8 @@ function hang(sessionId: string, marker: string): Promise<Reply> {
   return new Promise((resolve) => cancels.set(sessionId, () => resolve({ text: "", stop: "cancelled" })));
 }
 
-function roleOf(text: string): string {
-  return /You are the ([A-Za-z -]+) in Petrina/.exec(text)?.[1]?.trim().toLowerCase() ?? "";
-}
-
-function addedId(text: string, name: string): string {
-  const id = new RegExp(`^- (added-[a-z0-9-]+) \\(${name}\\):`, "m").exec(text)?.[1];
-  if (!id) throw new Error(`The planner's list has no ${name}`);
-  return id;
-}
-
-const slug = (role: string) => role.replace(/[^a-z0-9]+/g, "-");
-/** A security finding the added Security reviewer blocks on once. */
-const SECURITY_FINDING = "Anyone can ask for the greeting as often as they like.";
-/** Why the added Security reviewer disputes the code reviewer's suggestion, once Petrina asks for a reason. */
-const DISPUTE_REASON = "The greeting's wording is the copywriter's call, not a review finding.";
 /** The finding an added reviewer disputed without a reason, by conversation, until it gives one. */
 const undisputed = new Map<string, string>();
-
-/** What the screen builder needs the screen for (tests repeat it: importing this file would start a fake agent). */
-const SCREEN_REASON = "Check that the quick note window opens from the menu bar";
-
-/** The planner's risk rating, when the scenario sets one. */
-function riskOf(plan: Scenario) {
-  return { ...(plan.worksOn ? { worksOn: plan.worksOn } : {}), ...(plan.risk ? { risk: { level: plan.risk, why: plan.risk === "high" ? "It changes how people sign in." : "Only the greeting's words change." } } : {}) };
-}
-
-const NOTES = "The coordinator's notes on this task (preserve product decisions; read each instruction in its original step)";
-const check = { kind: "gate", title: "Your design check", roleId: "architect", gate: "design" };
-const screens = { kind: "do", title: "Screens", roleId: "ux-designer", profileIds: ["opus-high"] };
-const objectionIds = (text: string) => [...text.matchAll(/^- \[([^\]]+)\]/gm)].map((match) => match[1]!);
 const hold = process.argv.find((arg) => arg.startsWith("--hold="))?.slice("--hold=".length);
 // Petrina's readiness checks run in its own "checks" folder.
 const inChecks = process.cwd().endsWith(`${process.platform === "win32" ? "\\" : "/"}checks`);
@@ -810,163 +796,7 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
           _meta: { "_claude/model": "claude-opus-5-5", "_claude/rateLimit": { status: "allowed", rateLimitType: "five_hour", utilization: 0.81, resetsAt: Math.round(Date.now() / 1000) + 7200 } },
         } as acp.SessionNotification["update"]);
       }
-      if (plan.planner === "research-first") return done({
-        rationale: "Research it, build it, then review it.",
-        stages: [
-          { kind: "do", title: "Research", roleId: "researcher", profileIds: ["opus-high"] },
-          { kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-high"] },
-          { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["sol-high"], maxRounds: 1 },
-        ],
-      });
-      if (plan.planner === "tester-first")
-        return done({
-          rationale: "Build it, try it, then two reviewers.",
-          stages: [
-            { kind: "do", title: "Build", roleId: "builder", profileIds: ["opus-xhigh"] },
-            { kind: "do", title: "Try it like a user", roleId: "tester", profileIds: ["opus-high"] },
-            { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-xhigh", "sol-xhigh"], maxRounds: 2 },
-          ],
-        });
-      if (plan.planner === "mixed-review") return done({
-        rationale: "Build it, then a code reviewer and the added Security specialist review it together.",
-        stages: [
-          { kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-xhigh"] },
-          { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high", "sol-high"], roleIds: ["code-reviewer", addedId(text, "Security specialist")], maxRounds: 2 },
-        ],
-      });
-      if (plan.planner === "tester-after")
-        return done({
-          rationale: "Build it, one reviewer, then try it out.",
-          ...riskOf(plan),
-          stages: [
-            { kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-xhigh"] },
-            { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high"], maxRounds: 1 },
-            { kind: "do", title: "Test", roleId: "tester", profileIds: ["opus-high"] },
-          ],
-        });
-      if (plan.planner === "claude-build")
-        return done({
-          rationale: "Build it on Claude Code, one reviewer on Codex.",
-          ...riskOf(plan),
-          stages: [
-            { kind: "do", title: "Build", roleId: "builder", profileIds: ["opus-high"] },
-            { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["sol-high"], maxRounds: plan.reviewer === "confirm" ? 2 : 1 },
-          ],
-        });
-      if (plan.planner === "grok-build")
-        return done({
-          rationale: "Build it on Grok, one reviewer on Claude Code.",
-          ...riskOf(plan),
-          stages: [
-            { kind: "do", title: "Build", roleId: "builder", profileIds: ["grok-xhigh"] },
-            { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high"], maxRounds: 1 },
-          ],
-        });
-      if (plan.planner === "two-opus")
-        return done({
-          rationale: "Build it, then two reviewers on Claude Code.",
-          stages: [
-            { kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-xhigh"] },
-            { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high", "opus-xhigh"], maxRounds: 1 },
-          ],
-        });
-      if (plan.planner === "pair")
-        return done({
-          rationale: "Build it, then two reviewers at once, one on each tool.",
-          ...riskOf(plan),
-          stages: [
-            { kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-xhigh"] },
-            { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high", "sol-high"], maxRounds: 1 },
-          ],
-        });
-      if (plan.planner === "limits") return done({
-        rationale: "Exercise same-tool handoffs, design rounds and a mixed-tool review chain.",
-        stages: [
-          { kind: "do", title: "Research", roleId: "researcher", profileIds: ["opus-high"] },
-          { kind: "converge", title: "Design", roleId: "architect", profileIds: ["opus-xhigh"], reviewerRoleId: "design-reviewer", reviewerProfileIds: ["sol-xhigh"], maxRounds: 2 },
-          { kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-xhigh"] },
-          { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high", "opus-xhigh", "sol-high"], maxRounds: 2 },
-        ],
-      });
-      if (text.includes("[quick]"))
-        return done({
-          rationale: "A small change: build it, one reviewer.",
-          ...riskOf(plan),
-          stages: [
-            { kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-xhigh"] },
-            { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high"], maxRounds: 2 },
-          ],
-        });
-      if (plan.planner === "build-review")
-        return done({
-          rationale: "Build it, then two reviewers.",
-          ...riskOf(plan),
-          stages: [
-            { kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-xhigh"] },
-            { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high", "sol-high"], maxRounds: 1 },
-          ],
-        });
-      if (plan.planner === "source-brief")
-        return done({
-          rationale: "Build it, then a review with the security reviewer.",
-          stages: [
-            { kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-xhigh"] },
-            { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high", "sol-high"], roleIds: ["code-reviewer", addedId(text, "Security specialist")], maxRounds: 1 },
-          ],
-        });
-      if (plan.planner === "source-roles")
-        return done({
-          rationale: "Build it, then the copywriter, a review with the security reviewer, and a fact check.",
-          stages: [
-            { kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-xhigh"] },
-            { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high", "sol-high"], roleIds: ["code-reviewer", addedId(text, "Security specialist")], maxRounds: 1 },
-            { kind: "do", title: "Copy", roleId: addedId(text, "Copywriter"), profileIds: ["opus-high"] },
-            { kind: "do", title: "Fact check", roleId: addedId(text, "Fact checker"), profileIds: ["opus-high"] },
-          ],
-        });
-      if (plan.planner === "roles")
-        return done({
-          rationale: "Research, a design, a build, then a review with the security reviewer you added.",
-          ...riskOf(plan),
-          stages: [
-            { kind: "do", title: "Research", roleId: "researcher", profileIds: ["sol-high"] },
-            { kind: "converge", title: "Design", roleId: "architect", profileIds: ["opus-xhigh"], reviewerRoleId: "design-reviewer", reviewerProfileIds: ["sol-xhigh"], maxRounds: 2 },
-            check,
-            { kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-xhigh"] },
-            { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high", "sol-high"], roleIds: ["code-reviewer", addedId(text, "Security specialist")], maxRounds: 2 },
-            { kind: "do", title: "Copy", roleId: addedId(text, "Copywriter"), profileIds: ["opus-high"] },
-            { kind: "do", title: "Fact check", roleId: addedId(text, "Fact checker"), profileIds: ["opus-high"] },
-          ],
-        });
-      if (plan.planner === "copy")
-        return done({
-          rationale: "Build it, then the copywriter you added, then one reviewer.",
-          stages: [
-            { kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-xhigh"] },
-            { kind: "do", title: "Copy", roleId: addedId(text, "Copywriter"), profileIds: ["opus-high"] },
-            { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high"], maxRounds: 1 },
-          ],
-        });
-      if (plan.planner === "short" || plan.planner === "parallel" || plan.planner === "trio" || plan.planner === "two-codex")
-        return done({
-          rationale: "A small change: build it, one reviewer.",
-          ...riskOf(plan),
-          stages: [
-            { kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-xhigh"] },
-            { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: plan.planner === "parallel" ? ["opus-high", "sol-high"] : plan.planner === "trio" ? ["opus-high", "sol-high", "grok-xhigh"] : plan.planner === "two-codex" ? ["sol-high", "astra-xhigh"] : ["opus-high"], maxRounds: plan.reviewRounds ?? 1 },
-          ],
-        });
-      return done({
-        rationale: "A small feature: agree on a design, build it, two reviewers.",
-        ...riskOf(plan),
-        stages: [
-          { kind: "converge", title: "Design", roleId: "architect", profileIds: ["opus-xhigh"], reviewerRoleId: "design-reviewer", reviewerProfileIds: ["sol-xhigh"], maxRounds: 2 },
-          ...(text.includes("[no-check]") ? [] : text.includes("[screens]") ? [screens, check] : text.includes("[two-checks]") ? [check, screens, check] : [check]),
-          { kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-xhigh"] },
-          ...(plan.planner === "tester-with-design" ? [{ kind: "do", title: "Try acceptance", roleId: "tester", profileIds: ["opus-high"] }] : []),
-          { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high", "sol-high"], maxRounds: plan.reviewRounds ?? 2 },
-        ],
-      });
+      return done(plannerPayload(plan, text));
     case "architect": {
       const revised = plan.reviseBrief && session.history.some((entry) => entry.sessionUpdate === "user_message_chunk" && entry.content.type === "text" && entry.content.text.includes("## Objections so far"));
       const brief = { summary: "A greeting file.", forUsers: ["People see a greeting"], areas: [revised ? "Greeting, visible to everyone after the review" : "Greeting"], acceptance: ["A greeting file exists"], risks: [] };
@@ -1005,31 +835,14 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
         ],
       };
     }
-    case "check finder":
-      if (plan.checks === "broken") return { text: "I could not work out how this product is checked." };
-      if (readScript().checks) return done({ summary: "Checked the way this test asks.", checks: readScript().checks });
-      return done({
-        summary: "Checked with git, which every test machine has.",
-        checks:
-          plan.checks === "fail"
-            ? [{ name: "Tests", argv: ["git", "no-such-subcommand-petrina"], why: "A check that fails, for tests" }]
-            : plan.checks === "writes"
-              ? [{ name: "Format", argv: ["git", "mv", "README.md", "README.txt"], why: "A check that changes a tracked file, for tests" }]
-              : plan.checks === "slow"
-                ? [{ name: "Slow", argv: [process.execPath, "-e", "await Bun.sleep(1500)"], why: "A check that takes a moment, for tests" }]
-                : plan.checks === "commits"
-                ? [{ name: "Sneaky", argv: ["git", "commit", "-q", "--allow-empty", "-m", "Not reviewed"], why: "A check that commits, for tests" }]
-                : [{ name: "Version", argv: ["git", "--version"], why: "A check that passes, for tests" }],
-      });
-    case "design reviewer":
-      if (plan.planner === "limits" && !text.includes("Objections so far")) return done({ objections: [{ text: "Explain who sees the greeting.", blocking: true }] });
-      // "[follow-up]": only a non-blocking suggestion, so the design settles with it undecided.
-      if (text.includes("[follow-up]")) return done({ objections: [{ text: "Follow-up: name the greeting's colour later.", blocking: false }] });
-      if (text.includes("[disagree]")) {
-        return done({ objections: [{ text: "The brief does not say who sees the greeting.", blocking: true }, { text: "Consider a greeting per language.", blocking: false }] });
-      }
-      // This turn reports no usage at all.
-      return { ...done({ objections: [] }), silent: true };
+    case "check finder": {
+      const checks = checkFinderPayload(plan, readScript().checks, process.execPath);
+      return checks.broken ? { text: checks.text } : done(checks.payload);
+    }
+    case "design reviewer": {
+      const review = designReviewerPayload(plan, text);
+      return review.silent ? { ...done(review.payload), silent: true } : done(review.payload);
+    }
     case "builder": {
       if (plan.mentionCapacity && session.turns === 1 && roleOf(text)) {
         writeFileSync(join(session.cwd, "greeting.txt"), "Hello\n");
@@ -1220,13 +1033,10 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
       return done({ verdict: "pass", findings: [{ text: "Consider a friendlier greeting.", severity: "nit", evidence: "On the current welcome page the greeting is still terse; a warmer greeting would be friendlier." }], confirms: [], disputes: [] });
     case "security reviewer":
       return done({ verdict: "pass", findings: [], confirms: [], disputes: [] });
-    case "guide keeper":
-      if (plan.guide === "broken") return { text: "I could not tell what the reviewers missed." };
-      return done(
-        plan.guide === "change of mind"
-          ? { missed: false, line: "", why: "The note asks for a new colour: a change of mind, not a miss." }
-          : { missed: true, line: "Every greeting also shows on the welcome page.", why: "The reviewers checked the greeting only where it was added." },
-      );
+    case "guide keeper": {
+      const guide = guideKeeperPayload(plan);
+      return guide.broken ? { text: guide.text } : done(guide.payload);
+    }
     case "verifier": {
       const correction = plan.partialVerification && session.turns > 1 ? plan.correctPartialVerification : undefined;
       if (plan.partialVerification && session.turns > 1 && !correction) {
@@ -1253,14 +1063,7 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
         mark("verifier-voting");
         while (!existsSync(join(dir, "release-vote"))) await Bun.sleep(20);
       }
-      const ids = findingIds(text, "Important findings to check (a verdict on every one, by id)");
-      const verdict = plan.verifierByModel?.[session.model ?? ""] ?? (plan.verifier === "after-fix-not-a-bug" ? (text.includes("  The builder: fixed.") ? "not-a-bug" : "real") : plan.verifier === "split" ? (notABug ? "not-a-bug" : "real") : plan.verifier === "hold" ? "real" : plan.verifier) ?? "real";
-      return done({
-        verdicts: (plan.partialVerification ? ids.slice(0, 1) : ids).map((id) => {
-          const given = plan.verifierByFinding?.[id]?.[session.model ?? ""] ?? verdict;
-          return { id, verdict: given, reason: given === "not-a-bug" ? "The welcome page shows the greeting already." : given === "real" ? "The welcome page has no greeting: confirmed by opening it." : `It is ${given === "nit" ? "only a nit" : "older than this change"}: checked on ${session.model}.` };
-        }),
-      });
+      return done(verifierVerdictsPayload(plan, text, session.model, notABug));
     }
     // An added acceptance role under its own name, recognised by Petrina from its checks result.
     case "quality partner":

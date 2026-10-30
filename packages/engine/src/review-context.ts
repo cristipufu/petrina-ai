@@ -10,7 +10,7 @@ import { repositoryView, type RepositoryContext } from "@petrina/orchestrator";
 import * as git from "@petrina/repositories/git";
 import { commitAndFile } from "@petrina/repositories/object-batch";
 import { readReviewComparison as comparison, EXCLUDE_LOCKS, hasNoPortLockfileChanges, ONLY_LOCKS } from "@petrina/repositories/review-comparison";
-import { saveImmutable } from "./immutable-file.js";
+import { ImmutableEvidenceChangedError, saveImmutable } from "./immutable-file.js";
 import { freezeReviewHistory, readReviewHistory, type CompactReviewHistory, type StoodThrough } from "./review-history.js";
 
 import { PREPARED_REVIEW } from "./prompts.js";
@@ -163,11 +163,14 @@ export async function prepareReviewInput(dataDir: string, scope: RepositoryConte
 
 export async function readReviewInput(ref: InputRef): Promise<ReviewInput> {
   const body = await readFile(ref.file, "utf8");
-  if (digest(body) !== ref.digest) throw new Error("The saved review inputs changed. Try the review again.");
+  if (digest(body) !== ref.digest) throw new ImmutableEvidenceChangedError("The saved review inputs changed. Try the review again.");
   const input = JSON.parse(body) as ReviewInput;
   if (input.history) await readReviewHistory(input.history);
   await Promise.all((input.artifacts ?? []).map(async (artifact) => {
-    if (digest(await readFile(artifact.file, "utf8")) !== artifact.digest) throw new Error("The prepared review comparison changed. Start this review again.");
+    if (digest(await readFile(
+      artifact.file,
+      "utf8"
+    )) !== artifact.digest) throw new ImmutableEvidenceChangedError("The prepared review comparison changed. Start this review again.");
   }));
   return input;
 }

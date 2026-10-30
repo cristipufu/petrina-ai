@@ -4,8 +4,8 @@ import { CLAUDE_AGENT_ENTRY, resolveAdapterEntry } from "./tool-entry.js";
 /** Turn off inherited plugins through Claude's session settings, preserving its other settings,
  * including the coordinator's sandbox additions. No settings files are changed. */
 export async function claudeBackground(cwd: string): Promise<Record<string, unknown>> {
-  const require = createRequire(resolveAdapterEntry(CLAUDE_AGENT_ENTRY));
-  const sdk = await import(require.resolve("@anthropic-ai/claude-agent-sdk")) as {
+  const loadFromAdapter = createRequire(resolveAdapterEntry(CLAUDE_AGENT_ENTRY));
+  const sdk = loadFromAdapter("@anthropic-ai/claude-agent-sdk") as {
     resolveSettings(options: { cwd: string }): Promise<{ effective: { enabledPlugins?: Record<string, unknown> } }>;
   };
   const { effective } = await sdk.resolveSettings({ cwd });

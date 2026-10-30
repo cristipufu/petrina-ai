@@ -66,7 +66,17 @@ it("cleans question waiters on cancellation, on an answer and when already abort
   const by = { roleId: "builder", profileId: "sol-high" };
   try {
     const already = new AbortController(); already.abort();
-    expect(await rejectionOf(engine["turns"]["wait"](scope, "question", "No orphan", true, {}, already.signal, "Waiting", by, false))).toBeInstanceOf(Aborted);
+    expect(await rejectionOf(engine["turns"]["wait"]({
+      scope,
+      kind: "question",
+      title: "No orphan",
+      blocking: true,
+      extra: {},
+      signal: already.signal,
+      status: "Waiting",
+      by,
+      main: false,
+    }))).toBeInstanceOf(Aborted);
     expect(engine.s.inbox).toEqual([]); expect(engine.waiting.size).toBe(0);
     const controller = new AbortController();
     lifetime.onStop(() => controller.abort());
@@ -74,13 +84,33 @@ it("cleans question waiters on cancellation, on an answer and when already abort
     const remove = spyOn(controller.signal, "removeEventListener");
     lifetime.onStop(() => remove.mockRestore());
     engine.drivers.set(task.id, controller);
-    const rejection = lifetime.prepare(() => engine["turns"]["wait"](scope, "question", "A live question", true, {}, controller.signal, "Waiting", by, false).then(() => undefined, error => error));
+    const rejection = lifetime.prepare(() => engine["turns"]["wait"]({
+      scope,
+      kind: "question",
+      title: "A live question",
+      blocking: true,
+      extra: {},
+      signal: controller.signal,
+      status: "Waiting",
+      by,
+      main: false,
+    }).then(() => undefined, error => error));
     engine.pause(task.id); expect(await rejection).toBeInstanceOf(Aborted);
     expect(engine.waiting.size).toBe(0); expect(engine.s.inbox).toEqual([]);
     expect(remove).toHaveBeenCalledWith("abort", expect.any(Function)); remove.mockRestore();
     const answerController = new AbortController();
     lifetime.onStop(() => answerController.abort());
-    const answer = lifetime.prepare(() => engine["turns"]["wait"](scope, "question", "Another question", true, {}, answerController.signal, "Waiting", by, false));
+    const answer = lifetime.prepare(() => engine["turns"]["wait"]({
+      scope,
+      kind: "question",
+      title: "Another question",
+      blocking: true,
+      extra: {},
+      signal: answerController.signal,
+      status: "Waiting",
+      by,
+      main: false,
+    }));
     engine.answer(engine.s.inbox[0]!.id, "Continue");
     expect(await answer).toBe("Continue"); expect(engine.waiting.size).toBe(0);
   } finally { await engine.shutdown(); }
@@ -119,7 +149,17 @@ it("keeps preparation room for lesson and guide offers, but gives it back for a 
     expect(checks.claimPreparation(task.id)).toBe(true);
     expect(scheduled).not.toHaveBeenCalled();
 
-    question = lifetime.prepare(() => engine["turns"]["wait"](scope, "question", "A decision that really waits", true, {}, controller.signal, "Waiting", { roleId: "builder", profileId: "sol-high" }, false));
+    question = lifetime.prepare(() => engine["turns"]["wait"]({
+      scope,
+      kind: "question",
+      title: "A decision that really waits",
+      blocking: true,
+      extra: {},
+      signal: controller.signal,
+      status: "Waiting",
+      by: { roleId: "builder", profileId: "sol-high" },
+      main: false,
+    }));
     await Promise.resolve();
     expect(checks.preparingCount).toBe(0);
     expect(checks.claimPreparation(peer.id)).toBe(true);

@@ -81,6 +81,7 @@ export async function runVerificationVote(
   const findings = new Set(
     pending.seats.flatMap((seat) => seat.findingIds).filter((id) => claims.some((finding) => finding.id === id)),
   ).size;
+  const votesRoleId = k.s.roles.find((role) => !role.removed && role.result === "votes")?.id ?? "verifier";
   await deps.together(
     task,
     pending.seats.map((planned, index) => {
@@ -94,7 +95,7 @@ export async function runVerificationVote(
       return {
         key,
         reviewKey,
-        roleId: "verifier",
+        roleId: votesRoleId,
         profileId,
         work: async (copy, room, seat, used, agent, continuing, turnSignal, selection) => {
           let by = seat;
@@ -113,7 +114,7 @@ export async function runVerificationVote(
           const given = async () => [
             ...(await context.sectionsFor(
               scope,
-              "verifier",
+              votesRoleId,
               key,
               turns.repositoryCopies.get(copy),
               undefined,
@@ -143,7 +144,7 @@ export async function runVerificationVote(
             .filter(Boolean)
             .join(" ");
           if (continuing) {
-            await turns.turn(scope, "verifier", plannedId, given, VerifyResult, turnSignal, {
+            await turns.turn(scope, votesRoleId, plannedId, given, VerifyResult, turnSignal, {
               copy,
               member: key,
               reviewKey,
@@ -154,7 +155,7 @@ export async function runVerificationVote(
               place: planned.key,
             });
           } else {
-            await turns.parallel(scope, "verifier", plannedId, copy, given, VerifyResult, turnSignal, {
+            await turns.parallel(scope, votesRoleId, plannedId, copy, given, VerifyResult, turnSignal, {
               key: reviewKey,
               room,
               seat,

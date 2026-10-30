@@ -1,4 +1,4 @@
-import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import type { ChildProcess } from "node:child_process";
 import { dirname, join } from "node:path";
 import type * as acp from "@agentclientprotocol/sdk";
@@ -13,22 +13,32 @@ import * as gitOps from "@petrina/repositories/git";
 import { git } from "@petrina/test-support/commands";
 import { fixtureFiles } from "@petrina/test-support/fixture-files";
 import { writeFixtureJson } from "@petrina/test-support/fixture-json";
-import { createProductRepository } from "@petrina/test-support/repositories";
 import type { EngineOptions } from "../engine.js";
 import type { AgentScript, NativeStep, Scenario } from "../fake-agent.js";
 import { nativeAgentProcess } from "../native-agent.js";
 import { recordPrompt } from "../prompt-records.js";
 import { answersTo, findingIds, promptSection as section } from "../scripted-findings.js";
 import { privateAgentToolProbe } from "../scripted-probes.js";
-import { FAKE_AGENT, tempDir, type Fakes } from "../support.js";
+import { FAKE_AGENT, type Fakes } from "../support.js";
+import {
+  block,
+  checkFinderPayload,
+  defaultConfigOptions as defaultOptions,
+  designReviewerPayload,
+  DISPUTE_REASON,
+  guideKeeperPayload,
+  NOTES,
+  objectionIds,
+  plannerPayload,
+  roleOf,
+  SCREEN_REASON,
+  SECURITY_FINDING,
+  slug,
+  verifierVerdictsPayload,
+  type FakeConfigOption as ConfigOption,
+} from "./fake-agent-scenarios.js";
 
-interface ConfigOption {
-  id: string;
-  name: string;
-  type: "select";
-  currentValue: string;
-  options: { value: string; name: string }[];
-}
+export { attachReviewWorktree, prepareReviewRepository } from "./review-repository-seed.js";
 
 interface Conversation {
   maintenance?: boolean;
@@ -55,46 +65,7 @@ interface Reply {
   native?: boolean;
 }
 
-const block = (value: unknown, prose = "Done.") => `${prose}\n\n\`\`\`petrina\n${JSON.stringify(value)}\n\`\`\``;
-const select = (id: string, values: string[], names: string[] = values): ConfigOption => ({
-  type: "select",
-  id,
-  name: id,
-  currentValue: values[0]!,
-  options: values.map((value, index) => ({ value, name: names[index]! })),
-});
-
-const defaultOptions = (plan: Scenario): ConfigOption[] => [
-  select("model", ["default", "opus", "sonnet", "gpt-6-astra", ...(plan.maintenance?.unsupported ? [] : ["gpt-6.1-sol"]), "grok-4.7", "gemini-4-argon", "gemini-3.8-flash"]),
-  select("effort", ["high", "xhigh"]),
-  select("reasoning_effort", ["low", "medium", "high", "xhigh", "ultra"]),
-  select("thinking_level", ["low", "medium", "high"]),
-  select("mode", ["default", "auto", "agent", "auto_edit", "yolo"]),
-];
-
-const roleOf = (text: string): string => /You are the ([A-Za-z -]+) in Petrina/.exec(text)?.[1]?.trim().toLowerCase() ?? "";
-const slug = (role: string) => role.replace(/[^a-z0-9]+/g, "-");
-function addedId(text: string, name: string): string {
-  const id = new RegExp(`^- (added-[a-z0-9-]+) \\(${name}\\):`, "m").exec(text)?.[1];
-  if (!id) throw new Error(`The planner's list has no ${name}`);
-  return id;
-}
-
-const SECURITY_FINDING = "Anyone can ask for the greeting as often as they like.";
-const DISPUTE_REASON = "The greeting's wording is the copywriter's call, not a review finding.";
-const SCREEN_REASON = "Check that the quick note window opens from the menu bar";
-const NOTES = "The coordinator's notes on this task (preserve product decisions; read each instruction in its original step)";
-const check = { kind: "gate", title: "Your design check", roleId: "architect", gate: "design" };
-const screens = { kind: "do", title: "Screens", roleId: "ux-designer", profileIds: ["opus-high"] };
-const objectionIds = (text: string) => [...text.matchAll(/^- \[([^\]]+)\]/gm)].map((match) => match[1]!);
 const run = (cwd: string, ...args: string[]) => git(cwd, "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", ...args);
-
-function riskOf(plan: Scenario) {
-  return {
-    ...(plan.worksOn ? { worksOn: plan.worksOn } : {}),
-    ...(plan.risk ? { risk: { level: plan.risk, why: plan.risk === "high" ? "It changes how people sign in." : "Only the greeting's words change." } } : {}),
-  };
-}
 
 const usageUpdate = (status: string, kind: string, utilization?: number, resetsAt?: number, overage?: boolean, paidStatus?: string): acp.SessionNotification["update"] =>
   ({
@@ -1081,185 +1052,7 @@ class InProcessFakeSession implements AgentSession {
     switch (session.role) {
       case "planner":
         await say("Sizing the work");
-        if (plan.planner === "research-first") {
-          return done({
-            rationale: "Research it, build it, then review it.",
-            stages: [
-              { kind: "do", title: "Research", roleId: "researcher", profileIds: ["opus-high"] },
-              { kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-high"] },
-              { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["sol-high"], maxRounds: 1 },
-            ],
-          });
-        }
-        if (plan.planner === "tester-first") {
-          return done({
-            rationale: "Build it, try it, then two reviewers.",
-            stages: [
-              { kind: "do", title: "Build", roleId: "builder", profileIds: ["opus-xhigh"] },
-              { kind: "do", title: "Try it like a user", roleId: "tester", profileIds: ["opus-high"] },
-              { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-xhigh", "sol-xhigh"], maxRounds: 2 },
-            ],
-          });
-        }
-        if (plan.planner === "pair" || plan.planner === "build-review") {
-          return done({
-            rationale: plan.planner === "pair" ? "Build it, then two reviewers at once, one on each tool." : "Build it, then two reviewers.",
-            ...riskOf(plan),
-            stages: [
-              { kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-xhigh"] },
-              { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high", "sol-high"], maxRounds: 1 },
-            ],
-          });
-        }
-        if (plan.planner === "mixed-review") {
-          return done({
-            rationale: "Build it, then a code reviewer and the added Security specialist review it together.",
-            stages: [
-              { kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-xhigh"] },
-              { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high", "sol-high"], roleIds: ["code-reviewer", addedId(text, "Security specialist")], maxRounds: 2 },
-            ],
-          });
-        }
-        if (plan.planner === "source-brief") {
-          return done({
-            rationale: "Build it, then a review with the security reviewer.",
-            stages: [
-              { kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-xhigh"] },
-              { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high", "sol-high"], roleIds: ["code-reviewer", addedId(text, "Security specialist")], maxRounds: 1 },
-            ],
-          });
-        }
-        if (plan.planner === "source-roles") {
-          return done({
-            rationale: "Build it, then the copywriter, a review with the security reviewer, and a fact check.",
-            stages: [
-              { kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-xhigh"] },
-              { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high", "sol-high"], roleIds: ["code-reviewer", addedId(text, "Security specialist")], maxRounds: 1 },
-              { kind: "do", title: "Copy", roleId: addedId(text, "Copywriter"), profileIds: ["opus-high"] },
-              { kind: "do", title: "Fact check", roleId: addedId(text, "Fact checker"), profileIds: ["opus-high"] },
-            ],
-          });
-        }
-        if (plan.planner === "roles") {
-          return done({
-            rationale: "Research, a design, a build, then a review with the security reviewer you added.",
-            ...riskOf(plan),
-            stages: [
-              { kind: "do", title: "Research", roleId: "researcher", profileIds: ["sol-high"] },
-              { kind: "converge", title: "Design", roleId: "architect", profileIds: ["opus-xhigh"], reviewerRoleId: "design-reviewer", reviewerProfileIds: ["sol-xhigh"], maxRounds: 2 },
-              check,
-              { kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-xhigh"] },
-              { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high", "sol-high"], roleIds: ["code-reviewer", addedId(text, "Security specialist")], maxRounds: 2 },
-              { kind: "do", title: "Copy", roleId: addedId(text, "Copywriter"), profileIds: ["opus-high"] },
-              { kind: "do", title: "Fact check", roleId: addedId(text, "Fact checker"), profileIds: ["opus-high"] },
-            ],
-          });
-        }
-        if (plan.planner === "copy") {
-          return done({
-            rationale: "Build it, then the copywriter you added, then one reviewer.",
-            stages: [
-              { kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-xhigh"] },
-              { kind: "do", title: "Copy", roleId: addedId(text, "Copywriter"), profileIds: ["opus-high"] },
-              { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high"], maxRounds: 1 },
-            ],
-          });
-        }
-        if (plan.planner === "tester-after") {
-          return done({
-            rationale: "Build it, one reviewer, then try it out.",
-            ...riskOf(plan),
-            stages: [
-              { kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-xhigh"] },
-              { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high"], maxRounds: 1 },
-              { kind: "do", title: "Test", roleId: "tester", profileIds: ["opus-high"] },
-            ],
-          });
-        }
-        if (plan.planner === "claude-build") {
-          return done({
-            rationale: "Build it on Claude Code, one reviewer on Codex.",
-            ...riskOf(plan),
-            stages: [
-              { kind: "do", title: "Build", roleId: "builder", profileIds: ["opus-high"] },
-              { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["sol-high"], maxRounds: plan.reviewer === "confirm" ? 2 : 1 },
-            ],
-          });
-        }
-        if (plan.planner === "grok-build") {
-          return done({
-            rationale: "Build it on Grok, one reviewer on Claude Code.",
-            ...riskOf(plan),
-            stages: [
-              { kind: "do", title: "Build", roleId: "builder", profileIds: ["grok-xhigh"] },
-              { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high"], maxRounds: 1 },
-            ],
-          });
-        }
-        if (plan.planner === "two-opus") {
-          return done({
-            rationale: "Build it, then two reviewers on Claude Code.",
-            stages: [
-              { kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-xhigh"] },
-              { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high", "opus-xhigh"], maxRounds: 1 },
-            ],
-          });
-        }
-        if (plan.planner === "limits") {
-          return done({
-            rationale: "Exercise same-tool handoffs, design rounds and a mixed-tool review chain.",
-            stages: [
-              { kind: "do", title: "Research", roleId: "researcher", profileIds: ["opus-high"] },
-              { kind: "converge", title: "Design", roleId: "architect", profileIds: ["opus-xhigh"], reviewerRoleId: "design-reviewer", reviewerProfileIds: ["sol-xhigh"], maxRounds: 2 },
-              { kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-xhigh"] },
-              { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high", "opus-xhigh", "sol-high"], maxRounds: 2 },
-            ],
-          });
-        }
-        if (text.includes("[quick]")) {
-          return done({
-            rationale: "A small change: build it, one reviewer.",
-            ...riskOf(plan),
-            stages: [
-              { kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-xhigh"] },
-              { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high"], maxRounds: 2 },
-            ],
-          });
-        }
-        if (plan.planner === "short" || plan.planner === "parallel" || plan.planner === "trio" || plan.planner === "two-codex") {
-          return done({
-            rationale: "A small change: build it, one reviewer.",
-            ...riskOf(plan),
-            stages: [
-              { kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-xhigh"] },
-              {
-                kind: "review-chain",
-                title: "Review",
-                roleId: "code-reviewer",
-                profileIds:
-                  plan.planner === "parallel"
-                    ? ["opus-high", "sol-high"]
-                    : plan.planner === "trio"
-                      ? ["opus-high", "sol-high", "grok-xhigh"]
-                      : plan.planner === "two-codex"
-                        ? ["sol-high", "astra-xhigh"]
-                        : ["opus-high"],
-                maxRounds: plan.reviewRounds ?? 1,
-              },
-            ],
-          });
-        }
-        return done({
-          rationale: "A small feature: agree on a design, build it, two reviewers.",
-          ...riskOf(plan),
-          stages: [
-            { kind: "converge", title: "Design", roleId: "architect", profileIds: ["opus-xhigh"], reviewerRoleId: "design-reviewer", reviewerProfileIds: ["sol-xhigh"], maxRounds: 2 },
-            ...(text.includes("[no-check]") ? [] : text.includes("[screens]") ? [screens, check] : text.includes("[two-checks]") ? [check, screens, check] : [check]),
-            { kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-xhigh"] },
-            ...(plan.planner === "tester-with-design" ? [{ kind: "do", title: "Try acceptance", roleId: "tester", profileIds: ["opus-high"] }] : []),
-            { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high", "sol-high"], maxRounds: plan.reviewRounds ?? 2 },
-          ],
-        });
+        return done(plannerPayload(plan, text));
 
       case "architect": {
         const revised =
@@ -1313,37 +1106,15 @@ class InProcessFakeSession implements AgentSession {
         return done({ ...brief, answers: [] });
       }
 
-      case "check finder":
-        if (plan.checks === "broken") return { text: "I could not work out how this product is checked." };
-        if (this.h.readScript().checks) return done({ summary: "Checked the way this test asks.", checks: this.h.readScript().checks });
-        return done({
-          summary: "Checked with git, which every test machine has.",
-          checks:
-            plan.checks === "fail"
-              ? [{ name: "Tests", argv: ["git", "no-such-subcommand-petrina"], why: "A check that fails, for tests" }]
-              : plan.checks === "writes"
-                ? [{ name: "Format", argv: ["git", "mv", "README.md", "README.txt"], why: "A check that changes a tracked file, for tests" }]
-                : plan.checks === "slow"
-                  ? [{ name: "Slow", argv: [process.execPath, "-e", "await Bun.sleep(1500)"], why: "A check that takes a moment, for tests" }]
-                  : plan.checks === "commits"
-                    ? [{ name: "Sneaky", argv: ["git", "commit", "-q", "--allow-empty", "-m", "Not reviewed"], why: "A check that commits, for tests" }]
-                    : [{ name: "Version", argv: ["git", "--version"], why: "A check that passes, for tests" }],
-        });
+      case "check finder": {
+        const checks = checkFinderPayload(plan, this.h.readScript().checks, process.execPath);
+        return checks.broken ? { text: checks.text } : done(checks.payload);
+      }
 
-      case "design reviewer":
-        if (plan.planner === "limits" && !text.includes("Objections so far")) {
-          return done({ objections: [{ text: "Explain who sees the greeting.", blocking: true }] });
-        }
-        if (text.includes("[follow-up]")) return done({ objections: [{ text: "Follow-up: name the greeting's colour later.", blocking: false }] });
-        if (text.includes("[disagree]")) {
-          return done({
-            objections: [
-              { text: "The brief does not say who sees the greeting.", blocking: true },
-              { text: "Consider a greeting per language.", blocking: false },
-            ],
-          });
-        }
-        return { ...done({ objections: [] }), silent: true };
+      case "design reviewer": {
+        const review = designReviewerPayload(plan, text);
+        return review.silent ? { ...done(review.payload), silent: true } : done(review.payload);
+      }
 
       case "builder": {
         if (plan.builder === "fail-once") {
@@ -1596,13 +1367,10 @@ class InProcessFakeSession implements AgentSession {
       case "security reviewer":
         return done({ verdict: "pass", findings: [], confirms: [], disputes: [] });
 
-      case "guide keeper":
-        if (plan.guide === "broken") return { text: "I could not tell what the reviewers missed." };
-        return done(
-          plan.guide === "change of mind"
-            ? { missed: false, line: "", why: "The note asks for a new colour: a change of mind, not a miss." }
-            : { missed: true, line: "Every greeting also shows on the welcome page.", why: "The reviewers checked the greeting only where it was added." },
-        );
+      case "guide keeper": {
+        const guide = guideKeeperPayload(plan);
+        return guide.broken ? { text: guide.text } : done(guide.payload);
+      }
 
       case "release manager": {
         if (plan.releaseManager === "hang" && !this.h.marked("release-manager-started")) return hang("release-manager-started");
@@ -1655,36 +1423,7 @@ class InProcessFakeSession implements AgentSession {
           this.h.mark("verifier-voting");
           await waitForFile(join(dir, "release-vote"), this.stopped.signal);
         }
-        const ids = findingIds(text, "Important findings to check (a verdict on every one, by id)");
-        const verdict =
-          plan.verifierByModel?.[session.model ?? ""] ??
-          (plan.verifier === "after-fix-not-a-bug"
-            ? text.includes("  The builder: fixed.")
-              ? "not-a-bug"
-              : "real"
-            : plan.verifier === "split"
-              ? notABug
-                ? "not-a-bug"
-                : "real"
-              : plan.verifier === "hold"
-                ? "real"
-                : plan.verifier) ??
-          "real";
-        return done({
-          verdicts: (plan.partialVerification ? ids.slice(0, 1) : ids).map((id) => {
-            const given = plan.verifierByFinding?.[id]?.[session.model ?? ""] ?? verdict;
-            return {
-              id,
-              verdict: given,
-              reason:
-                given === "not-a-bug"
-                  ? "The welcome page shows the greeting already."
-                  : given === "real"
-                    ? "The welcome page has no greeting: confirmed by opening it."
-                    : `It is ${given === "nit" ? "only a nit" : "older than this change"}: checked on ${session.model}.`,
-            };
-          }),
-        });
+        return done(verifierVerdictsPayload(plan, text, session.model, notABug));
       }
 
       case "quality partner":
@@ -1840,132 +1579,4 @@ class InProcessFakeSession implements AgentSession {
     await this.pending?.catch(() => undefined);
     return true;
   }
-}
-
-interface ReviewSeed {
-  root: string;
-  initialSha: string;
-  headSha: string;
-  treeSha: string;
-}
-
-const cachedReviewSeeds = new Map<string, Promise<ReviewSeed>>();
-
-function ensureReviewSeed(sourceRepo?: string): Promise<ReviewSeed> {
-  const sourceInitial = sourceRepo && existsSync(join(sourceRepo, ".git", "refs", "heads", "main"))
-    ? readFileSync(join(sourceRepo, ".git", "refs", "heads", "main"), "utf8").trim()
-    : undefined;
-  const key = sourceInitial ?? "default";
-  const cached = cachedReviewSeeds.get(key);
-  if (cached) return cached;
-  const pending = (async () => {
-    const seedRoot = tempDir("petrina-review-seed-");
-    let repo: string;
-    let initialSha: string;
-    if (sourceRepo && sourceInitial) {
-      repo = join(seedRoot, "clone");
-      cpSync(sourceRepo, repo, { recursive: true });
-      initialSha = sourceInitial;
-    } else {
-      ({ path: repo, initialSha } = await createProductRepository(seedRoot));
-    }
-    const worktree = join(seedRoot, "worktree");
-    await gitOps.ensureWorktree(repo, worktree, "seed-review-branch", initialSha);
-    writeFileSync(join(worktree, "greeting.txt"), "Hello from the actual private review fixture\n");
-    await gitOps.commitChanges(worktree, "Prepare the greeting under review");
-    const { head: headSha, tree: treeSha } = await gitOps.commitVersion(worktree);
-    return { root: seedRoot, initialSha, headSha: headSha!, treeSha: treeSha! };
-  })();
-  cachedReviewSeeds.set(key, pending);
-  return pending;
-}
-
-/**
- * Copy a pre-built product repository with a committed review worktree into `root` without
- * spawning `git worktree add`, `git add` or `git commit` per test case.
- */
-export async function prepareReviewRepository(
-  root: string,
-  options: { branch: string; folder: string },
-): Promise<{
-  repo: string;
-  initialSha: string;
-  worktree: string;
-  branch: string;
-  savedVersion: { head: string; tree: string; clean: boolean };
-}> {
-  const seed = await ensureReviewSeed();
-  const origin = join(root, "origin.git");
-  const repo = join(root, "clone");
-  const worktree = join(root, options.folder);
-  rmSync(origin, { recursive: true, force: true });
-  rmSync(repo, { recursive: true, force: true });
-  rmSync(worktree, { recursive: true, force: true });
-  cpSync(join(seed.root, "origin.git"), origin, { recursive: true });
-  cpSync(join(seed.root, "clone"), repo, { recursive: true });
-  cpSync(join(seed.root, "worktree"), worktree, { recursive: true });
-
-  const configPath = join(repo, ".git", "config");
-  writeFileSync(configPath, readFileSync(configPath, "utf8").replaceAll(join(seed.root, "origin.git"), origin));
-
-  const worktreeMeta = join(repo, ".git", "worktrees", "worktree");
-  writeFileSync(join(worktreeMeta, "gitdir"), `${join(worktree, ".git")}\n`);
-  writeFileSync(join(worktreeMeta, "HEAD"), `ref: refs/heads/${options.branch}\n`);
-  writeFileSync(join(worktree, ".git"), `gitdir: ${worktreeMeta}\n`);
-
-  const oldRef = join(repo, ".git", "refs", "heads", "seed-review-branch");
-  const newRef = join(repo, ".git", "refs", "heads", options.branch);
-  if (existsSync(oldRef) && oldRef !== newRef) renameSync(oldRef, newRef);
-
-  const oldLog = join(repo, ".git", "logs", "refs", "heads", "seed-review-branch");
-  const newLog = join(repo, ".git", "logs", "refs", "heads", options.branch);
-  if (existsSync(oldLog) && oldLog !== newLog) renameSync(oldLog, newLog);
-
-  return {
-    repo,
-    initialSha: seed.initialSha,
-    worktree,
-    branch: options.branch,
-    savedVersion: { head: seed.headSha, tree: seed.treeSha, clean: true },
-  };
-}
-
-/**
- * Attach a pre-built committed review worktree to an existing `createProductRepository` clone
- * without spawning `git worktree add`, `git add` or `git commit`.
- */
-export async function attachReviewWorktree(
-  repo: string,
-  options: { worktree: string; branch: string; id?: string },
-): Promise<{
-  initialSha: string;
-  worktree: string;
-  branch: string;
-  savedVersion: { head: string; tree: string; clean: boolean };
-}> {
-  const seed = await ensureReviewSeed(repo);
-  const id = options.id ?? "worktree";
-  cpSync(join(seed.root, "clone", ".git", "objects"), join(repo, ".git", "objects"), { recursive: true });
-  mkdirSync(dirname(options.worktree), { recursive: true });
-  rmSync(options.worktree, { recursive: true, force: true });
-  cpSync(join(seed.root, "worktree"), options.worktree, { recursive: true });
-
-  const worktreeMeta = join(repo, ".git", "worktrees", id);
-  rmSync(worktreeMeta, { recursive: true, force: true });
-  mkdirSync(dirname(worktreeMeta), { recursive: true });
-  cpSync(join(seed.root, "clone", ".git", "worktrees", "worktree"), worktreeMeta, { recursive: true });
-  writeFileSync(join(worktreeMeta, "gitdir"), `${join(options.worktree, ".git")}\n`);
-  writeFileSync(join(worktreeMeta, "HEAD"), `ref: refs/heads/${options.branch}\n`);
-  writeFileSync(join(options.worktree, ".git"), `gitdir: ${worktreeMeta}\n`);
-
-  const refPath = join(repo, ".git", "refs", "heads", options.branch);
-  mkdirSync(dirname(refPath), { recursive: true });
-  writeFileSync(refPath, `${seed.headSha}\n`);
-
-  return {
-    initialSha: seed.initialSha,
-    worktree: options.worktree,
-    branch: options.branch,
-    savedVersion: { head: seed.headSha, tree: seed.treeSha, clean: true },
-  };
 }

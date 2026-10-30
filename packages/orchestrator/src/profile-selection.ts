@@ -32,7 +32,7 @@ export interface SelectionReadiness {
   words: string;
   scope: RepositoryContext;
 }
-export type ProfileSelectionResult = Exclude<Choice, { kind: "none" }> | { kind: "none"; waiting: string; readiness?: SelectionReadiness };
+export type ProfileSelectionResult = Exclude<Choice, { kind: "none" }> | { kind: "none"; waiting: string; capacity?: boolean; readiness?: SelectionReadiness };
 type Selection = ProfileSelectionResult;
 export type SelectionState = Pick<State, "profiles" | "tools" | "pool" | "setup">;
 
@@ -115,7 +115,7 @@ export class ProfileSelection {
       if (limit) return { kind: "none", waiting: "Waiting for usage on the saved maintenance profile" };
       const full = this.capacityUntil(task, saved, this.host.now());
       // A scheduled run keeps its saved profile. A full model waits and retries that profile.
-      if (full) return { kind: "none", waiting: this.host.capacityWaiting(full, this.host.now()) };
+      if (full) return { kind: "none", capacity: true, waiting: this.host.capacityWaiting(full, this.host.now()) };
       if (!this.host.current().tools.some(t => t.id === saved.toolId && t.status === "ready")) return {
         kind: "none",
         waiting: "The saved maintenance tool is unavailable. Check it in Agents, then resume this run."
@@ -139,7 +139,7 @@ export class ProfileSelection {
         modelId: repository!.builderSession.model
       } : builder ? this.host.profile(builder) : undefined)
       : undefined;
-    if (task && stage?.kind === "converge" && task.sub === 1 && roleId === (stage.reviewerRoleId ?? "design-reviewer")) {
+    if (task && stage?.kind === "converge" && task.sub === 1 && (roleId === stage.reviewerRoleId || role?.result === "objections")) {
       const saved = task.designSessions?.[JSON.stringify([stage.id, "author", repository!.productId])];
       const author = saved ? undefined : this.host.completedDesignAuthor(task.id, stage.id, round, stage.roleId);
       const legacy = task.session.findLast((line) => line.from === "agent" && line.roleId === stage.roleId)?.profileId;
@@ -179,7 +179,7 @@ export class ProfileSelection {
     const now = this.host.now();
     // A short retry is already waiting on this profile. Another free model does not take the step yet.
     const held = this.holdingForShortRetry(task, roleId, planned, now);
-    if (held) return { kind: "none", waiting: this.host.capacityWaiting(held, now) };
+    if (held) return { kind: "none", capacity: true, waiting: this.host.capacityWaiting(held, now) };
     const checked = state.setup?.checks.some((check) => this.host.hasToolAdapter(check.id));
     const usable = this.host.usableTools() as Id[];
     // Usage stand-ins follow the same login checks as the plan: Ready tools first, otherwise the
@@ -205,7 +205,9 @@ export class ProfileSelection {
       const open = onTool.filter((profile) => !modelFull(profile));
       if (!open.length && !limitOf(state.pool, planned, now)) {
         const until = onTool.map((profile) => modelFull(profile)).find((until) => until !== undefined) ?? modelFull(planned);
-        return until ? { kind: "none", waiting: this.host.capacityWaiting(until, now) } : { kind: "none", waiting: "Waiting for a usable review tool" };
+        return until
+          ? { kind: "none", capacity: true, waiting: this.host.capacityWaiting(until, now) }
+          : { kind: "none", waiting: "Waiting for a usable review tool" };
       }
       if (ready.length && !ready.some((tool) => tool.id === planned.toolId)) return { kind: "none", waiting: "Waiting for a usable review tool" };
       candidates = { ...candidates, profiles: open };
@@ -251,7 +253,7 @@ export class ProfileSelection {
     if (screen) {
       const full = fullOnly(planned);
       // An agent that already has the screen retries the same profile. It does not hand the step to another model.
-      if (full) return { kind: "none", waiting: this.host.capacityWaiting(full, now) };
+      if (full) return { kind: "none", capacity: true, waiting: this.host.capacityWaiting(full, now) };
       if (state.setup?.checks.some((check) => check.id === planned.toolId && this.host.notReady(check.status))) return {
         kind: "planned",
         profile: planned,
@@ -396,7 +398,7 @@ export class ProfileSelection {
     }
     const choice = chooseWithRoom(candidates, planned, now, rules, room);
     const full = fullOnly(planned);
-    if (choice.kind === "none" && full) return { kind: "none", waiting: this.host.capacityWaiting(full, now) };
+    if (choice.kind === "none" && full) return { kind: "none", capacity: true, waiting: this.host.capacityWaiting(full, now) };
     if (checked && !usable.length && choice.kind === "planned") return {
       ...choice,
       reason: "No tool passed readiness checks; kept the planned profile so its tool can report the login or installation problem."

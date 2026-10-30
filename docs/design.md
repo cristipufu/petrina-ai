@@ -60,7 +60,7 @@ The engine composes I/O: Git, ACP processes, checks, SQLite, clocks and authenti
 | `journey.ts`, `summary.ts` | Step evidence, activity clocks and human-readable summaries |
 | `follow-ups.ts`, `combine-backlog.ts` | Follow-up grouping and request-combination validation |
 
-`sim.ts` orchestrates those rules. `sim-script.ts` contains the offline agents’ words, sample results and fake source data; `sim-types.ts` contains demo configuration. Simulated pull-request ages belong to the simulator’s private open work, never to a production task. The demos transfer that work explicitly when fast-forwarding fixtures.
+`sim.ts` fronts the offline simulator across `sim-engine.ts` (scheduling and stage progression), `sim-actions.ts` (coordinator mutations), `sim-delivery.ts` (simulated pull-request aging and delivery) and `sim-runtime.ts` (shared state helpers). `sim-script.ts` contains the offline agents’ words, sample results and fake source data; `sim-types.ts` contains demo configuration. Simulated pull-request ages belong to the simulator’s private open work, never to a production task. The demos transfer that work explicitly when fast-forwarding fixtures.
 
 Shared transitions receive state and an explicit time. Callers retain persistence, interruption, process cleanup and scheduling effects. Tests exercise domain rules directly and compare engine and simulator commands; the demo does not pretend to execute Git or reproduce process recovery.
 

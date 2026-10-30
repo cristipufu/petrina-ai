@@ -39,6 +39,7 @@ export const ADAPTERS: Record<string, ToolAdapter> = {
     mode: "auto",
     login: "report",
     models: ["Opus 5.5", "Fable 5.1", "Sonnet 5.5"],
+    reportsSandbox: true,
     // The adapter hands `_meta.claudeCode.options` to Claude Code as its own settings.
     sandboxMeta: (sandbox) => ({ claudeCode: { options: { sandbox } } }),
   },
@@ -71,6 +72,7 @@ export const ADAPTERS: Record<string, ToolAdapter> = {
     mode: "agent",
     login: "report",
     models: ["sol", "astra"],
+    reportsSandbox: true,
   },
   grok: {
     liveInput: interjection,

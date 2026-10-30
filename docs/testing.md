@@ -2,7 +2,7 @@
 
 Development guidance for coding agents. Product contracts live in [design.md](design.md) and [ux.md](ux.md); contribution rules live in [AGENTS.md](../AGENTS.md#checks-and-test-cost).
 
-The [test-layer design](testing/layers.md) defines behavior ownership, subsystem directories and the migration audit. New tests belong under `test/<layer>/<area>/`; existing mixed files are being reviewed and split. A moved file is not proof that its fixture or assertions have been audited.
+The [test-layer design](testing/layers.md) defines behavior ownership, subsystem directories and the migration audit. Every workspace organizes its tests under `test/<layer>/<area>/`, and convention checks enforce layer placement and lower-layer isolation. A file's layer placement alone is not proof that its fixture cost or assertions need no further review.
 
 ## Required checks
 

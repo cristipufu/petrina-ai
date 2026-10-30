@@ -17,9 +17,9 @@ use std::process::Command;
 use std::process::Stdio;
 #[cfg(test)]
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
 #[cfg(test)]
 use std::sync::Arc;
+use std::sync::Mutex;
 #[cfg(test)]
 use std::thread;
 #[cfg(test)]
@@ -34,7 +34,10 @@ mod test_process;
 
 mod engine_process;
 #[cfg(test)]
-use engine_process::{connection_action, handoff_event, read_handoff_events, stop, stop_for_recovery_with_grace, ConnectionAction, Started, STOP_GRACE};
+use engine_process::{
+    connection_action, handoff_event, read_handoff_events, stop, stop_for_recovery_with_grace,
+    ConnectionAction, Started, STOP_GRACE,
+};
 
 #[derive(Default)]
 struct Shell {
@@ -45,7 +48,9 @@ impl Shell {
     fn connect(&self, app: &tauri::AppHandle, restart: bool) -> Result<String, String> {
         self.engine.connect(restart, || engine_command(app))
     }
-    fn shutdown(&self) { self.engine.shutdown(); }
+    fn shutdown(&self) {
+        self.engine.shutdown();
+    }
 }
 
 /// Development builds run the engine from the source folder they were built from.
@@ -182,7 +187,11 @@ impl Shown {
 
 /// Inbox ids are the engine's own: short, plain characters.
 fn valid_item(id: &str) -> bool {
-    !id.is_empty() && id.len() <= 80 && id.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ':'))
+    !id.is_empty()
+        && id.len() <= 80
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ':'))
 }
 
 /// Text for a notification: no control characters but line breaks, and never longer than `max`.
@@ -200,7 +209,9 @@ fn plain(text: &str, max: usize) -> String {
 }
 
 fn in_front(window: &WebviewWindow) -> bool {
-    window.is_focused().unwrap_or(false) && !window.is_minimized().unwrap_or(false) && window.is_visible().unwrap_or(true)
+    window.is_focused().unwrap_or(false)
+        && !window.is_minimized().unwrap_or(false)
+        && window.is_visible().unwrap_or(true)
 }
 
 /// Show Petrina's window, restored if it was minimized, and give it focus.
@@ -227,7 +238,14 @@ fn clicked(app: &AppHandle, id: Option<i32>) {
 /// Show a system notification. Not while Petrina is in front, where the window shows its own
 /// message instead (the answer is false then), except the test, which always goes out.
 #[tauri::command]
-fn notify(app: AppHandle, window: WebviewWindow, title: String, body: String, target: Target, test: bool) -> Result<bool, String> {
+fn notify(
+    app: AppHandle,
+    window: WebviewWindow,
+    title: String,
+    body: String,
+    target: Target,
+    test: bool,
+) -> Result<bool, String> {
     if window.label() != "main" {
         return Err("Only Petrina's main window may show notifications.".into());
     }
@@ -264,7 +282,9 @@ fn set_badge(window: WebviewWindow, count: u32) -> Result<(), String> {
     }
     let count = (count > 0).then_some(count);
     #[cfg(windows)]
-    let result = window.set_overlay_icon(count.map(|count| tauri::image::Image::new_owned(overlay(count), OVERLAY, OVERLAY)));
+    let result = window.set_overlay_icon(
+        count.map(|count| tauri::image::Image::new_owned(overlay(count), OVERLAY, OVERLAY)),
+    );
     #[cfg(not(windows))]
     let result = window.set_badge_count(count.map(i64::from));
     result.map_err(|error| error.to_string())
@@ -313,7 +333,8 @@ fn overlay(count: u32) -> Vec<u8> {
     let centre = size as f64 / 2.0;
     for y in 0..size {
         for x in 0..size {
-            let distance = ((x as f64 + 0.5 - centre).powi(2) + (y as f64 + 0.5 - centre).powi(2)).sqrt();
+            let distance =
+                ((x as f64 + 0.5 - centre).powi(2) + (y as f64 + 0.5 - centre).powi(2)).sqrt();
             // A soft edge one pixel wide.
             let cover = (centre - distance + 0.5).clamp(0.0, 1.0);
             let at = (y * size + x) * 4;
@@ -397,10 +418,21 @@ fn place(window: &WebviewWindow, open: (f64, f64), min: (f64, f64)) -> tauri::Re
         f64::from(outer.width.saturating_sub(inner.width)),
         f64::from(outer.height.saturating_sub(inner.height)) + over,
     );
-    let at = placement(usable, frame, (open.0 * scale, open.1 * scale), (min.0 * scale, min.1 * scale));
+    let at = placement(
+        usable,
+        frame,
+        (open.0 * scale, open.1 * scale),
+        (min.0 * scale, min.1 * scale),
+    );
     // The window's own size counts the title bar drawn over it; the page keeps its full size below.
-    window.set_min_size(Some(PhysicalSize::new((min.0 * scale).ceil() as u32, (min.1 * scale + over).ceil() as u32)))?;
-    window.set_size(PhysicalSize::new(at.width as u32, (at.height + over) as u32))?;
+    window.set_min_size(Some(PhysicalSize::new(
+        (min.0 * scale).ceil() as u32,
+        (min.1 * scale + over).ceil() as u32,
+    )))?;
+    window.set_size(PhysicalSize::new(
+        at.width as u32,
+        (at.height + over) as u32,
+    ))?;
     window.set_position(PhysicalPosition::new(at.x as i32, at.y as i32))?;
     Ok(())
 }
@@ -447,12 +479,21 @@ pub fn run() {
                 }
             })?;
             // The window starts hidden (tauri.conf.json) and shows once it has its place.
-            let sizes = app.config().app.windows.iter().find(|config| config.label == "main").map(|config| {
-                (
-                    (config.width, config.height),
-                    (config.min_width.unwrap_or(0.0), config.min_height.unwrap_or(0.0)),
-                )
-            });
+            let sizes = app
+                .config()
+                .app
+                .windows
+                .iter()
+                .find(|config| config.label == "main")
+                .map(|config| {
+                    (
+                        (config.width, config.height),
+                        (
+                            config.min_width.unwrap_or(0.0),
+                            config.min_height.unwrap_or(0.0),
+                        ),
+                    )
+                });
             if let Some(window) = app.get_webview_window("main") {
                 if let Some((open, min)) = sizes {
                     if let Err(error) = place(&window, open, min) {
@@ -485,11 +526,23 @@ mod tests {
 
     #[test]
     fn recovery_replaces_only_a_live_owned_child_without_an_accepted_handoff() {
-        assert_eq!(connection_action(true, false, false), ConnectionAction::Reuse);
-        assert_eq!(connection_action(true, true, false), ConnectionAction::Recover);
+        assert_eq!(
+            connection_action(true, false, false),
+            ConnectionAction::Reuse
+        );
+        assert_eq!(
+            connection_action(true, true, false),
+            ConnectionAction::Recover
+        );
         assert_eq!(connection_action(true, true, true), ConnectionAction::Reuse);
-        assert_eq!(connection_action(false, true, false), ConnectionAction::Launch);
-        assert_eq!(connection_action(false, true, true), ConnectionAction::Launch);
+        assert_eq!(
+            connection_action(false, true, false),
+            ConnectionAction::Launch
+        );
+        assert_eq!(
+            connection_action(false, true, true),
+            ConnectionAction::Launch
+        );
     }
 
     #[test]
@@ -500,40 +553,68 @@ mod tests {
             Arc::clone(&state),
         );
         assert!(!state.load(Ordering::Acquire));
-        read_handoff_events(std::io::Cursor::new(b"{\"type\":\"handoff\",\"active\":true}\n"), Arc::clone(&state));
+        read_handoff_events(
+            std::io::Cursor::new(b"{\"type\":\"handoff\",\"active\":true}\n"),
+            Arc::clone(&state),
+        );
         assert!(state.load(Ordering::Acquire));
         read_handoff_events(std::io::Cursor::new(b"ignored\n"), Arc::clone(&state));
         assert!(state.load(Ordering::Acquire));
-        read_handoff_events(std::io::Cursor::new(b"{\"type\":\"handoff\",\"active\":false}\n"), Arc::clone(&state));
+        read_handoff_events(
+            std::io::Cursor::new(b"{\"type\":\"handoff\",\"active\":false}\n"),
+            Arc::clone(&state),
+        );
         assert!(!state.load(Ordering::Acquire));
         struct Unavailable;
         impl std::io::Read for Unavailable {
-            fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> { Err(std::io::Error::other("private read failure")) }
+            fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::other("private read failure"))
+            }
         }
         impl std::io::BufRead for Unavailable {
-            fn fill_buf(&mut self) -> std::io::Result<&[u8]> { Err(std::io::Error::other("private read failure")) }
+            fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
+                Err(std::io::Error::other("private read failure"))
+            }
             fn consume(&mut self, _: usize) {}
         }
         state.store(true, Ordering::Release);
         read_handoff_events(Unavailable, Arc::clone(&state));
-        assert!(state.load(Ordering::Acquire), "an unavailable reader must not invent a cleared handoff");
-        assert_eq!(handoff_event(r#"{"type":"handoff","active":true}"#), Some(true));
-        assert_eq!(handoff_event(r#"{"type":"handoff","active":false}"#), Some(false));
-        assert_eq!(handoff_event(r#"{"type":"handoff","active":true,"requestId":"private"}"#), None);
+        assert!(
+            state.load(Ordering::Acquire),
+            "an unavailable reader must not invent a cleared handoff"
+        );
+        assert_eq!(
+            handoff_event(r#"{"type":"handoff","active":true}"#),
+            Some(true)
+        );
+        assert_eq!(
+            handoff_event(r#"{"type":"handoff","active":false}"#),
+            Some(false)
+        );
+        assert_eq!(
+            handoff_event(r#"{"type":"handoff","active":true,"requestId":"private"}"#),
+            None
+        );
     }
 
-    use super::test_process::{child_entry, controlled_child, start_child, Control, Listener, OwnedOuter};
+    use super::test_process::{
+        child_entry, controlled_child, start_child, Control, Listener, OwnedOuter,
+    };
 
     #[test]
     fn recovery_rechecks_a_handoff_arriving_during_shutdown_before_killing() {
         let (started, mut control) = controlled_child("handoff");
-        let old = stop_for_recovery_with_grace(started, Duration::from_secs(1)).expect_err("accepted handoff must preserve child");
+        let old = stop_for_recovery_with_grace(started, Duration::from_secs(1))
+            .expect_err("accepted handoff must preserve child");
         assert!(old.owner.handoff.load(Ordering::Acquire));
         let mut child = OwnedOuter(old.owner.child);
         assert!(child.0.try_wait().unwrap().is_none());
         control.ping();
         control.quit();
-        assert!(child.0.wait().unwrap().success(), "fixture owner reaps its handed-off child");
+        assert!(
+            child.0.wait().unwrap().success(),
+            "fixture owner reaps its handed-off child"
+        );
     }
 
     #[test]
@@ -541,13 +622,18 @@ mod tests {
         let (started, mut control) = controlled_child("hold");
         let began = Instant::now();
         assert!(stop_for_recovery_with_grace(started, Duration::from_millis(100)).is_ok());
-        assert!(began.elapsed() < Duration::from_secs(3), "native force cleanup cannot wait for the fixture safety exit");
+        assert!(
+            began.elapsed() < Duration::from_secs(3),
+            "native force cleanup cannot wait for the fixture safety exit"
+        );
         control.stopped();
     }
 
     #[test]
     fn ordinary_quit_closes_stdin_and_reaps_a_cooperative_child() {
-        if child_entry() { return; }
+        if child_entry() {
+            return;
+        }
         let (started, mut control) = controlled_child("cooperative");
         stop(started).unwrap_or_else(|_| panic!("owned child cleanup must be confirmed"));
         control.stopped();
@@ -558,24 +644,50 @@ mod tests {
         let ready = Listener::new();
         let mut command = Command::new(std::env::current_exe().expect("test executable path"));
         command
-            .args(["--exact", "tests::desktop_shutdown_waits_for_owned_child_or_preserves_handoff", "--nocapture"])
+            .args([
+                "--exact",
+                "tests::desktop_shutdown_waits_for_owned_child_or_preserves_handoff",
+                "--nocapture",
+            ])
             .env("PETRINA_OUTER_EXIT_CHILD_CASE", mode)
             .env("PETRINA_OUTER_CONTROL_ADDRESS", listener.address())
             .env("PETRINA_OUTER_READY_ADDRESS", ready.address())
-            .env_remove("PETRINA_TEST_SHELL_CHILD").env_remove("PETRINA_TEST_SHELL_CONTROL")
-            .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
-        let mut outer = OwnedOuter(super::engine_process::spawn_command(&mut command).expect("outer shell test process starts"));
-        let control = listener.accept().expect("outer shell's child connects to its fixture owner");
-        let mut receipt = ready.accept().expect("outer completed startup before shutdown timing");
+            .env_remove("PETRINA_TEST_SHELL_CHILD")
+            .env_remove("PETRINA_TEST_SHELL_CONTROL")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let mut outer = OwnedOuter(
+            super::engine_process::spawn_command(&mut command)
+                .expect("outer shell test process starts"),
+        );
+        let control = listener
+            .accept()
+            .expect("outer shell's child connects to its fixture owner");
+        let mut receipt = ready
+            .accept()
+            .expect("outer completed startup before shutdown timing");
         assert_eq!(receipt.pid, outer.0.id());
         receipt.ready();
         let deadline = Instant::now() + Duration::from_secs(12);
         let status = loop {
-            if let Some(status) = outer.0.try_wait().expect("outer test process can be checked") { break status; }
-            assert!(Instant::now() < deadline, "outer shell process must exit after stop returns");
+            if let Some(status) = outer
+                .0
+                .try_wait()
+                .expect("outer test process can be checked")
+            {
+                break status;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "outer shell process must exit after stop returns"
+            );
             thread::sleep(Duration::from_millis(20));
         };
-        assert!(status.success(), "outer shell test process should exit successfully");
+        assert!(
+            status.success(),
+            "outer shell test process should exit successfully"
+        );
         control
     }
 
@@ -584,7 +696,9 @@ mod tests {
         if let Ok(mode) = std::env::var("PETRINA_OUTER_EXIT_CHILD_CASE") {
             let address = std::env::var("PETRINA_OUTER_CONTROL_ADDRESS").unwrap();
             let started = start_child(if mode == "handoff" { "handoff" } else { "hold" }, &address);
-            test_process::announce_outer_ready(&std::env::var("PETRINA_OUTER_READY_ADDRESS").unwrap());
+            test_process::announce_outer_ready(
+                &std::env::var("PETRINA_OUTER_READY_ADDRESS").unwrap(),
+            );
             stop(started).unwrap_or_else(|_| panic!("owned child cleanup must be confirmed"));
             std::process::exit(0);
         }
@@ -609,7 +723,12 @@ mod tests {
     }
 
     fn screen(x: f64, y: f64, width: f64, height: f64) -> Area {
-        Area { x, y, width, height }
+        Area {
+            x,
+            y,
+            width,
+            height,
+        }
     }
 
     /// The whole window, title bar included, lies inside the usable area.
@@ -676,10 +795,17 @@ mod tests {
     #[test]
     fn a_click_finds_its_notification_and_never_guesses() {
         let mut shown = Shown::default();
-        let item = shown.remember(Target::Item { id: "inbox-7".into() });
+        let item = shown.remember(Target::Item {
+            id: "inbox-7".into(),
+        });
         let summary = shown.remember(Target::Inbox);
         let test = shown.remember(Target::App);
-        assert_eq!(shown.target(Some(item)), Target::Item { id: "inbox-7".into() });
+        assert_eq!(
+            shown.target(Some(item)),
+            Target::Item {
+                id: "inbox-7".into()
+            }
+        );
         assert_eq!(shown.target(Some(summary)), Target::Inbox);
         assert_eq!(shown.target(Some(test)), Target::App);
         // The system did not say which one, or it is one this run no longer knows.
@@ -692,18 +818,33 @@ mod tests {
         let mut shown = Shown::default();
         let first = shown.remember(Target::Item { id: "first".into() });
         for index in 0..REMEMBERED {
-            shown.remember(Target::Item { id: format!("item-{index}") });
+            shown.remember(Target::Item {
+                id: format!("item-{index}"),
+            });
         }
         assert_eq!(shown.targets.len(), REMEMBERED);
         assert_eq!(shown.target(Some(first)), Target::Inbox);
-        assert_eq!(shown.target(Some(shown.last)), Target::Item { id: format!("item-{}", REMEMBERED - 1) });
+        assert_eq!(
+            shown.target(Some(shown.last)),
+            Target::Item {
+                id: format!("item-{}", REMEMBERED - 1)
+            }
+        );
     }
 
     #[test]
     fn the_window_sends_targets_in_plain_json() {
         let item: Target = serde_json::from_str(r#"{"kind":"item","id":"inbox-3"}"#).unwrap();
-        assert_eq!(item, Target::Item { id: "inbox-3".into() });
-        assert_eq!(serde_json::to_string(&Target::Inbox).unwrap(), r#"{"kind":"inbox"}"#);
+        assert_eq!(
+            item,
+            Target::Item {
+                id: "inbox-3".into()
+            }
+        );
+        assert_eq!(
+            serde_json::to_string(&Target::Inbox).unwrap(),
+            r#"{"kind":"inbox"}"#
+        );
         assert!(serde_json::from_str::<Target>(r#"{"kind":"elsewhere"}"#).is_err());
         assert!(valid_item("inbox-3"));
         assert!(!valid_item(""));
@@ -713,7 +854,10 @@ mod tests {
 
     #[test]
     fn notification_text_is_plain_and_short() {
-        assert_eq!(plain("  Builder needs your permission\u{7}  ", 120), "Builder needs your permission");
+        assert_eq!(
+            plain("  Builder needs your permission\u{7}  ", 120),
+            "Builder needs your permission"
+        );
         assert_eq!(plain("one\ntwo", 120), "one\ntwo");
         let long = plain(&"word ".repeat(100), 20);
         assert_eq!(long.chars().count(), 20);
@@ -733,7 +877,10 @@ mod tests {
             let middle = (OVERLAY as usize / 2) * OVERLAY as usize * 4;
             assert!(pixels[middle + 3] > 200);
             let row = &pixels[middle..middle + OVERLAY as usize * 4];
-            assert!(row.chunks(4).any(|pixel| pixel == [255, 255, 255, 255]), "no digit drawn for {count}");
+            assert!(
+                row.chunks(4).any(|pixel| pixel == [255, 255, 255, 255]),
+                "no digit drawn for {count}"
+            );
         }
     }
 

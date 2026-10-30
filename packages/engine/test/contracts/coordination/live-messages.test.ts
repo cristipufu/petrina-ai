@@ -16,7 +16,13 @@ const cases = engineCaseFixtures();
 afterAll(() => cases.close());
 
 
-const rows = (path: string): Record<string, any>[] => existsSync(path) ? readFileSync(path, "utf8").trim().split("\n").filter(Boolean).map(line => JSON.parse(line)) : [];
+interface LiveJournalRow {
+  text?: string;
+  _meta?: unknown;
+  interjectionId?: string;
+}
+
+const rows = (path: string): LiveJournalRow[] => existsSync(path) ? readFileSync(path, "utf8").trim().split("\n").filter(Boolean).map(line => JSON.parse(line) as LiveJournalRow) : [];
 
 async function prepareFixture(owner: EngineCaseOwner, live: Scenario["live"], toolId = "codex", ackHeld = false, extra: Partial<Scenario> = {}, startingMessage?: string) {
   return nativeCoordinatorTask(owner, async ({ root, fakes, engine, task, scope, dispose: close }) => {

@@ -3,7 +3,7 @@ import { join } from "node:path";
 import {
   beginPetrinaStep, checkOutcome, checkResult, endPetrinaStep,
   openStep, runtimeWaitHolds, type CheckAttemptEvidence, type CheckRun,
-  type CheckSetupAttempt, type DeepMutable, type Id, type JourneyCheckReuse, type JourneyProductCheck, type ProductCheck,
+  type DeepMutable, type Id, type JourneyCheckReuse, type JourneyProductCheck, type ProductCheck,
 } from "@petrina/core";
 import {
   checkDiagnostic, type CheckEvidence, type CheckVerification, type RepositoryContext,
@@ -11,7 +11,7 @@ import {
 import { CLEANUP_INCOMPLETE } from "@petrina/platform/process-tree";
 import * as git from "@petrina/repositories/git";
 import {
-  checksFor, commandText, orderedChecks, runChecks, staticCheck, type CheckProgress,
+  checksFor, commandText, orderedChecks, runCheckBatch, staticCheck, type CheckProgress,
 } from "./checks.js";
 import { Aborted, SourceRefreshRequired, type Kernel } from "./kernel.js";
 import {
@@ -23,7 +23,8 @@ import {
 } from "./product-check-discovery.js";
 import {
   captureFinalCheckDefinition, checkExecutionEnvironment, CheckPreparationChanged, expectedCommandsWithHooks,
-  machineRecordsOf, nothingToRun, restoreCheckWorktree, type CheckEntries, type CheckPreparation, type CheckState, type LiveSetup,
+  machineRecordsOf, nothingToRun, restoreCheckWorktree, type CheckEntries, type CheckPreparation, type CheckState,
+  type LiveSetup, type ObserveCheckSetupRequest,
 } from "./product-check-setup.js";
 import { namedCheckFailures } from "./related-check-evidence.js";
 import { acceptanceVersion } from "./repositories.js";
@@ -85,11 +86,17 @@ export async function runRepositoryCommitHooks(
     k.commitNow();
     await git.detachAt(worktree, base);
     try {
-      runs.push(...(await runChecks(
-        worktree, [{ name: "Pre-commit hook", argv: ["git", "hook", "run", "--ignore-missing", "pre-commit"] }],
-        env, k.options.checkTimeoutMs, signal, join(k.dataDir, "checks", task.id), undefined,
-        (event) => progress("hook-pre-commit", event), machineRecordsOf(k), undefined, undefined, beforeStart,
-      )));
+      runs.push(...(await runCheckBatch({
+        cwd: worktree,
+        checks: [{ name: "Pre-commit hook", argv: ["git", "hook", "run", "--ignore-missing", "pre-commit"] }],
+        env,
+        timeoutMs: k.options.checkTimeoutMs,
+        signal,
+        logDirectory: join(k.dataDir, "checks", task.id),
+        onProgress: (event) => progress("hook-pre-commit", event),
+        machineRecords: machineRecordsOf(k),
+        beforeStart,
+      })));
     } finally {
       await git.reattach(worktree, branch);
       delete repository.hooking;
@@ -104,11 +111,17 @@ export async function runRepositoryCommitHooks(
     try {
       const file = join(folder, "COMMIT_EDITMSG");
       await writeFile(file, `${message}\n`);
-      const [run] = await runChecks(
-        worktree, [{ name: "Commit message hook", argv: ["git", "hook", "run", "--ignore-missing", "commit-msg", "--", file] }],
-        env, k.options.checkTimeoutMs, signal, join(k.dataDir, "checks", task.id), undefined,
-        (event) => progress("hook-commit-msg", event), machineRecordsOf(k), undefined, undefined, beforeStart,
-      );
+      const [run] = await runCheckBatch({
+        cwd: worktree,
+        checks: [{ name: "Commit message hook", argv: ["git", "hook", "run", "--ignore-missing", "commit-msg", "--", file] }],
+        env,
+        timeoutMs: k.options.checkTimeoutMs,
+        signal,
+        logDirectory: join(k.dataDir, "checks", task.id),
+        onProgress: (event) => progress("hook-commit-msg", event),
+        machineRecords: machineRecordsOf(k),
+        beforeStart,
+      });
       if (run) runs.push({ ...run, command: "git hook run commit-msg" });
     } finally {
       await rm(folder, { recursive: true, force: true });
@@ -157,6 +170,18 @@ export function syncPreparedCheckEntries(
   }
 }
 
+export interface ExecuteAllChecksRequest {
+  scope: RepositoryContext;
+  checks: readonly ProductCheck[];
+  state: CheckState;
+  signal: AbortSignal;
+  entries: CheckEntries;
+  kept?: readonly CheckRun[];
+  attemptId?: string;
+  purpose?: JourneyCheckReuse["purpose"];
+  ownsPlace?: () => boolean;
+}
+
 export interface CheckBatchHooks {
   k: Kernel;
   evidence: CheckEvidence;
@@ -169,16 +194,10 @@ export interface CheckBatchHooks {
   cachedChecks(scope: RepositoryContext): readonly ProductCheck[] | undefined;
   ensureChecks(scope: RepositoryContext, signal: AbortSignal): Promise<readonly ProductCheck[]>;
   captureState(scope: RepositoryContext, checks: readonly ProductCheck[]): Promise<CheckState>;
-  observeSetup(
-    scope: RepositoryContext, checks: readonly ProductCheck[], state: CheckState, signal: AbortSignal,
-    env: NodeJS.ProcessEnv, position: CheckSetupAttempt["position"], restore?: () => Promise<void>, ownsPlace?: () => boolean,
-  ): Promise<LiveSetup>;
+  observeSetup(request: ObserveCheckSetupRequest): Promise<LiveSetup>;
   ranOn(scope: RepositoryContext, checks: readonly ProductCheck[], state: CheckState): Promise<boolean>;
   savedProductResults(scope: RepositoryContext, checks: readonly ProductCheck[], state: CheckState, live: LiveSetup): Promise<readonly CheckRun[] | undefined>;
-  runAll(
-    scope: RepositoryContext, checks: readonly ProductCheck[], state: CheckState, signal: AbortSignal, entries: CheckEntries,
-    kept?: readonly CheckRun[], attemptId?: string, purpose?: JourneyCheckReuse["purpose"], ownsPlace?: () => boolean,
-  ): Promise<CheckVerification>;
+  runAll(request: ExecuteAllChecksRequest): Promise<CheckVerification>;
 }
 
 export async function executePreparedChecks(
@@ -319,7 +338,17 @@ export async function executePreparedChecks(
       finished = undefined;
     }
     if (k.taskSourceRefreshDue(task)) throw new SourceRefreshRequired();
-    const failures = await hooksObj.runAll(scope, checks, state, signal, entries, kept, attempt.attemptId, purpose, () => finished !== undefined);
+    const failures = await hooksObj.runAll({
+      scope,
+      checks,
+      state,
+      signal,
+      entries,
+      kept,
+      attemptId: attempt.attemptId,
+      purpose,
+      ownsPlace: () => finished !== undefined,
+    });
     complete = true;
     return failures;
   } catch (error) {
@@ -349,16 +378,19 @@ export async function executePreparedChecks(
 
 export async function executeAllChecks(
   hooksObj: CheckBatchHooks,
-  scope: RepositoryContext,
-  checks: readonly ProductCheck[],
-  state: CheckState,
-  signal: AbortSignal,
-  entries: CheckEntries,
-  kept?: readonly CheckRun[],
-  attemptId = entries.values().next().value?.attemptId,
-  purpose: JourneyCheckReuse["purpose"] = "acceptance",
-  ownsPlace: () => boolean = () => false,
+  request: ExecuteAllChecksRequest,
 ): Promise<CheckVerification> {
+  const {
+    scope,
+    checks,
+    state,
+    signal,
+    entries,
+    attemptId = entries.values().next().value?.attemptId,
+    purpose = "acceptance",
+    ownsPlace = () => false,
+  } = request;
+  let { kept } = request;
   const { k, evidence } = hooksObj;
   const { task, work: repository } = scope;
   if (signal.aborted || k.stopped) throw new Aborted();
@@ -406,7 +438,16 @@ export async function executeAllChecks(
   let checksRestored = nothing;
   let hooksStarted = false;
   const restore = (report = false) => restoreCheckWorktree(k, scope, repository.worktree!, before, report);
-  const live = await hooksObj.observeSetup(scope, checks, state, signal, env, "before-checks", restore, ownsPlace);
+  const live = await hooksObj.observeSetup({
+    scope,
+    checks,
+    state,
+    signal,
+    env,
+    position: "before-checks",
+    restore,
+    ownsPlace,
+  });
   if (signal.aborted || k.stopped) throw new Aborted();
   if (live.outcome.kind !== "verified") return evidence.blocked(scope, live, "setup");
   if (!live.valid()) return evidence.blocked(scope, live, "inputs-changed");
@@ -439,10 +480,18 @@ export async function executeAllChecks(
   if (!kept || !evidence.matchesEnvironment(scope, live, kept)) kept = await hooksObj.savedProductResults(scope, checks, state, live);
   const beforeStart = () => live.valid();
   try {
-    const ran = kept ?? (await runChecks(
-      repository.worktree, checks, env, k.options.checkTimeoutMs, signal, join(k.dataDir, "checks", task.id),
-      undefined, (event) => progress(`check-${event.index}`, event), machineRecordsOf(k), undefined, undefined, beforeStart, k.options.runCheckCommand,
-    ));
+    const ran = kept ?? (await runCheckBatch({
+      cwd: repository.worktree,
+      checks,
+      env,
+      timeoutMs: k.options.checkTimeoutMs,
+      signal,
+      logDirectory: join(k.dataDir, "checks", task.id),
+      onProgress: (event) => progress(`check-${event.index}`, event),
+      machineRecords: machineRecordsOf(k),
+      beforeStart,
+      executeCommand: k.options.runCheckCommand,
+    }));
     if (kept) {
       const shown = new Set<number>();
       kept.forEach((run) => {
@@ -483,7 +532,16 @@ export async function executeAllChecks(
   k.commit();
   const ranAnything = (!nothing && !kept) || hooksStarted || Boolean(state.setup?.requirements.length);
   const finalState = await captureFinalCheckDefinition(k, scope, required ? checksFor(required, repository.worktree) : checks, state, ranAnything);
-  const after = await hooksObj.observeSetup(scope, checks, finalState, signal, env, "after-checks", restore, ownsPlace);
+  const after = await hooksObj.observeSetup({
+    scope,
+    checks,
+    state: finalState,
+    signal,
+    env,
+    position: "after-checks",
+    restore,
+    ownsPlace,
+  });
   if (signal.aborted || k.stopped) {
     noteStoppedCheckRun(k, scope, results, entries);
     throw new Aborted();

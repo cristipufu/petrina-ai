@@ -27,11 +27,12 @@ export function conventions(files: ReadonlyMap<string, string>): string[] {
     if (!isSource(file)) continue;
     const workspace = workspaceOf(file);
     const production = !!workspace && file.startsWith(`${workspace}/src/`) && !isTest(file);
+    const inTestTree = !!workspace && file.startsWith(`${workspace}/test/`);
     const engine = file.startsWith("packages/engine/test/");
     const native = TEST_WORKSPACES.some(
       (entry) => entry.runner === "bun" && file.startsWith(`${entry.path}/test/`),
     );
-    if (!production && !native && !isTest(file)) continue;
+    if (!production && !inTestTree && !native && !isTest(file)) continue;
 
     if (production) {
       const lines = countLines(source);
@@ -72,6 +73,14 @@ export function conventions(files: ReadonlyMap<string, string>): string[] {
       const detail = error instanceof Error ? error.message : String(error);
       errors.push(`${file}: cannot parse test source: ${detail}`);
       continue;
+    }
+
+    if (!file.endsWith(".d.ts")) {
+      for (const line of facts.anyTypes) {
+        errors.push(
+          `${file}:${line}: avoid 'any' in test source; use 'unknown', concrete domain types, or typed fixture shapes`,
+        );
+      }
     }
 
     if (engine) errors.push(...engineConstructionBoundaries(file, facts.engineConstructions));

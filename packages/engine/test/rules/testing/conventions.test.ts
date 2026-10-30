@@ -321,6 +321,12 @@ it("rejects TypeScript any keywords in production source while ignoring comments
       "packages/test-support/src/rejections.ts",
     ),
   ).toEqual([expect.stringContaining("avoid 'any' in production source")]);
+  expect(
+    found(
+      "export const row = (input: unknown) => input as any;\n",
+      "packages/core/test/fixtures/helper.ts",
+    ),
+  ).toEqual([expect.stringContaining("avoid 'any' in test source")]);
 });
 
 it("enforces vertical statement density and 160-character structured line wrapping in production source", () => {

@@ -19,5 +19,36 @@ export default defineConfig({
     target: "safari16",
     minify: !process.env.TAURI_ENV_DEBUG,
     sourcemap: !!process.env.TAURI_ENV_DEBUG,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          const normalized = id.replaceAll("\\", "/");
+          if (normalized.includes("/packages/core/")) return "core";
+          if (!normalized.includes("/node_modules/")) return undefined;
+          if (normalized.includes("/@xyflow/") || normalized.includes("/d3-")) return "flow";
+          if (normalized.includes("/lucide-react/")) return "icons";
+          if (
+            normalized.includes("/react-markdown/")
+            || normalized.includes("/remark-")
+            || normalized.includes("/rehype-")
+            || normalized.includes("/micromark")
+            || normalized.includes("/mdast-")
+            || normalized.includes("/hast-")
+            || normalized.includes("/unist-")
+            || normalized.includes("/vfile")
+          ) {
+            return "markdown";
+          }
+          if (
+            normalized.includes("/react/")
+            || normalized.includes("/react-dom/")
+            || normalized.includes("/scheduler/")
+          ) {
+            return "react-vendor";
+          }
+          return undefined;
+        },
+      },
+    },
   },
 });

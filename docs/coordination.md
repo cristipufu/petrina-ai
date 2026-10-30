@@ -14,7 +14,7 @@ bun run petrina engine status
 bun run petrina task list --states '["needs-you","failed"]' --json
 ```
 
-Help comes from the same operation catalogue as the MCP tool descriptions and argument schemas. Groups are `engine`, `task`, `inbox`, `learning`, `review-guide`, `product`, `plan`, `journey`, `pool`, `tools`, `screen`, `analytics` and `watch`. `watch events` follows workflow events; see [Follow workflow events](#follow-workflow-events). Options use names such as `--task-id`. An inspect command also accepts its identifier immediately after the operation. Arrays and objects take JSON; boolean flags accept `true` or `false`. Output uses plain language unless `--json` is present.
+Help comes from the same operation catalogue as the MCP tool descriptions and argument schemas. Groups are `engine`, `task`, `inbox`, `learning`, `review-guide`, `product`, `plan`, `journey`, `pool`, `tools`, `screen`, `analytics`, `validation` and `watch`. `watch events` follows workflow events; see [Follow workflow events](#follow-workflow-events). Options use names such as `--task-id`. An inspect command also accepts its identifier immediately after the operation. Arrays and objects take JSON; boolean flags accept `true` or `false`. Output uses plain language unless `--json` is present.
 
 A delivery decision with failed or unverified product checks offers `inbox rerun-checks` or `inbox changes`, never delivery approval. Reruns use the inspected revision and durable request reference, execute fresh checks without granting another automatic repair allowance, and resume the remaining workflow only after a pass. Inspect the next decision separately before approving delivery.
 

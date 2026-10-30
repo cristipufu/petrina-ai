@@ -26,7 +26,7 @@ import {
 } from "@petrina/repositories/check-environment";
 import * as git from "@petrina/repositories/git";
 import { livePowerRecords, type MachineRecords } from "./check-interruption.js";
-import { checksFor, expectedCheckCommands, runChecks } from "./checks.js";
+import { checksFor, expectedCheckCommands, runCheckBatch } from "./checks.js";
 import { Aborted, SourceRefreshRequired, type Kernel } from "./kernel.js";
 import { WaitingForUsage } from "./usage.js";
 
@@ -180,18 +180,23 @@ export function buildCheckSetupInput(state: CheckState): CheckSetupInput {
   };
 }
 
+export interface ObserveCheckSetupRequest {
+  scope: RepositoryContext;
+  checks: readonly ProductCheck[];
+  state: CheckState;
+  signal: AbortSignal;
+  env: NodeJS.ProcessEnv;
+  position: CheckSetupAttempt["position"];
+  restore?: () => Promise<void>;
+  ownsPlace?: () => boolean;
+}
+
 export async function observeProductCheckSetup(
   k: Kernel,
   captureState: (scope: RepositoryContext, checks: readonly ProductCheck[]) => Promise<CheckState>,
-  scope: RepositoryContext,
-  checks: readonly ProductCheck[],
-  state: CheckState,
-  signal: AbortSignal,
-  env: NodeJS.ProcessEnv,
-  position: CheckSetupAttempt["position"],
-  restore?: () => Promise<void>,
-  ownsPlace: () => boolean = () => false,
+  requestOptions: ObserveCheckSetupRequest,
 ): Promise<LiveSetup> {
+  const { scope, checks, state, signal, env, position, restore, ownsPlace = () => false } = requestOptions;
   const { task, work } = scope;
   const input = buildCheckSetupInput(state);
   const invalidation = state.invalidationId;
@@ -246,21 +251,17 @@ export async function observeProductCheckSetup(
       if (!valid() || !admitted()) {
         return { kind: "not-started", reason: stopped.aborted ? "cancelled" : !valid() ? "inputs-changed" : "admission-lost" };
       }
-      const runs = await runChecks(
-        work.worktree!,
-        [{ name: requirement.name, argv: [...requirement.argv] }],
+      const runs = await runCheckBatch({
+        cwd: work.worktree!,
+        checks: [{ name: requirement.name, argv: [...requirement.argv] }],
         env,
-        k.options.checkTimeoutMs,
-        stopped,
-        join(k.dataDir, "checks", task.id),
-        undefined,
-        undefined,
-        machineRecordsOf(k),
-        undefined,
-        undefined,
-        () => valid() && admitted(),
-        k.options.runCheckCommand,
-      );
+        timeoutMs: k.options.checkTimeoutMs,
+        signal: stopped,
+        logDirectory: join(k.dataDir, "checks", task.id),
+        machineRecords: machineRecordsOf(k),
+        beforeStart: () => valid() && admitted(),
+        executeCommand: k.options.runCheckCommand,
+      });
       return runs[0]
         ? { kind: "recorded", run: runs[0] }
         : { kind: "not-started", reason: stopped.aborted ? "cancelled" : "admission-lost" };

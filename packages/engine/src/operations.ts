@@ -16,7 +16,19 @@ const state = z.enum(["backlog", "queued", "running", "waiting", "needs-you", "p
 const delivery = z.enum(["pull-request", "release", "local"]);
 const filter = { productId: id.optional(), taskId: id.optional(), search: z.string().max(200).optional() };
 const wait = { wait: z.boolean().default(false), timeoutMs: z.number().int().min(0).max(3600000).default(30000) };
-function op(name: string, description: string, fields: z.ZodRawShape, changes = false) {
+export interface OperationFlags {
+  readonly longWait?: "always" | "when-requested";
+  readonly submissionReceipt?: boolean;
+  readonly schedulesOn?: "completed" | "pending";
+}
+
+function op<const N extends string, const C extends boolean = false>(
+  name: N,
+  description: string,
+  fields: z.ZodRawShape,
+  changes: C = false as C,
+  flags: OperationFlags = {},
+) {
   return {
     name,
     description,
@@ -34,13 +46,14 @@ function op(name: string, description: string, fields: z.ZodRawShape, changes = 
       })
       .strict(),
     changes,
+    ...flags,
   };
 }
 export const OPERATIONS = [
   op("engine.status", "Inspect engine health, saved scheduling preference, lifecycle progress, active work and drain blockers. Never starts an engine.", {}),
-  ...["start", "pause", "resume", "stop", "restart"].map((name) =>
+  ...(["start", "pause", "resume", "stop", "restart"] as const).map((name) =>
     op(
-      `engine.${name}`,
+      `engine.${name}` as const,
       name === "pause"
         ? "Save paused scheduling and close every new admission. Current steps finish; --wait waits for agents, checks, delivery and cleanup. A later resume, stop or restart supersedes this drain wait. Task pause interrupts instead."
         : name === "resume"
@@ -67,6 +80,7 @@ export const OPERATIONS = [
       backlog: z.boolean().optional().describe("Save for coordinator review without starting agents. Queueing it later is a separate explicit action."),
     },
     true,
+    { schedulesOn: "completed" },
   ),
   op("task.list", "List current task summaries, including backlog; filter before pagination. Finished-only state filters use paged history instead. Read all finished work with task.history. Default 25, maximum 100.", {
     ...filter,
@@ -102,7 +116,7 @@ export const OPERATIONS = [
     image: z.string().trim().min(1).max(300).regex(/^[A-Za-z0-9][A-Za-z0-9_.:@/+-]*$/),
     argv: z.array(z.string().max(8000).refine(word => !word.includes("\0"))).min(1).max(100).refine(words => !!words[0]?.trim() && words.join(" ").length <= 16000),
     ...wait,
-  }, true),
+  }, true, { longWait: "when-requested", schedulesOn: "pending" }),
   op(
     "validation.inspect",
     "Read an extra run by its original request reference, including its exact saved version, state, image and outcome. Never product-check evidence.",
@@ -162,9 +176,9 @@ export const OPERATIONS = [
       ...evidence
     },
   ),
-  ...["hold", "unhold", "pause", "resume", "cancel"].map((name) =>
+  ...(["hold", "unhold", "pause", "resume", "cancel"] as const).map((name) =>
     op(
-      `task.${name}`,
+      `task.${name}` as const,
       name === "pause"
         ? "Interrupt the task's current agents using existing task-pause semantics. Pool pause instead lets admitted steps finish."
         : `${name[0]!.toUpperCase()}${name.slice(1)} one task using the engine's existing rules.`,
@@ -194,6 +208,7 @@ export const OPERATIONS = [
       reason: z.string().describe("Required reason between 1 and 1,000 characters.")
     },
     true,
+    { schedulesOn: "completed" },
   ),
   op(
     "task.track-finding",
@@ -206,6 +221,7 @@ export const OPERATIONS = [
     "Change an unstarted task's source and destination using existing source validation. Inspect its plan request again before approval.",
     { ...task, choice: WorkChoiceSchema },
     true,
+    { submissionReceipt: true },
   ),
   op(
     "task.message",
@@ -329,7 +345,13 @@ export const OPERATIONS = [
     decision,
     true
   ),
-  op("inbox.retry", "Retry the inspected stuck item, including existing tool-readiness checks. Cannot approve checkpoints.", decision, true),
+  op(
+    "inbox.retry",
+    "Retry the inspected stuck item, including existing tool-readiness checks. Cannot approve checkpoints.",
+    decision,
+    true,
+    { submissionReceipt: true }
+  ),
   op(
     "inbox.recovery",
     "Make an existing delivery recovery decision. Mark done records an unconfirmed delivery, not successful publishing.",
@@ -411,6 +433,8 @@ export const OPERATIONS = [
       limit: z.number().int().min(1).max(100).default(25),
       timeoutMs: wait.timeoutMs,
     },
+    false,
+    { longWait: "always" },
   ),
   op(
     "watch.wait",
@@ -426,7 +450,19 @@ export const OPERATIONS = [
       timeoutMs: wait.timeoutMs,
       ...page,
     },
+    false,
+    { longWait: "always" },
   ),
 ] as const;
 export const operation = (name: string) => OPERATIONS.find((entry) => entry.name === name);
 export type Operation = (typeof OPERATIONS)[number];
+export type OperationName = Operation["name"];
+export type MutationOperationName = Extract<Operation, { changes: true }>["name"];
+export type QueryOperationName = Extract<Operation, { changes: false }>["name"];
+
+export function allowsLongWait(name: string, args: unknown): boolean {
+  const spec = operation(name);
+  if (!spec?.longWait) return false;
+  if (spec.longWait === "always") return true;
+  return typeof args === "object" && args !== null && "wait" in args && (args as { wait?: unknown }).wait === true;
+}

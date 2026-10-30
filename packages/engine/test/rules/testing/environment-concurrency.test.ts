@@ -79,7 +79,7 @@ it("keeps private shadowed process and mutator objects out of the global environ
   for (const body of [
     `const process = { env: { PATH: "private" } }; process.env.PATH = "changed";`,
     `function helper(process: { env: Record<string, string> }) { process.env.PATH = "private"; }`,
-    `try { throw {}; } catch (process) { (process as any).env.PATH = "private"; }`,
+    `try { throw {}; } catch (process) { (process as { env: Record<string, string> }).env.PATH = "private"; }`,
     `const Object = { assign(target: unknown, source: unknown) { return { target, source }; } }; Object.assign(process.env, { PATH: "private" });`,
     `const Reflect = { set(target: unknown, key: string, value: unknown) { return { target, key, value }; } }; Reflect.set(process.env, "PATH", "private");`,
     `const globalThis = { process: { env: { PATH: "private" } } }; globalThis.process.env.PATH = "changed";`,
@@ -88,23 +88,24 @@ it("keeps private shadowed process and mutator objects out of the global environ
 
 it("does not let a shadow in one scope hide the real global write in another", () => {
   for (const shadow of [
-    `function privateProcess(process: any) { process.env.PATH = "private"; }`,
-    `function privateObject(Object: any) { Object.assign(process.env, { PATH: "private" }); }`,
-    `function privateReflect(Reflect: any) { Reflect.set(process.env, "PATH", "private"); }`,
+    `function privateProcess(process: { env: Record<string, string> }) { process.env.PATH = "private"; }`,
+    `function privateObject(Object: { assign: (target: unknown, source: unknown) => void }) { Object.assign(process.env, { PATH: "private" }); }`,
+    `function privateReflect(Reflect: { set: (target: unknown, key: string, value: unknown) => void }) { Reflect.set(process.env, "PATH", "private"); }`,
     `class Private { static { const process = { env: { PATH: "private" } }; process.env.PATH = "private"; } }`,
     `namespace Private { const process = { env: { PATH: "private" } }; process.env.PATH = "private"; }`,
   ]) expect(errors(`import { it } from "bun:test"; ${shadow}
     it.concurrent("parallel", () => { process.env.PATH = "worker"; });`)).toEqual([expect.stringContaining("concurrent tests cannot change process.env")]);
-  expect(errors(`import { it } from "bun:test"; it.concurrent("parallel", (process: any) => {
+  expect(errors(`import { it } from "bun:test"; it.concurrent("parallel", (process: unknown) => {
+    void process;
     globalThis.process.env.PATH = "worker";
   });`)).toEqual([expect.stringContaining("concurrent tests cannot change process.env")]);
 });
 
 it("does not mistake shadowed test function or namespace parameters for registrations", () => {
-  expect(errors(`import { it } from "bun:test"; function helper(it: any) {
+  expect(errors(`import { it } from "bun:test"; function helper(it: { concurrent: (name: string, fn: () => void) => void }) {
     it.concurrent("private callback", () => { process.env.PATH = "private"; });
   } it("serial", () => {});`)).toEqual([]);
-  expect(errors(`import * as testing from "bun:test"; function helper(testing: any) {
+  expect(errors(`import * as testing from "bun:test"; function helper(testing: { it: { concurrent: (name: string, fn: () => void) => void } }) {
     testing.it.concurrent("private callback", () => { process.env.PATH = "private"; });
   } testing.it("serial", () => {});`)).toEqual([]);
 });

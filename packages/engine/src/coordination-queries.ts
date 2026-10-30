@@ -21,7 +21,14 @@ import {
 import type { Engine } from "./engine.js";
 import { paginate, readText } from "./evidence-read.js";
 import { readExactInput } from "./exact-input.js";
+import { ImmutableEvidenceChangedError } from "./immutable-file.js";
+import type { QueryOperationName } from "./operations.js";
 import { readReviewInput } from "./review-context.js";
+
+export type DirectQueryName = "engine.status" | "watch.events" | "watch.wait";
+export type DelegatedQueryName = Exclude<QueryOperationName, DirectQueryName>;
+type PreCheckQueryName = "validation.inspect" | "validation.log" | "watch.event" | "analytics.inspect";
+type StandardQueryName = Exclude<DelegatedQueryName, PreCheckQueryName>;
 
 type PreCheckQueryHandler = (engine: Engine, args: CoordinationArgs) => Result | Promise<Result>;
 
@@ -36,7 +43,7 @@ interface CoordinationQueryContext {
 
 type CoordinationQueryHandler = (context: CoordinationQueryContext) => Result | Promise<Result>;
 
-const PRE_CHECK_QUERY_HANDLERS: Readonly<Record<string, PreCheckQueryHandler>> = {
+const PRE_CHECK_QUERY_HANDLERS: Readonly<Record<PreCheckQueryName, PreCheckQueryHandler>> = {
   "validation.inspect": (engine, args) => {
     const result = args.requestId ? engine.extraValidations.get(args.requestId) : undefined;
     if (!result) {
@@ -132,7 +139,7 @@ const inspectInboxItem: CoordinationQueryHandler = async ({ engine, name, state,
   );
 };
 
-export const QUERY_HANDLERS: Readonly<Record<string, CoordinationQueryHandler>> = {
+export const QUERY_HANDLERS: Readonly<Record<StandardQueryName, CoordinationQueryHandler>> = {
   "task.history": ({ engine, args }) => queryHistoryOrFinishedTasks(engine, args),
   "task.list": ({ engine, name, state, args }) => {
     if (args.states?.some((taskState) => taskState === "done" || taskState === "cancelled")) {
@@ -311,7 +318,7 @@ export const QUERY_HANDLERS: Readonly<Record<string, CoordinationQueryHandler>> 
           { evidence: "recorded", digest: ref.digest },
         ),
       (error) => ({
-        outcome: /changed/.test(String(error)) ? ("changed" as const) : ("unavailable" as const),
+        outcome: error instanceof ImmutableEvidenceChangedError ? ("changed" as const) : ("unavailable" as const),
         message: "The saved blind-review evidence is missing or changed. No newer evidence is substituted.",
       }),
     );
@@ -460,7 +467,7 @@ export async function executeCoordinationQuery(
   name: string,
   args: CoordinationArgs,
 ): Promise<Result> {
-  const preCheck = PRE_CHECK_QUERY_HANDLERS[name];
+  const preCheck = (PRE_CHECK_QUERY_HANDLERS as Readonly<Record<string, PreCheckQueryHandler | undefined>>)[name];
   if (preCheck) {
     return preCheck(engine, args);
   }
@@ -482,7 +489,7 @@ export async function executeCoordinationQuery(
   if (args.productId && !product && name !== "journey.check") {
     return { outcome: "missing", message: "That product does not exist." };
   }
-  const handler = QUERY_HANDLERS[name];
+  const handler = (QUERY_HANDLERS as Readonly<Record<string, CoordinationQueryHandler | undefined>>)[name];
   if (!handler) {
     return { outcome: "invalid", message: "This read is not available." };
   }
