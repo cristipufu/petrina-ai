@@ -2,7 +2,7 @@ import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { checkProblem } from "@petrina/core";
+import { checkProblem, type ExtraValidation } from "@petrina/core";
 import { completeCheckExecution } from "@petrina/test-support/check-execution-facts";
 import { executionFor } from "@petrina/orchestrator";
 import { preparedServiceExtraFixture as extraFixture, extraFixture as nativeExtraFixture } from "../../extra-fixtures.js";
@@ -18,8 +18,15 @@ describe.skipIf(process.platform === "win32")("required extra validation shares 
     f.engine.extraRecovery = true;
     const first = await f.submit("pre-register-first");
     const second = await f.submit("pre-register-second", ["probe", "pass"], secondTask.id);
-    expect([first.queuePosition, second.queuePosition]).toEqual([1, 2]);
+    // While recovery keeps them out of the line they have no place, only the recovery wait.
+    expect([first.queuePosition, second.queuePosition]).toEqual([undefined, undefined]);
+    expect(first.waitingReason).toContain("confirms an earlier validation stopped");
+    expect(f.engine.checkQueue.waiting).toBe(0);
     f.engine.extraRecovery = false;
+    f.engine.extraValidations.pump();
+    const places = [first, second].map(record => (f.engine.extraValidations.get(record.requestId)!.validation as ExtraValidation).queuePosition);
+    expect(places).toEqual([1, 2]);
+    expect(f.engine.checkQueue.waiting).toBe(2);
     f.engine.cancel(f.task.id); f.engine.cancel(secondTask.id);
     const other = await f.coordination.call("pool.limit", { limit: 2, requestId: "pool-change" });
     expect(other.outcome).toBe("completed");

@@ -54,6 +54,8 @@ export interface JourneyNode {
   result?: JourneyStep["result"];
   agentInputs?: JourneyStep["agentInputs"];
   productChecks?: JourneyStep["productChecks"];
+  /** Why each fresh check run on this step was needed, as recorded then. */
+  checkReasons?: JourneyStep["checkReasons"];
   builderConversation?: JourneyStep["builderConversation"];
   builderReturn?: JourneyStep["builderReturn"];
   /** `petrina`: what Petrina did. */
@@ -286,6 +288,7 @@ export function journeyView(task: Task, ctx: JourneyContext): JourneyView {
       ...(step.result ? { result: step.result } : {}),
       ...(step.agentInputs ? { agentInputs: step.agentInputs } : {}),
       ...(step.productChecks ? { productChecks: step.productChecks } : {}),
+      ...(step.checkReasons ? { checkReasons: step.checkReasons } : {}),
       ...(step.builderReturn ? { builderReturn: step.builderReturn } : {}),
       ...(step.builderConversation ? { builderConversation: step.builderConversation } : {}),
       ...(step.work ? { work: step.work } : {}),

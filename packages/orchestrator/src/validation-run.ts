@@ -23,6 +23,7 @@ export class ValidationRun {
     try {
       // Admission saves are preparation too: failure before launch must retain a truthful not-run outcome.
       record.state = "preparing";
+      delete record.queuePosition;
       this.host.persist();
       record.container = await this.effects.prepare(record);
       if (admitted()) {

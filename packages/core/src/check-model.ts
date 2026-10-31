@@ -199,3 +199,70 @@ export interface CheckRun {
   /** Petrina could not obtain a process-tree snapshot while stopping this command. */
   cleanupIncomplete?: boolean;
 }
+
+/**
+ * What a task's check run is doing. `preparing`: getting the work ready, before joining the line.
+ * `waiting`: in the line behind other runs. `held`: in the line while a cleanup or recovery hold keeps
+ * every run from starting. `paused`: keeping its place while the pool is paused. `starting`: admitted,
+ * before its first command. `running`: commands running. `finishing`: its commands ended, results settling.
+ */
+export type CheckPhase = "preparing" | "waiting" | "held" | "paused" | "starting" | "running" | "finishing";
+
+/** Who holds or waits for a place in the check line: a task's ordinary checks, or one extra validation. */
+export interface CheckLineOwner {
+  taskId: Id;
+  /** The task's title when the fact was written, so an owner that has left the board keeps its name. */
+  title: string;
+  /** Named only for a task with several products. */
+  productName?: string;
+  kind: "checks" | "extra";
+  /** An extra validation's own name. Ordinary checks are named from their own task's activity when read. */
+  name?: string;
+}
+
+/** A place Petrina keeps until it confirms an extra validation stopped. Every waiting run stays held meanwhile. */
+export interface CheckLineHold {
+  /** `cleanup`: the validation's cleanup is unconfirmed. `recovery`: after a restart, Petrina is confirming an earlier validation stopped. */
+  kind: "cleanup" | "recovery";
+  owner: CheckLineOwner;
+  /** The recorded cleanup explanation, word for word. */
+  detail?: string;
+}
+
+export interface CheckActivity {
+  phase: CheckPhase;
+  productId?: Id;
+  /** When this run began preparing, or joined the line. */
+  since: number;
+  /** Whole runs waiting ahead of this one: real members of the line only, never commands or test workers. */
+  ahead?: number;
+  /** This run's place: the runs holding or waiting for a place before it, plus one. */
+  place?: number;
+  /** How many check runs Petrina allows at once. */
+  slots: number;
+  /** Who holds each running place now, while this run waits. */
+  owners?: readonly CheckLineOwner[];
+  /** Holds that keep every waiting run from starting. */
+  holds?: readonly CheckLineHold[];
+  /** This run's own commands running now. */
+  running?: readonly string[];
+}
+
+export type CheckPurpose = "acceptance" | "review" | "delivery-check" | "publishing";
+
+/** Why a fresh check run is needed, captured when the saved run was found not to cover the current code. */
+export interface CheckRunReason {
+  /** The run it explains, on its journey step. */
+  attemptId?: string;
+  purpose: CheckPurpose;
+  productId?: Id;
+  /** The latest earlier run of this product's checks, when there was one. */
+  earlier?: { nodeId?: Id; attemptId?: string; sha?: string; tree?: string; passed: boolean; at: number };
+  /**
+   * What differs from it. `code`: another commit or tree. `start`: the task's starting point (main moved on), when
+   * both runs recorded it. `definitions`: the check commands or hook inputs. `hooks`: unchanged code whose commit
+   * hooks must run again. `edits`: uncommitted changes in the working copy. `incomplete`: the earlier run did not finish.
+   * `requested`: the coordinator asked for fresh verification (Try again, Run checks again).
+   */
+  changed: readonly ("code" | "start" | "definitions" | "hooks" | "edits" | "incomplete" | "requested")[];
+}

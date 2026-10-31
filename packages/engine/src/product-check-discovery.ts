@@ -6,11 +6,14 @@ import {
   openStep,
   originalCheck,
   runtimeWaitHolds,
+  type CheckActivity,
   type CheckRun,
+  type DeepMutable,
   type Id,
   type ProductCheck,
 } from "@petrina/core";
 import { acquireCheckPlace, scopesFor, taskView, type RepositoryContext } from "@petrina/orchestrator";
+import { lineActivity, sameActivity } from "./check-activity.js";
 import { powerInterruption, readMachineRecords } from "./check-interruption.js";
 import { CHECKS_SEEN, checksFingerprint, commandText, detectChecks } from "./checks.js";
 import type { Context } from "./context.js";
@@ -94,34 +97,43 @@ export async function acquireCheckTurnToRun(
   scope: RepositoryContext,
   signal: AbortSignal,
   order = k.checkQueue.reserveOrder(),
+  since = Date.now(),
+  showActivity: (task: RuntimeTask, activity: CheckActivity, changed?: boolean) => void = () => {},
+  clearActivity: (task: RuntimeTask) => void = () => {},
 ): Promise<(() => void) & { waited: boolean }> {
   const { task } = scope;
   if (signal.aborted || k.stopped) throw new Aborted();
   if (runtimeWaitHolds(task)) throw new WaitingForUsage(k.taskAdmissionWait(task));
+  const productId = scope.work.productId;
   let waitingForPool = false;
-  const resume = (words: string) => {
+  const resume = (activity: CheckActivity) => {
     const wasPaused = waitingForPool && task.state === "waiting";
     waitingForPool = false;
-    if (!wasPaused && task.statusLine === words) return;
     if (wasPaused) {
       task.state = "running";
       task.column = k.columnFor(task);
     }
-    task.statusLine = words;
-    k.commit();
+    // The state, the fact and its line are saved together, so the resume is observed with its current words.
+    showActivity(task, activity, wasPaused);
   };
+  // Every change in the line refreshes this run's fact: its place, the runs ahead, owners and holds.
   const onWait = (closed?: string) => {
     if (signal.aborted || k.stopped || runtimeWaitHolds(task) || !["running", "waiting"].includes(task.state)) return;
-    if (closed) {
+    const activity = lineActivity(k, order, since, productId);
+    if (closed && activity.phase === "paused") {
       waitingForPool = true;
+      const changed = !sameActivity(task.checkActivity, activity);
+      task.checkActivity = activity as DeepMutable<CheckActivity>;
       if (task.state !== "waiting" || task.statusLine !== closed) k.waitForUsage(task, closed);
+      else if (changed) k.commit(task);
     } else {
-      resume(k.extraCheckBlocker?.() ?? "Waiting to run the checks: another task's run comes first");
+      resume(activity);
     }
   };
   k.waitingChecks.set(task.id, (k.waitingChecks.get(task.id) ?? 0) + 1);
   try {
     return await acquireCheckPlace(k.checkQueue, signal, order, {
+      owner: { taskId: task.id, productId, kind: "checks" },
       stopped: () => k.stopped,
       prerequisite: () => runtimeWaitHolds(task),
       closed: () => k.taskAdmissionsClosed(task),
@@ -130,9 +142,13 @@ export async function acquireCheckTurnToRun(
       subscribe: (changed) => k.subscribe(changed),
       onWait,
       admitted: () => {
-        if (waitingForPool) resume("Preparing the product's checks");
+        resume({ phase: "starting", productId, since, slots: k.checkQueue.view().limit });
       },
     });
+  } catch (error) {
+    // Leaving the line without a place leaves no check fact behind.
+    clearActivity(task);
+    throw error;
   } finally {
     const left = k.waitingChecks.get(task.id)! - 1;
     if (left) k.waitingChecks.set(task.id, left);

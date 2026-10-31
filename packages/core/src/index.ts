@@ -56,6 +56,7 @@ export * from "./limit-history-view.js";
 export * from "./runtime-wait.js";
 
 export * from "./extra-validation.js";
+export * from "./check-activity.js";
 export * from "./review-evidence.js";
 export * from "./related-check-contract.js";
 

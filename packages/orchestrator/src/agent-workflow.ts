@@ -1,4 +1,5 @@
 import {
+  checkActivityLine,
   runtimeWaitHolds,
   syncRuntimeWait,
   AFTER_WORDS,
@@ -299,6 +300,7 @@ export class AgentWorkflow {
       task.state = "waiting";
       task.holdsSlot = false;
       delete task.agent;
+      delete task.checkActivity;
       task.column = this.host.column(task);
       task.statusLine = waiting;
       // Without a place, a saved participant's uncertain tool is still checked once.
@@ -314,10 +316,24 @@ export class AgentWorkflow {
     if (next) task.agent = { ...next, since: this.host.now(), step: 0 };
     else delete task.agent;
     task.column = this.host.column(task);
-    task.statusLine = preparing ? "Preparing the product's checks" : next ? `${this.catalog.role(
-      next.roleId,
-      task
-    )?.name ?? next.roleId} is starting` : "Getting ready";
+    // Automated checks come before this step: they are its current work until its agent starts.
+    // A returning Check finder keeps its normal agent admission, but still prepares the checks.
+    const checking = preparing || (!!next && this.catalog.role(next.roleId, task)?.result === "check-discovery");
+    if (checking) {
+      task.checkActivity = {
+        phase: "preparing",
+        productId: executionFor(task).work.productId,
+        since: this.host.now(),
+        slots: this.checks.slots?.() ?? 1,
+      };
+    } else {
+      delete task.checkActivity;
+    }
+    task.statusLine = checking
+      ? checkActivityLine(task.checkActivity!)
+      : next
+        ? `${this.catalog.role(next.roleId, task)?.name ?? next.roleId} is starting`
+        : "Getting ready";
     return true;
   }
 

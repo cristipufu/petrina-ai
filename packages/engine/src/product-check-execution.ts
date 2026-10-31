@@ -1,8 +1,8 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
-  beginPetrinaStep, checkOutcome, checkResult, endPetrinaStep,
-  openStep, runtimeWaitHolds, type CheckAttemptEvidence, type CheckRun,
+  beginPetrinaStep, checkActivityLine, checkOutcome, checkResult, endPetrinaStep,
+  openStep, runtimeWaitHolds, type CheckActivity, type CheckAttemptEvidence, type CheckRun, type CheckRunReason,
   type DeepMutable, type Id, type JourneyCheckReuse, type JourneyProductCheck, type ProductCheck,
 } from "@petrina/core";
 import {
@@ -13,7 +13,7 @@ import * as git from "@petrina/repositories/git";
 import {
   checksFor, commandText, orderedChecks, runCheckBatch, staticCheck, type CheckProgress,
 } from "./checks.js";
-import { Aborted, SourceRefreshRequired, type Kernel } from "./kernel.js";
+import { Aborted, SourceRefreshRequired, type Kernel, type RuntimeTask } from "./kernel.js";
 import {
   acquireCheckTurnToRun,
   cachedProductChecks,
@@ -190,7 +190,10 @@ export interface CheckBatchHooks {
   deliveryOrders: Map<Id, number>;
   claimPreparation(taskId: Id): boolean;
   releasePreparation(taskId: Id): void;
-  turnToRun(scope: RepositoryContext, signal: AbortSignal, order?: number): Promise<(() => void) & { waited: boolean }>;
+  turnToRun(scope: RepositoryContext, signal: AbortSignal, order?: number, since?: number): Promise<(() => void) & { waited: boolean }>;
+  showActivity(task: RuntimeTask, activity: CheckActivity, changed?: boolean): void;
+  showPreparing(task: RuntimeTask, productId?: Id): void;
+  reasonFor(scope: RepositoryContext, checks: readonly ProductCheck[], state: CheckState, purpose: JourneyCheckReuse["purpose"]): CheckRunReason;
   cachedChecks(scope: RepositoryContext): readonly ProductCheck[] | undefined;
   ensureChecks(scope: RepositoryContext, signal: AbortSignal): Promise<readonly ProductCheck[]>;
   captureState(scope: RepositoryContext, checks: readonly ProductCheck[]): Promise<CheckState>;
@@ -209,6 +212,7 @@ export async function executePreparedChecks(
   prepared?: CheckState,
   prepare?: CheckPreparation,
   purpose: JourneyCheckReuse["purpose"] = "acceptance",
+  reason?: CheckRunReason,
 ): Promise<CheckVerification> {
   const { k } = batch;
   const { task, work: repository } = scope;
@@ -253,6 +257,18 @@ export async function executePreparedChecks(
     }
     ] as const),
   ]);
+  // Why this run is needed, as recorded when the saved run was found not to cover the code.
+  const recordReason = () => {
+    const captured = reason;
+    if (!step || !captured) return;
+    step.checkReasons = [
+      ...(step.checkReasons ?? []).filter(
+        (entry) => entry.attemptId !== attempt.attemptId || entry.productId !== captured.productId,
+      ),
+      { ...captured, attemptId: attempt.attemptId },
+    ];
+  };
+  recordReason();
   if (step) {
     for (const check of step.productChecks ?? []) if (check.result === "pending" || check.result === "running") {
       check.result = "stopped";
@@ -285,7 +301,7 @@ export async function executePreparedChecks(
       if (!batch.preparations.has(task.id) && !batch.claimPreparation(task.id)) {
         throw new WaitingForUsage(k.taskAdmissionsClosed(task) ? k.taskAdmissionWait(task) : "Waiting for room to prepare the product checks");
       }
-      finished = nothing ? undefined : await batch.turnToRun(scope, signal, batch.deliveryOrders.get(task.id) ?? order);
+      finished = nothing ? undefined : await batch.turnToRun(scope, signal, batch.deliveryOrders.get(task.id) ?? order, attempt.queuedAt);
       if (finished?.waited || recapture || reacquired) {
         if ((finished?.waited || reacquired) && prepare) {
           let yieldedForDecision = false;
@@ -315,6 +331,7 @@ export async function executePreparedChecks(
             if (discoveries++ >= 3) throw new Error("The files defining this product's checks kept changing before they could start. Your work is preserved; try again once they are stable.");
             finished?.();
             finished = undefined;
+            batch.showPreparing(task, repository.productId);
             checks = await batch.ensureChecks(scope, signal);
             recapture = true;
             reopenChecks();
@@ -330,6 +347,12 @@ export async function executePreparedChecks(
         recapture = false;
         kept = undefined;
         reopenChecks();
+        // Admission may have refreshed the source or commands. Explain the captured run on its current step,
+        // leaving any step closed by an update or discovery unchanged.
+        if (reason) {
+          reason = batch.reasonFor(scope, checks, state, reason.purpose);
+          recordReason();
+        }
         syncPreparedCheckEntries(entries, checks, state.hooks, attempt, prefix, step);
       }
       if (!k.taskAdmissionsClosed(task)) break;
@@ -401,7 +424,9 @@ export async function executeAllChecks(
     reason: "inputs-changed",
     setup: { kind: "unobserved" }
   };
-  task.statusLine = "Running the product's checks";
+  const slots = k.checkQueue.view().limit;
+  const since = task.checkActivity?.since ?? Date.now();
+  batch.showActivity(task, { phase: "starting", productId: repository.productId, since, slots });
   if (repository.checks) repository.checks.current = false;
   k.commit();
   const before = state.sha ?? (await git.head(repository.worktree));
@@ -410,6 +435,7 @@ export async function executeAllChecks(
   const step = openStep(task);
   const provenance: DeepMutable<CheckAttemptEvidence> | undefined = attemptId && step ? {
     id: attemptId, productId: repository.productId, sha: before, tree: state.trackedChanged ? undefined : state.tree,
+    ...(repository.baseSha ? { base: repository.baseSha } : {}),
     commands: checks.filter((c) => c.argv.length).map((c) => commandText(c.argv)), definition,
   } : undefined;
   if (step && provenance) step.checkAttempts = [...(step.checkAttempts ?? []), provenance];
@@ -430,7 +456,10 @@ export async function executeAllChecks(
       if (checkOutcome(event.run).kind === "failed" && id.startsWith("check-")) check.namedFailures = namedCheckFailures(event.run.output);
     }
     const running = step!.productChecks!.filter((e) => e.result === "running").map((e) => e.name);
-    task.statusLine = running.length ? `Running checks: ${running.join(", ")}` : "Finishing the check run";
+    task.checkActivity = running.length
+      ? { phase: "running", productId: repository.productId, since, slots, running }
+      : { phase: "finishing", productId: repository.productId, since, slots };
+    task.statusLine = checkActivityLine(task.checkActivity);
     k.commit();
   };
   let results: CheckRun[];
@@ -451,7 +480,16 @@ export async function executeAllChecks(
   if (signal.aborted || k.stopped) throw new Aborted();
   if (live.outcome.kind !== "verified") return evidence.blocked(scope, live, "setup");
   if (!live.valid()) return evidence.blocked(scope, live, "inputs-changed");
+  const dropProvisionalReason = () => {
+    if (!step?.checkReasons || !attemptId) return;
+    const left = step.checkReasons.filter(
+      (entry) => entry.attemptId !== attemptId || (entry.productId !== undefined && entry.productId !== repository.productId),
+    );
+    if (left.length) step.checkReasons = left;
+    else delete step.checkReasons;
+  };
   if (kept === undefined && (await batch.ranOn(scope, checks, state)) && evidence.matchesEnvironment(scope, live, scope.work.checks?.results)) {
+    dropProvisionalReason();
     const reused = await evidence.reuse(scope, state, purpose, live, signal);
     for (const check of entries.values()) if (check.result === "pending") {
       check.result = "skipped";
@@ -475,6 +513,7 @@ export async function executeAllChecks(
     "passed",
     "failed"
   ].includes(checkOutcome(r).kind))) {
+    dropProvisionalReason();
     return evidence.retainIncomplete(scope, state, purpose, live);
   }
   if (!kept || !evidence.matchesEnvironment(scope, live, kept)) kept = await batch.savedProductResults(scope, checks, state, live);
@@ -527,6 +566,7 @@ export async function executeAllChecks(
   const rawTree = state.sha === before && state.tree ? state.tree : await git.treeOf(repository.worktree, before);
   repository.checks = {
     current: false, at: Date.now(), ...(before ? { sha: before } : {}), ...(rawTree ? { tree: rawTree } : {}),
+    ...(repository.baseSha ? { base: repository.baseSha } : {}),
     definition, results, ...(step && attemptId ? { provenance: { nodeId: step.id, attemptId } } : {}),
   };
   k.commit();

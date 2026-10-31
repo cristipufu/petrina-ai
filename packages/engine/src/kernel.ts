@@ -8,13 +8,13 @@ import { thisMachine, type FoundTerminal } from "@petrina/agent-runtime/terminal
 import type { ModelAtCapacity, UsageInfo, UsageLimited } from "@petrina/agent-runtime/usage";
 import * as library from "@petrina/core";
 import {
-  blockingDependencies, columnOf, messagePage, runtimeWaitHolds, runtimeWaitView, runtimeWaitWords, stopTaskActivity,
-  TAKE_OVER_WORDS, type AgentProfile, type CheckId, type Column, type DeepMutable, type GateKind, type HistoryPage,
-  type HistoryQuery, type Id, type InboxItem, type InboxKind, type MessagePage, type Role, type State, type StepNote,
-  type Task,
+  blockingDependencies, CHECK_WORDS, checkActivityLine, columnOf, messagePage, runtimeWaitHolds, runtimeWaitView,
+  runtimeWaitWords, stopTaskActivity, TAKE_OVER_WORDS, type AgentProfile, type CheckId, type Column, type DeepMutable,
+  type GateKind, type HistoryPage, type HistoryQuery, type Id, type InboxItem, type InboxKind, type MessagePage,
+  type Role, type State, type StepNote, type Task,
 } from "@petrina/core";
 import {
-  executionOf, pauseAgentStep, resumeAgentAfterReply, StepOwnership, waitForAgentUsage,
+  executionFor, executionOf, pauseAgentStep, resumeAgentAfterReply, StepOwnership, waitForAgentUsage,
   type AgentAdmissionDependencies, type AgentSession, type GitHubService, type ParticipantAdmission, type RepositoryContext,
 } from "@petrina/orchestrator";
 import { localFiles, type FileOperations } from "@petrina/platform/file-operations";
@@ -135,12 +135,11 @@ export abstract class Kernel {
   readonly backgroundWork = new Set<Promise<unknown>>();
   readonly checkQueue = new CheckQueue(
     () => this.options.checkRuns ?? 1,
-    () => (this.admissionsClosed ? (this.draining ? this.drainLine : "Waiting for the pool to resume") : undefined),
+    () => (this.admissionsClosed ? this.closedLine : undefined),
     () => this.draining || this.stopped,
   );
   readonly waitingChecks = new Map<Id, number>();
   extraRecovery = false;
-  extraCheckBlocker?: () => string | undefined;
   extraChecksActive?: () => boolean;
   readonly boot = randomBytes(6).toString("hex");
   readonly settling = new Map<Id, Promise<void>>();
@@ -227,7 +226,16 @@ export abstract class Kernel {
 
   taskAdmissionWait(task: RuntimeTask): string {
     if (runtimeWaitHolds(task)) return runtimeWaitWords(runtimeWaitView(task, (id) => this.taskDetails(id))!);
-    return this.draining ? this.drainLine : "Waiting for the pool to resume";
+    return this.closedLine;
+  }
+
+  /** Why admissions are closed: stopping, a paused pool, or a restart's recovery hold, which is not a paused pool. */
+  get closedLine(): string {
+    return this.draining
+      ? this.drainLine
+      : this.extraRecovery && !this.s.pool.paused && !this.stopped
+        ? CHECK_WORDS.recovery
+        : "Waiting for the pool to resume";
   }
 
   taskStepStarted(task: RuntimeTask): boolean { return this.stepOwnership.started(task); }
@@ -334,14 +342,32 @@ export abstract class Kernel {
   finishReviewWork(task: RuntimeTask, key: string): void { finishParallelReviewWork(this, task, key); }
   firstTime(task: RuntimeTask, clientId: Id | undefined): boolean { return markFirstClientReceipt(task, clientId); }
 
+  /** What a task without a seat waits for: its recorded prerequisites while they hold, otherwise a free slot. */
+  waitingLine(task: RuntimeTask): string {
+    return runtimeWaitHolds(task) ? this.taskAdmissionWait(task) : "Waiting for a free slot";
+  }
+
   toWaiting(task: RuntimeTask): void {
     task.state = "waiting";
-    task.statusLine = "Waiting for a free slot";
+    task.statusLine = this.waitingLine(task);
     task.column = this.columnFor(task);
   }
 
   unblock(task: RuntimeTask): void {
     resumeAgentAfterReply(task, this.s.inbox.some((item) => item.taskId === task.id && item.blocking), Date.now());
+    if (!task.holdsSlot && task.state === "waiting") {
+      task.statusLine = this.waitingLine(task);
+    } else if (task.state === "running" && this.role(task.agent?.roleId ?? "", task)?.result === "check-discovery") {
+      // An answer can continue discovery in place, without the driver's start path. Its released capacity stays released;
+      // only the current activity is restored for the agent that is still preparing checks.
+      task.checkActivity = {
+        phase: "preparing",
+        productId: executionFor(task).work.productId,
+        since: Date.now(),
+        slots: this.checkQueue.view().limit,
+      };
+      task.statusLine = checkActivityLine(task.checkActivity);
+    }
   }
 
   takeItem(itemId: Id): DeepMutable<InboxItem> | undefined { return takeKernelInboxItem(this, itemId); }

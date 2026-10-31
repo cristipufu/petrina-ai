@@ -159,7 +159,7 @@ export function TaskCard({ task, state, find, selected, queuePosition, hasDraft,
         </p>
       )}
 
-      {!queued && !finished && task.state !== "backlog" && <Pipeline task={task} onActivate={() => onOpen(task.id)} />}
+      {!queued && !finished && task.state !== "backlog" && <Pipeline task={task} roles={state.roles} onActivate={() => onOpen(task.id)} />}
 
       {screenAsk && (
         <div className="card-ask">

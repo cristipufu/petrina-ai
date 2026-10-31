@@ -75,7 +75,8 @@ for (const extra of [false, true]) for (const timing of ["before release", "duri
       f.engine.setPoolPaused(false);
       if (timing === "before release") {
         expect(productTask.state).toBe("running");
-        expect(productTask.statusLine).toBe("Waiting to run the checks: another task's run comes first");
+        expect(productTask.statusLine).toBe("Waiting for checks · next in line");
+        expect(productTask.checkActivity).toMatchObject({ phase: "waiting", ahead: 0 });
       }
       busy();
       expect(await productRun).toEqual({ failures: 0 });

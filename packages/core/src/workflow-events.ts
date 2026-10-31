@@ -105,6 +105,14 @@ export function workflowEvents(prev: WorkflowFacts | undefined, next: WorkflowFa
     if (alreadyReported) Object.assign(drafts.find((event) => event.kind === "task.waiting")!, detail);
     else push({ at: ctx.now, kind: "task.waiting", summary: next.statusLine, ...detail });
   }
+  // Entering the check line, becoming held and keeping a place through a pause each say so once, in the card's words.
+  if (next.checkWait && prev?.checkWait?.phase !== next.checkWait.phase) {
+    const { line, ...activity } = next.checkWait;
+    const detail = { wait: "checks" as const, checkActivity: activity };
+    const drafted = drafts.find((event) => event.kind === "task.state" || event.kind === "task.waiting");
+    if (drafted) Object.assign(drafted, detail);
+    else push({ at: ctx.now, kind: "task.waiting", summary: line, reason: line, ...detail });
+  }
   for (const retry of next.capacityRetries) {
     const earlier = before.capacityRetries.find((entry) => entry.key === retry.key)?.tried ?? 0;
     if (retry.tried > earlier) push({
@@ -163,10 +171,13 @@ export function workflowEvents(prev: WorkflowFacts | undefined, next: WorkflowFa
         next,
         node
       ) : undefined;
+      // A check run's recorded reason explains it better than the step that happened to end before it.
+      const why = node.checkReasons?.[0];
       push({
         at: node.startedAt,
         kind: "node.started",
-        summary: `${node.name} started${node.trigger?.reason ? `: ${node.trigger.reason}` : ""}`,
+        summary: `${node.name} started${why ? `: ${why.words}` : node.trigger?.reason ? `: ${node.trigger.reason}` : ""}`,
+        ...(why ? { checkReason: why } : {}),
         ...at,
         nodeKind: node.kind,
         ...(node.roleId ? { roleId: node.roleId } : {}),

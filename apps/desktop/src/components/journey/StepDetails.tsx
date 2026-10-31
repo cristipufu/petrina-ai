@@ -415,6 +415,8 @@ export function StepDetails({ node, task, state, find, now, onPlan, onClose, onO
           onOriginal={onOriginal}
           selectedAttempt={selectedAttempt}
           evidence={node.work === "check-reuse"}
+          {...(node.state === "now" && task.checkActivity ? { activity: task.checkActivity } : {})}
+          {...(node.checkReasons ? { reasons: node.checkReasons } : {})}
         />;
         if (checkTimeline) return <div className="journey-context">
           <h4 className="journey-section-heading"><ClipboardCheck size={16} aria-hidden="true" />Automated check results</h4>

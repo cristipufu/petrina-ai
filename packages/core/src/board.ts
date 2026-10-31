@@ -2,13 +2,19 @@
 // and the board orders cards by what they need: the coordinator first, then working, then
 // waiting, then the queue in priority order, with finished work folded away at the end.
 
-import type { Stage, Task } from "./model.js";
+import { checksCurrent } from "./check-activity.js";
+import type { Role, Stage, Task } from "./model.js";
 import { queueOf } from "./scheduler.js";
 
 export interface PipelineStep {
   /** A short name, e.g. "Build" or "Your check". */
   label: string;
   state: "done" | "current" | "next";
+  /**
+   * While Petrina's automated checks are the real current work, the current mark is named "Checks" and this is the
+   * plan step they come before ("Review"). The plan's step and stage position stay as they are.
+   */
+  before?: string;
 }
 
 const ROLE_STEP: Readonly<Record<string, string>> = {
@@ -33,9 +39,11 @@ function stepLabel(stage: Stage): string {
  * The steps a card shows, from the task's own plan: planning first, then each stage, with
  * the coordinator's design check as its own step. A plan check folds into Plan and a delivery
  * check into Ship, because those are the moments the coordinator approves them. Stages the
- * plan does not have are simply absent. Queued tasks have no pipeline yet.
+ * plan does not have are simply absent. Queued tasks have no pipeline yet. While the task's automated checks
+ * prepare, wait, run or finish before a step, the current mark is "Checks", before that step, so a reviewer
+ * or Tester is never shown at work before one has started. `roles` tells the Check finder, which only prepares them.
  */
-export function pipelineOf(task: Task): PipelineStep[] {
+export function pipelineOf(task: Task, roles?: readonly Role[]): PipelineStep[] {
   if (task.state === "queued" || task.state === "backlog") return [];
   const finished = task.state === "pr-open" || task.state === "done";
   const steps: { label: string; from: number; to: number }[] = [{ label: "Plan", from: -1, to: -1 }];
@@ -61,12 +69,13 @@ export function pipelineOf(task: Task): PipelineStep[] {
     }
     steps.push({ label, from: index, to: index });
   });
+  const checking = checksCurrent(task, roles);
   return steps.map((step) => {
     let state: PipelineStep["state"];
     if (finished || task.stageIndex > step.to) state = "done";
     else if (task.stageIndex >= step.from && !(task.state === "cancelled")) state = "current";
     else state = "next";
-    return { label: step.label, state };
+    return state === "current" && checking ? { label: "Checks", state, before: step.label } : { label: step.label, state };
   });
 }
 
@@ -110,9 +119,13 @@ export function stripOf(steps: readonly PipelineStep[]): StripItem[] {
 
 const listOf = (labels: readonly string[]) => (labels.length > 1 ? `${labels.slice(0, -1).join(", ")} and ${labels.at(-1)}` : (labels[0] ?? ""));
 
-/** A step named with where the task stands on it, for its tooltip: "Plan, done", "Build, now", "Review, next", "Plan, Design and Screens, done". */
+/**
+ * A step named with where the task stands on it, for its tooltip and keyboard label: "Plan, done", "Build, now",
+ * "Review, next", "Plan, Design and Screens, done", or "Automated checks before Review, now".
+ */
 export function stepTip(step: StripItem): string {
-  return `${step.folded ? listOf(step.folded) : step.label}, ${step.state === "current" ? "now" : step.state}`;
+  const name = step.before ? `Automated checks before ${step.before}` : step.folded ? listOf(step.folded) : step.label;
+  return `${name}, ${step.state === "current" ? "now" : step.state}`;
 }
 
 /** The step the task is on, for a card's "Build · 4 of 6". */

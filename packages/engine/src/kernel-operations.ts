@@ -87,6 +87,7 @@ export function initializeKernelState(
     renameRoles(state);
     // Nothing worked while Petrina was stopped: a step's working time ends at the last moment it saved.
     for (const task of state.tasks) {
+      delete task.checkActivity;
       pauseAgentStep(task, state.now);
       stopCheckProgress(task, state.now);
       clearRunningTools(task);

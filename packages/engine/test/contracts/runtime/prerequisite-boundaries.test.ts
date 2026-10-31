@@ -135,9 +135,12 @@ while (!existsSync(release)) await Bun.sleep(10);`);
       await waitForFile(started);
       const queuedWork = checks.runProductChecks(executionFor(second), [{ name: "Queued", argv: [process.execPath, "-e", `await Bun.write(process.argv[1], "wrong");`, unwanted] }], controller.signal);
       queued = rejectionOf(queuedWork);
-      await waitFor(() => second.statusLine.startsWith("Waiting to run the checks"), "second checks to queue");
+      await waitFor(() => second.checkActivity?.phase === "waiting", "second checks to queue");
+      expect(second.statusLine).toBe("Waiting for checks · next in line");
       hold(second);
       expect(await queued).toBeInstanceOf(WaitingForUsage);
+      // Leaving the line for prerequisites leaves no check fact behind.
+      expect(second.checkActivity).toBeUndefined();
       expect(existsSync(unwanted)).toBe(false);
       expect(first.journey?.at(-1)?.productChecks?.[0]?.result).toBe("running");
       hold(first);
@@ -258,7 +261,7 @@ while (!existsSync(release)) await Bun.sleep(10);`);
       }
       work = checks.runProductChecks(scope, [sourceCheck], controller.signal).catch(error => error);
       if (blocker) {
-        await waitFor(() => first.statusLine.startsWith("Waiting to run the checks"), "the source-sensitive checks to queue");
+        await waitFor(() => first.checkActivity?.phase === "waiting", "the source-sensitive checks to queue");
         writeFileSync(blockerRelease, "go");
         expect(nonpassingChecks(await blocker!)).toBe(0);
       }

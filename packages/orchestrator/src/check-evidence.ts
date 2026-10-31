@@ -66,6 +66,7 @@ export class CheckEvidence {
       at: this.host.now(),
       ...(before ? { sha: before } : {}),
       ...(tree ? { tree } : {}),
+      ...(repository.baseSha ? { base: repository.baseSha } : {}),
       definition,
       results,
       ...(stepId && attemptId ? { provenance: {
@@ -145,6 +146,7 @@ export class CheckEvidence {
         this.host.now()
       );
     }
+    delete task.checkActivity;
     this.host.changed();
     if (!binding || repository.checks.current === false && results.every(run => checkOutcome(run).kind === "passed")) return this.blocked(
       scope,
@@ -167,6 +169,7 @@ export class CheckEvidence {
       endPetrinaStep(scope.task, { outcome: "Checks unverified", reason: words, tone: "back" }, this.host.now());
     }
     this.host.log(scope, "warn", `${words}; delivery remains unverified and no automatic Builder turn is used`);
+    delete scope.task.checkActivity;
     this.host.changed();
     return { kind: "blocked", productId: scope.work.productId, results: scope.work.checks?.results ?? [], reason, setup: live.outcome };
   }
@@ -221,6 +224,7 @@ export class CheckEvidence {
     if (host) host.reuses = [...(host.reuses ?? []), { at: this.host.now(), purpose, productId: repository.productId, ...(saved.provenance ? { attemptId: saved.provenance.attemptId } : {}), basis: state.tree && saved.tree === state.tree ? "same-tree" : "same-commit", originalAt: saved.at, ...(saved.sha ? { sha: saved.sha } : {}), ...(saved.tree ? { tree: saved.tree } : {}), ...(saved.definition ? { definition: saved.definition } : {}), passed,
       environment: { identity: structuredClone(live.attempt.identity!), setupAttemptId: live.attempt.id } }];
     recordCheckReuse(scope.task, repository, this.host.now());
+    delete scope.task.checkActivity;
     this.host.changed();
     return this.verification(scope, saved.environment!, "reused");
   }
@@ -282,13 +286,19 @@ export class CheckEvidence {
         "unmet",
         "unavailable",
         "incomplete"
-      ].includes(outcome.kind)) return {
-        kind: "blocked",
-        productId: work.productId,
-        results: work.checks?.results ?? [],
-        reason: "setup",
-        setup: outcome
-      };
+      ].includes(outcome.kind)) {
+        if (scope.task.checkActivity) {
+          delete scope.task.checkActivity;
+          this.host.changed();
+        }
+        return {
+          kind: "blocked",
+          productId: work.productId,
+          results: work.checks?.results ?? [],
+          reason: "setup",
+          setup: outcome
+        };
+      }
     }
     if (!effects.setupRequired() && await effects.applies(state)) {
       const live = await effects.observe(state);

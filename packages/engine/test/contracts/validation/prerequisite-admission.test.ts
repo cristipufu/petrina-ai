@@ -182,6 +182,30 @@ describe.skipIf(process.platform === "win32")("required extra validation shares 
   });
 });
 
+  it("leaves a join whose save keeps failing for the next scheduling pass, without retrying it in a loop", async () => {
+  return cases.use("petrina-extra-", async owner => {
+    return await extraFixture(owner, async f => {
+      const prerequisite = await f.add();
+      f.engine.setRuntimeWait(f.task.id, [prerequisite.id], "Wait for the required fix", "looping-reentry-hold");
+      const record = await f.submit("looping-reentry", ["probe", "pass"]);
+      f.engine.setRuntimeWait(f.task.id, [], "The fix is available", "looping-reentry-clear");
+      const save = spyOn(f.engine, "commitNow").mockImplementation(() => { throw new Error("Queue re-entry save unavailable"); });
+      owner.onStop(() => save.mockRestore());
+      try {
+        expect(() => f.engine.extraValidations.pump()).toThrow("Queue re-entry save unavailable");
+        const attempts = save.mock.calls.length;
+        for (let turn = 0; turn < 20; turn++) await Promise.resolve();
+        expect(save.mock.calls.length).toBe(attempts);
+        expect(f.engine.checkQueue.waiting).toBe(0); expect(f.engine.checkQueue.running).toBe(0);
+      } finally { save.mockRestore(); }
+      f.engine.extraValidations.pump();
+      const joined = f.engine.extraValidations.get(record.requestId)!.validation as ExtraValidation;
+      expect(joined.waitingReason).toBeUndefined(); expect(joined.queuePosition).toBe(1);
+      f.engine.setPoolPaused(false); expect((await f.finished(record)).result).toBe("passed");
+    });
+  });
+});
+
   for (const restart of [false, true]) it(`joins a deferred extra run during the scheduling pass that observes landing${restart ? " after restart" : ""}`, async () => {
   return cases.use("petrina-extra-", async owner => {
     return await extraFixture(owner, async f => {const prerequisite = await f.add();
@@ -253,7 +277,7 @@ describe.skipIf(process.platform === "win32")("required extra validation shares 
       expect(f.task.runtimeWait!.releasedAt).toBeDefined();
       expect(f.engine.checkQueue.running).toBe(1);
       const joined = f.engine.extraValidations.get(record.requestId)!.validation as ExtraValidation;
-      expect(joined.waitingReason).toBeUndefined(); expect(joined.queuePosition).toBe(1);
+      expect(joined.waitingReason).toBeUndefined(); expect(joined.state).not.toBe("queued"); expect(joined.queuePosition).toBeUndefined();
       expect([joined.commit, joined.tree, joined.queueOrder, joined.queuedAt]).toEqual([record.commit, record.tree, record.queueOrder, record.queuedAt]);
       expect((await f.finished(record)).result).toBe("passed");
       expect(delivery).toHaveBeenCalledTimes(1);

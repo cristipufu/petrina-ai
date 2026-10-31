@@ -1,6 +1,6 @@
 // Task journey steps, check attempt evidence and exact prompt manifest types.
 import type { GateKind, Id, ProfileAssignment } from "./catalog-model.js";
-import type { CheckEnvironmentBinding, CheckEnvironmentIdentity, CheckRun, CheckSetupAttempt } from "./check-model.js";
+import type { CheckEnvironmentBinding, CheckEnvironmentIdentity, CheckPurpose, CheckRun, CheckRunReason, CheckSetupAttempt } from "./check-model.js";
 import type { AgentToolActivity, Finding, Hunt, MessageDelivery, Objection, ProofDecision, ReportImage, ToolInvocation } from "./review-model.js";
 import type { TurnReason } from "./worklog.js";
 import type { ReadinessRecheck } from "./readiness.js";
@@ -115,6 +115,8 @@ export interface JourneyStep {
   reuses?: readonly JourneyCheckReuse[];
   /** The product checks Petrina ran during this checks step. */
   productChecks?: readonly JourneyProductCheck[];
+  /** Why each fresh check run on this step was needed, recorded when the saved run was found not to cover the code. */
+  checkReasons?: readonly CheckRunReason[];
   /** Immutable run versions; unlike the repository's latest checks these survive subsequent runs. */
   checkAttempts?: readonly CheckAttemptEvidence[];
   /** Actual setup observations, separate from product commands and their findings. */
@@ -228,6 +230,8 @@ export interface CheckAttemptEvidence {
   productId: Id;
   sha?: string;
   tree?: string;
+  /** The task's starting point when the run was captured. Older runs did not record it. */
+  base?: string;
   /** Product commands only; hook inputs deliberately do not define a peer match. */
   commands: readonly string[];
   definition: string;
@@ -256,7 +260,7 @@ export interface JourneyCheckReuse {
   /** The original attempt on its saved journey node, when recorded. */
   attemptId?: string;
   /** What the reused evidence was for. */
-  purpose: "acceptance" | "review" | "delivery-check" | "publishing";
+  purpose: CheckPurpose;
   productId?: Id;
   /** How the unchanged code was recognized. */
   basis: "same-tree" | "same-commit";

@@ -269,6 +269,9 @@ export async function driveWorkflowTask(ctx: WorkflowDriverContext, taskId: Id, 
     ctx.host.failed(taskId, failure);
   } finally {
     ctx.checks.release(taskId);
+    // A check run lives inside this driver: none outlives it.
+    const ended = ctx.host.task(taskId);
+    if (ended) ctx.checks.clear?.(ended);
     if (ctx.host.task(taskId)?.state !== "waiting") ctx.preparedTesters.delete(taskId);
     if (ctx.ownership.drivers.get(taskId) === controller) ctx.ownership.drivers.delete(taskId);
     await ctx.phases.finish(taskId, signal);

@@ -4,6 +4,7 @@ import { executionFor } from "./repository-context.js";
 
 export interface StartupRecoveryEffects {
   readonly now?: () => number;
+  readonly waitingLine?: (task: RuntimeTask) => string;
   readonly onDroppedPermission?: (task: RuntimeTask, item: DeepMutable<InboxItem>) => void;
 }
 
@@ -45,6 +46,8 @@ export function recoverStartupWork(
   }
   const kept = inbox.filter(keep);
   for (const task of tasks) {
+    // No check run survives a restart: a resumed run writes a fresh fact from the line it joins.
+    delete task.checkActivity;
     if (task.workValidating) {
       task.workValidating = false;
       task.workError = "Validation was interrupted. Apply the saved choices to check them again.";
@@ -63,7 +66,7 @@ export function recoverStartupWork(
       || (task.state === "needs-you" && !kept.some((item) => item.taskId === task.id))
     ) {
       task.state = "waiting";
-      task.statusLine = "Waiting for a free slot";
+      task.statusLine = effects.waitingLine?.(task) ?? "Waiting for a free slot";
       delete task.agent;
     }
     task.holdsSlot = false;

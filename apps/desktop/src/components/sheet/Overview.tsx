@@ -1,17 +1,27 @@
 // The task sheet's Overview tab: who is working now, what the task is waiting for, what it used, and how it got here.
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { Monitor, User } from "lucide-react";
 import {
   builderCheckSummary,
+  checkActivityLine,
+  checkHoldLine,
+  checkLineNote,
+  checkOwnerParts,
+  checksCurrent,
   checkProblem,
+  CHECK_WORDS,
+  inCheckLine,
   occurrenceText,
+  runsAhead,
   SCREEN_WORDS,
   mainLine,
   nextLine,
   screenWait,
   timeLeft,
   workedSoFar,
+  type CheckActivity,
+  type CheckLineOwner,
   type Role,
   type State,
   type Task
@@ -32,6 +42,8 @@ function nowSentence(task: Task, role: Role | undefined, state: State): string {
   const screen = screenWait(task, state, state.now);
   if (screen) return screen === "ask" ? `${role?.name ?? "The agent"} needs the screen. Waiting for your OK` : SCREEN_WORDS.turn;
   if (task.state === "needs-you") return role ? `${role.name} is waiting on you` : "Waiting on you";
+  // Petrina's own checks are the work now, before the step their plan stage names.
+  if (checksCurrent(task, state.roles)) return CHECK_WORDS.heading;
   if (task.state === "running" && role) return `${role.name} is working`;
   if (task.state === "paused") return role ? `Paused while the ${role.name.toLowerCase()} was working` : "Paused";
   switch (task.state) {
@@ -61,6 +73,7 @@ function nowSentence(task: Task, role: Role | undefined, state: State): string {
  * tool retries by itself, that is the line, and the stale action and to-do item are left out.
  */
 function nowLines(task: Task, state: State): { first: string; time?: string; second?: string } {
+  if (checksCurrent(task, state.roles) && !task.agent) return { first: checkActivityLine(task.checkActivity!) };
   const working = task.state === "running";
   const waitingOnYou = task.state === "needs-you" && state.inbox.some((item) => item.taskId === task.id && item.blocking);
   // While the coordinator drives, how long they have; otherwise how long the agent has worked on this step, without waits.
@@ -74,6 +87,63 @@ function nowLines(task: Task, state: State): { first: string; time?: string; sec
   const first = mainLine(task);
   if (working) return { first, ...(time ? { time } : {}), ...(task.statusLine !== first && !task.retrying ? { second: task.statusLine } : {}) };
   return { first: task.statusLine, ...(time ? { time } : {}), ...(waitingOnYou && task.todo && task.todo !== task.statusLine ? { second: task.todo } : {}) };
+}
+
+const capital = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
+
+/** "Tests for “Fix login retry”", the task linked so the coordinator can open it. */
+function CheckOwner({ owner, state, find, onOpenTask, first }: {
+  owner: CheckLineOwner;
+  state: State;
+  find: Lookup;
+  onOpenTask?: (taskId: string) => void;
+  first?: boolean;
+}) {
+  const parts = checkOwnerParts(owner, state.tasks);
+  return <>{first ? capital(parts.what) : parts.what} for <TaskLink
+    taskId={owner.taskId}
+    find={find}
+    {...(onOpenTask ? { onOpen: onOpenTask } : {})}
+  >{`“${parts.title}”`}</TaskLink>{parts.product ? ` (${parts.product})` : ""}</>;
+}
+
+/**
+ * Under the main line while the task's run is in the check line: a kept place through a pause, each hold with its
+ * recorded explanation, who holds each running place, and the quiet note that checks have their own line.
+ */
+function CheckLineDetails({ activity, state, find, onOpenTask }: {
+  activity: CheckActivity;
+  state: State;
+  find: Lookup;
+  onOpenTask?: (taskId: string) => void;
+}) {
+  if (!inCheckLine(activity)) return null;
+  const owners = activity.owners ?? [];
+  const link = onOpenTask ? { onOpenTask } : {};
+  return <>
+    {activity.phase === "paused" && activity.ahead !== undefined && <div className="now-line">Keeps its place · {runsAhead(activity.ahead)}</div>}
+    {(activity.holds ?? []).map((hold, index) => <div className="now-line" key={`hold-${index}`}>{checkHoldLine(hold, state.tasks)}</div>)}
+    {owners.length === 1 && <div className="now-line"><CheckOwner
+      owner={owners[0]!}
+      state={state}
+      find={find}
+      first
+      {...link}
+    /> {checkOwnerParts(
+      owners[0]!,
+      state.tasks
+    ).plural ? "are" : "is"} running</div>}
+    {owners.length > 1 && <div className="now-line">Running now: {owners.map((
+      owner,
+      index
+    ) => <Fragment key={`${owner.taskId}-${owner.kind}-${index}`}>{index ? "; " : ""}<CheckOwner
+      owner={owner}
+      state={state}
+      find={find}
+      {...link}
+    /></Fragment>)}</div>}
+    <div className="now-line quiet-text">{checkLineNote(activity)}</div>
+  </>;
 }
 
 export function Overview({ task, state, find, onAboutNumbers, onReadSession, onPlan, onOpenTask, onDependencies, separateFlow = false }: {
@@ -161,6 +231,15 @@ export function Overview({ task, state, find, onAboutNumbers, onReadSession, onP
               </span>
             </div>
             {now.second && <div className="now-line">{now.second}</div>}
+            {task.checkActivity && checksCurrent(
+              task,
+              state.roles
+            ) && <CheckLineDetails
+              activity={task.checkActivity}
+              state={state}
+              find={find}
+              {...(onOpenTask ? { onOpenTask } : {})}
+            />}
             {left && <div className="now-line num">{left}</div>}
             {next && <div className="now-line">{next}</div>}
             {screenAsk && (

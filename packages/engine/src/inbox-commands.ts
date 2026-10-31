@@ -59,6 +59,7 @@ export class InboxCommands {
     const task = this.engine.task(taskId);
     const hasNonBlockingItem = this.engine.s.inbox.some((item) => item.taskId === taskId && !item.blocking);
     if (!task || !resumeTaskState(task, hasNonBlockingItem)) return;
+    if (task.state === "waiting") task.statusLine = this.engine.waitingLine(task);
     this.engine.log(task, "you", "You resumed it");
     this.engine.commit(task);
     this.engine.schedule();
@@ -115,7 +116,7 @@ export class InboxCommands {
     }
     this.engine.tracking.retried(task);
     task.state = "waiting";
-    task.statusLine = "Waiting for a free slot";
+    task.statusLine = this.engine.waitingLine(task);
     this.engine.log(task, "you", "You asked to try again");
     endYouStep(task, { outcome: JOURNEY_WORDS.triedAgain, reason: JOURNEY_WORDS.tryAgain }, Date.now());
     this.engine.commit();

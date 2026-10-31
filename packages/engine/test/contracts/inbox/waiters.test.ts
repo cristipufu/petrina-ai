@@ -3,10 +3,67 @@ import { afterAll, expect, it, spyOn } from "bun:test";
 import { coordinatorRecordFixtures } from "../../fixtures/coordinator-records.js";
 import { Aborted } from "../../../src/kernel.js";
 import { Connections, CONFIRM_ADDRESS } from "../../../src/connection.js";
-import { executionFor } from "@petrina/orchestrator";
+import { beginAgentStep, pipelineOf, stepTip } from "@petrina/core";
+import { executionFor, repositoryView } from "@petrina/orchestrator";
 import { waitFor } from "../../fixtures.js";
 const owners = coordinatorRecordFixtures({ prefix: "petrina-inbox-waits-", title: "Wait safely", productPath: true, repo: "acme/product", paused: false });
 afterAll(() => owners.close());
+
+for (const [roleId, kind] of [["check-finder", "question"], ["check-finder", "permission"], ["custom-discovery", "question"], ["builder", "question"]] as const) it(`restores the current activity when ${roleId} continues after a ${kind}`, async () => {
+  return owners.use(async ({ engine, task, scope, owner: lifetime }) => {
+    engine.schedule = () => {};
+    engine.draining = false;
+    if (roleId === "custom-discovery") engine.s.roles.push({ ...engine.role("check-finder")!, id: roleId, name: "Product guide" });
+    const discovery = engine.role(roleId)!.result === "check-discovery";
+    task.plan = { rationale: "Current work", plannerProfileId: "sol-high", stages: [discovery
+      ? { id: "current", title: "Review", kind: "review-chain", roleId: "code-reviewer", profileIds: ["sol-high"] }
+      : { id: "current", title: "Build", kind: "do", roleId: "builder", profileIds: ["sol-high"] }] };
+    task.stageIndex = 0; task.startedAt = 1; task.state = "running"; task.holdsSlot = true;
+    const by = { roleId, profileId: "sol-high" };
+    task.agent = { ...by, since: 1, step: 0 };
+    const step = beginAgentStep(task, roleId, by.profileId, Date.now(), engine.s.roles, undefined, scope.work);
+    const controller = new AbortController();
+    lifetime.onStop(() => controller.abort());
+    const checks = engine["checks"];
+    let reply: Promise<string> | undefined;
+    try {
+      expect(checks.claimPreparation(task.id)).toBe(true);
+      if (discovery) checks.showPreparing(task, scope.work.productId);
+      reply = lifetime.prepare(() => engine["turns"]["wait"]({
+        scope,
+        kind,
+        title: "How should preparation continue?",
+        blocking: true,
+        extra: {},
+        signal: controller.signal,
+        status: "Waiting for your answer",
+        by,
+        main: true,
+      }));
+      const item = engine.s.inbox.find(entry => entry.taskId === task.id && entry.kind === kind)!;
+      expect(engine.task(task.id)!.state).toBe("needs-you");
+      expect(task.checkActivity).toBeUndefined();
+      expect(checks.preparingCount).toBe(0);
+      if (kind === "permission") engine.allow(item.id, "once");
+      else engine.answer(item.id, "Continue");
+      expect(await reply).toBe(kind === "permission" ? "allow" : "Continue");
+      expect(task.state).toBe("running");
+      expect(task.agent?.roleId).toBe(roleId);
+      expect(task.journey!.at(-1)!.id).toBe(step.id);
+      expect(task.journey!.at(-1)!.endedAt).toBeUndefined();
+      expect(checks.preparingCount).toBe(0);
+      const current = pipelineOf(repositoryView(scope), engine.s.roles).find(entry => entry.state === "current")!;
+      if (discovery) {
+        expect(task.checkActivity).toMatchObject({ phase: "preparing", productId: scope.work.productId });
+        expect(task.statusLine).toBe("Preparing automated checks");
+        expect(stepTip(current)).toBe("Automated checks before Review, now");
+      } else {
+        expect(task.checkActivity).toBeUndefined();
+        expect(stepTip(current)).toBe("Build, now");
+      }
+    } finally { controller.abort(); await Promise.allSettled(reply ? [reply] : []); await engine.shutdown(); }
+  });
+});
 
 it("does not ask for an address after pause during the Git lookup, and releases the product's confirmation lock", async () => {
   return owners.use(async ({ engine, task, scope, owner: lifetime }) => {
@@ -133,11 +190,13 @@ it("keeps preparation room for lesson and guide offers, but gives it back for a 
     const peer = engine.task(engine.addTask({ productId: "p", title: "Waiting for preparation room", backlog: true }))!;
     scheduled.mockClear();
     expect(checks.claimPreparation(task.id)).toBe(true);
+    checks.showPreparing(task, scope.work.productId);
     scope.work.lessons = [{ text: "Use the focused checks before a full run.", roleId: "builder", profileId: "sol-high", at: 0 }];
     await engine["learnings"].offer(scope);
     expect(engine.s.inbox.find(item => item.taskId === task.id && item.kind === "learnings")).toMatchObject({ blocking: false, body: "- Use the focused checks before a full run." });
     expect(task.state).toBe("running");
     expect(checks.preparingCount).toBe(1);
+    expect(task.checkActivity?.phase).toBe("preparing");
     expect(checks.claimPreparation(peer.id)).toBe(false);
 
     // The Guide keeper's offer also lets its caller carry on in the same step.
@@ -162,6 +221,7 @@ it("keeps preparation room for lesson and guide offers, but gives it back for a 
     }));
     await Promise.resolve();
     expect(checks.preparingCount).toBe(0);
+    expect(task.checkActivity).toBeUndefined();
     expect(checks.claimPreparation(peer.id)).toBe(true);
     expect(scheduled).toHaveBeenCalledTimes(1);
     engine.answer(engine.s.inbox.find(item => item.kind === "question")!.id, "Continue");

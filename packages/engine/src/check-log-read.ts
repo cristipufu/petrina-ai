@@ -1,6 +1,13 @@
-import { checkEntryCommandOutcome, matchesCheckLogIdentity, unreportedCheckExit as outcomeUnreported, checkCommandOutcome as outcomeOf } from "@petrina/core";
+import {
+  checkActivityLine,
+  checkEntryCommandOutcome,
+  matchesCheckLogIdentity,
+  unreportedCheckExit as outcomeUnreported,
+  checkCommandOutcome as outcomeOf,
+  type CheckRun,
+  type Task,
+} from "@petrina/core";
 // Verify and page the diagnostic file belonging to one recorded check.
-import type { CheckRun, Task } from "@petrina/core";
 import { constants, lstatSync } from "node:fs";
 import { lstat, open, realpath } from "node:fs/promises";
 import { resolve, sep } from "node:path";
@@ -26,7 +33,8 @@ export function checkLogRevision(dataDir: string, taskId: string, paths: readonl
   });
 }
 
-export type CheckLogSubject = Pick<Task, "id" | "checks" | "checkSetup" | "journey" | "repositories"> & Partial<Pick<Task, "productId">>;
+export type CheckLogSubject = Pick<Task, "id" | "checks" | "checkSetup" | "journey" | "repositories"> &
+  Partial<Pick<Task, "productId" | "checkActivity">>;
 
 export async function readCheckLog(dataDir: string, task: CheckLogSubject, args: {
   nodeId?: string;
@@ -69,6 +77,35 @@ export async function readCheckLog(dataDir: string, task: CheckLogSubject, args:
     ...(setup ? { setupAttemptId: setup.id, requirementId: setupResult?.requirementId ?? null } : {}),
     ...(run && unreportedCheckExit(run) ? { exitUnreported: true } : {}),
   };
+  // A check of the open attempt that is still waiting or running is current, not older evidence: its diagnostic is
+  // saved when it finishes. It stays unverified meanwhile; this read never streams a live log.
+  const latest = node?.productChecks?.at(-1)?.attemptId;
+  if (
+    !run
+    && entry
+    && node?.endedAt === undefined
+    && entry.attemptId === latest
+    && (entry.result === "pending" || entry.result === "running")
+  ) {
+    const waiting = entry.result === "pending";
+    return {
+      outcome: "unavailable",
+      commandOutcome: waiting ? "waiting" : "running",
+      relevance: "current",
+      command: null,
+      completeness: "not-yet-saved",
+      verified: false,
+      check: {
+        name: entry.name,
+        result: entry.result,
+        ...(entry.attemptId ? { attemptId: entry.attemptId } : {}),
+        ...(entry.queuedAt !== undefined ? { queuedAt: entry.queuedAt } : {}),
+        ...(entry.startedAt !== undefined ? { startedAt: entry.startedAt } : {}),
+      },
+      ...(task.checkActivity ? { activity: checkActivityLine(task.checkActivity) } : {}),
+      message: `${entry.name} is ${waiting ? "waiting to run" : "running now"}; its saved diagnostic is not available yet. Read it again after the check finishes.`,
+    };
+  }
   if (!run) return { outcome: "unavailable", ...metadata, completeness: "missing", message: "This older evidence has no original diagnostic link." };
   const resultScope = [task.id, args.nodeId, args.productId, args.index, ...setupScope, "saved-result"];
   if (args.section === "result")

@@ -1,7 +1,7 @@
 // Task state is grouped by owner and lifetime. These interfaces keep one persisted shape;
 // composing them does not introduce projection copies or a second schema.
 import type { Column, DeliveryMode, Id, InboxKind, Lesson, Plan, RiskLevel, RunState, TaskKind } from "./catalog-model.js";
-import type { CheckEnvironmentBinding, CheckRun, CheckSetupAttempt, CheckSetupInvalidation } from "./check-model.js";
+import type { CheckActivity, CheckEnvironmentBinding, CheckRun, CheckSetupAttempt, CheckSetupInvalidation } from "./check-model.js";
 import type {
   ActiveAgent,
   AgentToolActivity,
@@ -49,11 +49,13 @@ export interface RepositoryState {
   /** The last time Petrina ran the product's checks on this task, and on which commit. */
   /** The tree is the code itself: a squash keeps it, so the checks still count. */
   /** The definition covers commands and hook inputs, separately from the code. */
+  /** `base`: the task's starting point when the run was captured, so a later run can tell that main moved on. */
   checks?: {
     current?: boolean;
     at: number;
     sha?: string;
     tree?: string;
+    base?: string;
     definition?: string;
     environment?: CheckEnvironmentBinding;
     results: readonly CheckRun[];
@@ -410,6 +412,11 @@ export interface TaskActivity {
   /** Agents working on the same step at the same time as `agent` (reviewers hunting at once, voters). Each holds a slot of its own. */
   helpers?: readonly ActiveAgent[];
   statusLine: string;
+  /**
+   * What the task's automated-check run is doing, written by the engine only from its shared check line and
+   * its own check progress; cleared when the run ends or Petrina restarts. Never used to decide anything.
+   */
+  checkActivity?: CheckActivity;
   toolActivity?: AgentToolActivity;
   /** Agent-owned current to-do, kept separate from changing tool activity. */
   todo?: string;

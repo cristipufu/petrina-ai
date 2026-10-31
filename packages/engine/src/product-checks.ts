@@ -2,14 +2,16 @@
 // checks become findings with the real output. Running commands is in checks.ts.
 
 import {
-  checkInputApplicability, openStep, recordedCheckBatch,
-  type CheckRun, type CheckSetupInput, type Id, type JourneyCheckReuse, type ProductCheck,
+  checkActivityLine, checkInputApplicability, openStep, recordedCheckBatch,
+  type CheckActivity, type CheckRun, type CheckRunReason, type CheckSetupInput, type DeepMutable,
+  type Id, type JourneyCheckReuse, type ProductCheck,
 } from "@petrina/core";
 import {
   CheckDecision, CheckDelivery, CheckEvidence, CheckRepairs, type CheckVerification, type RepositoryContext,
 } from "@petrina/orchestrator";
 import { checkSetupContract } from "@petrina/repositories/check-environment";
 import * as git from "@petrina/repositories/git";
+import { checkRunReasonFor, sameActivity } from "./check-activity.js";
 import { checksFor, commandText, orderedChecks, staticCheck } from "./checks.js";
 import type { Context } from "./context.js";
 import { Aborted, type Kernel, type RuntimeTask } from "./kernel.js";
@@ -90,7 +92,10 @@ export class ProductChecks {
       deliveryOrders: this.deliveryOrders,
       claimPreparation: (taskId) => this.claimPreparation(taskId),
       releasePreparation: (taskId) => this.releasePreparation(taskId),
-      turnToRun: (scope, signal, order) => this.turnToRun(scope, signal, order),
+      turnToRun: (scope, signal, order, since) => this.turnToRun(scope, signal, order, since),
+      showActivity: (task, activity, changed) => this.showActivity(task, activity, changed),
+      showPreparing: (task, productId) => this.showPreparing(task, productId),
+      reasonFor: (scope, checks, state, purpose) => checkRunReasonFor(scope, checks, state, purpose),
       cachedChecks: (scope) => this.cachedChecks(scope),
       ensureChecks: (scope, signal) => this.ensureChecks(scope, signal),
       captureState: (scope, checks) => this.captureState(scope, checks),
@@ -119,11 +124,51 @@ export class ProductChecks {
   releaseForDecision(taskId: Id): boolean {
     const preparation = this.preparations.delete(taskId);
     const checks = this.decisionReleases.get(taskId)?.() ?? false;
+    const task = this.k.task(taskId);
+    if ((preparation || checks) && task) this.clearActivity(task);
     return preparation || checks;
   }
 
-  private turnToRun(scope: RepositoryContext, signal: AbortSignal, order = this.k.checkQueue.reserveOrder()) {
-    return acquireCheckTurnToRun(this.k, scope, signal, order);
+  /**
+   * The task's check fact and the main line it says, saved only when either changed. Written from the check line
+   * and this run's own progress; nothing reads it to decide admission or order.
+   */
+  showActivity(task: RuntimeTask, activity: CheckActivity, changed = false): void {
+    const line = checkActivityLine(activity);
+    if (!changed && sameActivity(task.checkActivity, activity) && task.statusLine === line) return;
+    task.checkActivity = activity as DeepMutable<CheckActivity>;
+    task.statusLine = line;
+    this.k.commit(task);
+  }
+
+  /** The run ended, left the line or never started: no check fact outlives it. */
+  clearActivity(task: RuntimeTask): void {
+    if (!task.checkActivity) return;
+    delete task.checkActivity;
+    this.k.commit(task);
+  }
+
+  /** Getting the work ready for its checks, before it joins the line. */
+  showPreparing(task: RuntimeTask, productId?: Id): void {
+    if (task.checkActivity?.phase === "preparing" && task.checkActivity.productId === productId) return;
+    this.showActivity(task, {
+      phase: "preparing",
+      ...(productId ? { productId } : {}),
+      since: Date.now(),
+      slots: this.k.checkQueue.view().limit,
+    });
+  }
+
+  private turnToRun(scope: RepositoryContext, signal: AbortSignal, order = this.k.checkQueue.reserveOrder(), since = Date.now()) {
+    return acquireCheckTurnToRun(
+      this.k,
+      scope,
+      signal,
+      order,
+      since,
+      (task, activity, changed) => this.showActivity(task, activity, changed),
+      (task) => this.clearActivity(task),
+    );
   }
 
   ensureChecks(scope: RepositoryContext, signal: AbortSignal): Promise<readonly ProductCheck[]> {
@@ -142,6 +187,7 @@ export class ProductChecks {
     prepared?: CheckState,
     prepare?: CheckPreparation,
     purpose: JourneyCheckReuse["purpose"] = "acceptance",
+    reason?: CheckRunReason,
   ): Promise<CheckVerification> {
     const { task, work: repository } = scope;
     if (!repository.worktree) return {
@@ -156,13 +202,16 @@ export class ProductChecks {
       delete task.agent;
     }
     if (!this.claimPreparation(task.id)) {
+      this.clearActivity(task);
       throw new WaitingForUsage(this.k.taskAdmissionsClosed(task) ? this.k.taskAdmissionWait(task) : "Waiting for room to prepare the product checks");
     }
+    this.showPreparing(task, repository.productId);
     this.k.schedule();
     try {
-      return await this.runPreparedChecks(scope, checks, signal, kept, prepared, prepare, purpose);
+      return await this.runPreparedChecks(scope, checks, signal, kept, prepared, prepare, purpose, reason);
     } finally {
       this.releasePreparation(task.id);
+      this.clearActivity(task);
     }
   }
 
@@ -174,8 +223,9 @@ export class ProductChecks {
     prepared?: CheckState,
     prepare?: CheckPreparation,
     purpose: JourneyCheckReuse["purpose"] = "acceptance",
+    reason?: CheckRunReason,
   ): Promise<CheckVerification> {
-    return executePreparedChecks(this.batchHooks(), scope, checks, signal, kept, prepared, prepare, purpose);
+    return executePreparedChecks(this.batchHooks(), scope, checks, signal, kept, prepared, prepare, purpose, reason);
   }
 
   private runAll(request: ExecuteAllChecksRequest): Promise<CheckVerification> {
@@ -298,7 +348,17 @@ export class ProductChecks {
         env: await checkExecutionEnvironment(this.k),
         position: "before-checks",
       }),
-      execute: (state) => this.runProductChecks(scope, required, signal, undefined, state, prepare, purpose),
+      execute: (state) =>
+        this.runProductChecks(
+          scope,
+          required,
+          signal,
+          undefined,
+          state,
+          prepare,
+          purpose,
+          checkRunReasonFor(scope, required, state, purpose),
+        ),
     });
   }
 

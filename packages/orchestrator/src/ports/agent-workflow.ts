@@ -82,6 +82,8 @@ export interface AgentWorkflowPhases {
 export interface CheckPreparationPlaces {
   claim(taskId: Id): boolean;
   release(taskId: Id): void;
+  slots?(): number;
+  clear?(task: RuntimeTask): void;
 }
 
 /** Selected-profile qualification precedes clock/journey preparation; activation keeps its original synchronous position. */

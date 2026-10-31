@@ -183,6 +183,7 @@ export function pauseTaskState(task: MutableTask, execution: Execution, now: num
   delete task.agent;
   delete task.helpers;
   delete execution.conversation;
+  delete task.checkActivity;
   delete task.reviewSessions;
   if (execution.sideStep) delete execution.sideStep.conversation;
   stopTaskActivity(task);
@@ -207,6 +208,7 @@ export function cancelTaskState(task: MutableTask, execution: Execution, now: nu
   delete task.agent;
   delete task.helpers;
   delete execution.conversation;
+  delete task.checkActivity;
   delete task.reviewSessions;
   delete task.reviewFreshReasons;
   delete task.reviewDecision;

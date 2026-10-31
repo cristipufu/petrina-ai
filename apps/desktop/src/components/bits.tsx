@@ -94,20 +94,21 @@ export function ProductName({ product }: { product: Product | undefined }) {
   );
 }
 
-function progressLabel(task: Task): string {
-  const steps = pipelineOf(task);
-  return `Progress: ${steps.map((step) => `${step.label}${step.state === "done" ? " done" : step.state === "current" ? ", the current step" : ""}`).join(", ")}`;
+function progressLabel(task: Task, roles?: readonly Role[]): string {
+  const steps = pipelineOf(task, roles);
+  return `Progress: ${steps.map((step) => step.before ? `Automated checks before ${step.before}, the current step` : `${step.label}${step.state === "done" ? " done" : step.state === "current" ? ", the current step" : ""}`).join(", ")}`;
 }
 
 /**
  * A card's own pipeline, quiet: done steps checked, the current one named, skipped ones absent.
  * It stays on one line: long plans tighten and fold finished steps into one check with a count.
  * Every step is named in a tooltip on hover and on keyboard focus ("Review, next"). The strip is
- * one tab stop; the arrow keys move between its steps, and Enter or a click opens the task.
+ * one tab stop; the arrow keys move between its steps, and Enter or a click opens the task. While
+ * Petrina's checks are the current work, the current mark reads "Checks" ("Automated checks before Review, now").
  */
-export function Pipeline({ task, onActivate }: { task: Task; onActivate?: () => void }) {
+export function Pipeline({ task, roles, onActivate }: { task: Task; roles?: readonly Role[]; onActivate?: () => void }) {
   const [focused, setFocused] = useState<number>();
-  const all = pipelineOf(task);
+  const all = pipelineOf(task, roles);
   if (all.length === 0) return null;
   const steps = stripOf(all);
   const tabStop = focused ?? Math.max(0, steps.findIndex((step) => step.state === "current"));
@@ -167,11 +168,11 @@ export function Pipeline({ task, onActivate }: { task: Task; onActivate?: () => 
 }
 
 /** The same pipeline in the task sheet, with every step named. */
-export function Stepper({ task }: { task: Task }) {
-  const steps = pipelineOf(task);
+export function Stepper({ task, roles }: { task: Task; roles?: readonly Role[] }) {
+  const steps = pipelineOf(task, roles);
   if (steps.length === 0) return null;
   return (
-    <ol className="stepper" aria-label={progressLabel(task)}>
+    <ol className="stepper" aria-label={progressLabel(task, roles)}>
       {steps.map((step, index) => (
         <li key={`${step.label}-${index}`} className={step.state === "current" ? `current ${task.state}` : step.state} aria-hidden="true">
           <span className="mark">{step.state === "done" ? <Check size={12} strokeWidth={3} /> : index + 1}</span>

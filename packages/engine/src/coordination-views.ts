@@ -8,9 +8,11 @@ import type {
   Task,
 } from "@petrina/core";
 import {
+  CHECK_WORDS,
   deliveryDecisionProblem,
   displayTask,
   finishedTask,
+  inCheckLine,
   mainLine,
   nextSteps,
   originalCheck,
@@ -24,6 +26,7 @@ import {
   workedSoFar,
 } from "@petrina/core";
 import { fingerprint } from "@petrina/storage/receipt-identity";
+import { checkActivityRead, waitingReason } from "./check-activity.js";
 import { checkLogRevision } from "./check-log-read.js";
 import type { Engine } from "./engine.js";
 import { cursor } from "./evidence-read.js";
@@ -110,7 +113,14 @@ export function taskSummary(engine: Engine, task: Task) {
           waitKind: wait.held ? (wait.decisionNeeded ? "needs-your-decision" : "dependencies") : null,
         }
       : {}),
+    // A restart's recovery hold is the check line's too, whatever work it keeps from starting.
+    ...(!wait?.held
+    && (inCheckLine(task.checkActivity)
+      || (task.state === "waiting" && engine.extraRecovery && task.statusLine === CHECK_WORDS.recovery))
+      ? { waitKind: "checks" }
+      : {}),
     summary: mainLine(task),
+    checks: checkActivityRead(engine, task),
     activity: task.toolActivity ?? null,
     workers: [task.agent, ...(task.helpers ?? [])]
       .filter(Boolean)
@@ -121,9 +131,7 @@ export function taskSummary(engine: Engine, task: Task) {
           : (task.toolActivity ?? null),
       })),
     next: nextSteps(state, task) ?? null,
-    waitingReason: ["backlog", "waiting", "needs-you", "paused", "queued", "failed"].includes(task.state)
-      ? task.statusLine
-      : null,
+    waitingReason: waitingReason(task, ["backlog", "waiting", "needs-you", "paused", "queued", "failed"]),
     inbox: state.inbox.filter((item) => item.taskId === task.id).map(({ id, kind }) => ({ id, kind })),
     landing,
     delivery: task.delivery,
@@ -480,9 +488,8 @@ export function taskHealthView(engine: Engine, task: Task): Result {
         }
       : null,
     actionCount: task.toolActivity?.actionCount ?? null,
-    waitingReason: ["waiting", "needs-you", "paused", "queued", "failed", "backlog"].includes(task.state)
-      ? task.statusLine
-      : null,
+    waitingReason: waitingReason(task, ["waiting", "needs-you", "paused", "queued", "failed", "backlog"]),
+    checks: checkActivityRead(engine, task),
     seats,
     estimate: estimate
       ? {

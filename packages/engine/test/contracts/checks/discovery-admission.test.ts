@@ -56,6 +56,8 @@ async function fixture(caseOwner: EngineCaseOwner, conflictingTask = false) {
   const discovery = spyOn(checks, "ensureChecks");
     caseOwner.onStop(() => discovery.mockRestore());
     discovery.mockImplementation(async () => {
+    expect(task.checkActivity?.phase).toBe("preparing");
+    expect(task.checkActivity?.place).toBeUndefined();
     // Use the real journey transitions: discovery closes the pending checks entry before awaiting.
     beginAgentStep(task, "check-finder", "sol-high", Date.now(), engine.s.roles, undefined, scope.work);
     oldStep = task.journey!.find(step => step.work === "checks")!;
@@ -90,7 +92,7 @@ for (const waitsAgain of [false, true]) it(`recaptures discovered check inputs $
   caseOwner.onStop(() => { controller.abort(); block(); place?.(); });
   let updates = 0;
   const prepare = async () => { updates++; return await f.engine["updates"].upToDate(f.scope, controller.signal) !== "conflict"; };
-  const checking = f.checks.runProductChecks(f.scope, [f.command], controller.signal, undefined, undefined, prepare);
+  const checking = f.checks.runProductChecks(f.scope, [f.command], controller.signal, undefined, undefined, prepare, "review", { purpose: "review", changed: [] });
   try {
     await caseOwner.run(f.engine, async () => {
     await waitFor(() => f.engine.checkQueue.waiting === 1, "check run to join the line");
@@ -107,6 +109,7 @@ for (const waitsAgain of [false, true]) it(`recaptures discovered check inputs $
     expect(looseMergeBase(join(f.clone, ".git"), latest, sha)).toBe(latest);
     expect(f.scope.work.checks).toMatchObject({ sha, tree, current: true });
     expect(f.scope.work.checks!.results[0]!.name).toBe("Rediscovered tests");
+    expect(f.task.journey!.at(-1)!.checkReasons).toMatchObject([{ purpose: "review", attemptId: "run-0", changed: [] }]);
     f.unchangedHistory();
     expect(f.engine.checkQueue.running).toBe(0); expect(f.engine.checkQueue.waiting).toBe(0);
 

@@ -1,7 +1,8 @@
-import type { CheckPlace, CheckQueue } from "./check-queue.js";
+import type { CheckOwner, CheckPlace, CheckQueue } from "./check-queue.js";
 
 /** Observations and notices are bound to the requesting task before admission can yield. */
 export interface CheckAdmissionEffects {
+  owner?: CheckOwner;
   stopped(): boolean;
   prerequisite(): boolean;
   closed(): boolean;
@@ -18,11 +19,13 @@ export async function acquireCheckPlace(queue: CheckQueue, signal: AbortSignal, 
   if (effects.prerequisite()) throw queue.errors.unavailable(effects.reason());
   const prerequisite = new AbortController();
   const admissionSignal = AbortSignal.any([signal, prerequisite.signal]);
-  const unsubscribe = effects.subscribe(() => { if (effects.prerequisite()) prerequisite.abort(); });
+  const unsubscribe = effects.subscribe(() => {
+    if (effects.prerequisite()) prerequisite.abort();
+  });
   let waited = false;
   try {
     for (;;) {
-      const finished = await queue.acquire(admissionSignal, false, order, effects.onWait.bind(effects));
+      const finished = await queue.acquire(admissionSignal, false, order, effects.onWait.bind(effects), effects.owner);
       waited ||= finished.waited;
       if (signal.aborted || effects.stopped()) {
         finished();

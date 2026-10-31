@@ -2,7 +2,7 @@ import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { commandText, commandInputText, checkOutcome, checkSetupOutcome, recordedCheckBatch, type ExtraValidation } from "@petrina/core";
+import { checkHoldLine, checkOutcome, checkSetupOutcome, commandInputText, commandText, recordedCheckBatch, type ExtraValidation } from "@petrina/core";
 
 import { waitFor } from "../../fixtures.js";
 import { readWorktreeCommit } from "../../fixtures/shared-preparation.js";
@@ -186,13 +186,19 @@ it("keeps the remaining cleanup blocker on waiting checks after one of two held 
       await waitFor(() => f.engine.s.extraValidations!.every(record => record.state === "held") && f.engine.extraValidations.active === 0, "both runs to hold cleanup");
       productRun = f.engine["checks"].runProductChecks(executionFor(productTask), [ordinary], controller.signal).then(verification => ({ verification }), error => ({ error }));
       await waitFor(() => f.engine.checkQueue.waiting === 1, "the product check to wait on cleanup");
-      expect(productTask.statusLine).toBe(f.engine.extraValidations.blocker!);
+      // Held cleanup reads apart from a healthy run, with each hold's recorded explanation in the same words.
+      const holdLines = () => (productTask.checkActivity?.holds ?? []).map(hold => checkHoldLine(hold, f.engine.s.tasks));
+      expect(productTask.statusLine).toBe("Waiting for checks · held for cleanup");
+      expect(productTask.checkActivity).toMatchObject({ phase: "held", ahead: 0 });
+      expect(productTask.checkActivity!.owners).toBeUndefined();
+      expect(holdLines()).toEqual(f.engine.extraValidations.blockers);
       rmSync(join(f.service, "cleanup-off"));
       await f.engine.extraValidations.retryCleanup();
       expect(f.engine.s.extraValidations!.map(record => record.id)).toEqual([second.id]);
       expect(f.engine.checkQueue.running).toBe(1);
-      expect(productTask.statusLine).toBe(f.engine.extraValidations.blocker!);
-      expect(productTask.statusLine).toContain("Second required suite");
+      expect(productTask.statusLine).toBe("Waiting for checks · held for cleanup");
+      expect(holdLines()).toEqual([f.engine.extraValidations.blocker!]);
+      expect(holdLines()[0]).toContain("Second required suite");
       expect(productTask.journey!.at(-1)!.productChecks![0]!.result).toBe("pending");
       f.engine.setPoolPaused(true);
       expect(productTask.statusLine).toBe("Waiting for the pool to resume");

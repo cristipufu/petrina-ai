@@ -3,7 +3,9 @@ import type { HistoryStatus } from "./history.js";
 import { JOURNEY_WORDS, type Landing } from "./journey-words.js";
 import type {
   AgentProfile,
+  CheckActivity,
   CheckAttemptEvidence,
+  CheckRunReason,
   Finding,
   Id,
   InboxItem,
@@ -200,6 +202,8 @@ export interface NodeFacts {
   reason?: string;
   tone?: string;
   trigger?: JourneyStep["trigger"];
+  /** Why each fresh check run on this step was needed, with its words. */
+  checkReasons?: readonly (CheckRunReason & { words: string })[];
   builderConversation?: string;
   legacy?: boolean;
   inputs: SeatInputFacts[];
@@ -334,6 +338,8 @@ export interface WorkflowFacts {
     "held" | "decisionNeeded" | "reason" | "prerequisites" | "phase"
   >;
   statusLine: string;
+  /** A check run in the shared line (waiting, held or paused), in its own words. Counts and owners never emit events alone. */
+  checkWait?: Omit<CheckActivity, "since" | "running"> & { line: string };
   agents: readonly { roleId: Id; profileId: Id; reviewKey?: string; since: number }[];
   nodes: NodeFacts[];
   inbox: InboxFacts[];

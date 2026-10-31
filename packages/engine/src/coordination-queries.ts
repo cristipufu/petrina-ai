@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { CoordinationResult as Result, ExtraValidation, Product, State, Task } from "@petrina/core";
-import { finishedTask, involvesProduct, journeyView, offeredLessons, resultSeatOf } from "@petrina/core";
+import { checkReasonWords, finishedTask, involvesProduct, journeyView, offeredLessons, resultSeatOf } from "@petrina/core";
 import { readAnalytics } from "./analytics-read.js";
 import { readCheckLog } from "./check-log-read.js";
 import { checkpointView } from "./checkpoint-read.js";
@@ -280,6 +280,8 @@ export const TASK_QUERY_HANDLERS: { readonly [K in TaskScopedQueryName]: TaskQue
       result: node?.agentResults || node?.result ? "recorded" : "unavailable",
       trigger: node?.trigger ?? null,
       triggerEvidence: node?.trigger ? "recorded" : "unavailable",
+      // Why each fresh check run on this node was needed, as recorded then; never inferred from the previous step.
+      checkReasons: node?.checkReasons?.map((reason) => ({ ...reason, words: checkReasonWords(reason) })) ?? null,
       reviewInput: node?.reviewInput
         ? { digest: node.reviewInput.digest, read: { taskId: task.id, nodeId: node.id } }
         : null,

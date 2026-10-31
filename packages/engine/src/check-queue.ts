@@ -1,7 +1,7 @@
 import { CheckQueue as PortableCheckQueue } from "@petrina/orchestrator";
 import { Aborted } from "./engine-options.js";
 import { WaitingForUsage } from "./usage.js";
-export type { CheckPlace } from "@petrina/orchestrator";
+export type { CheckLineView, CheckOwner, CheckPlace } from "@petrina/orchestrator";
 
 /** Bind application error identities without coupling portable admission to the application. */
 export class CheckQueue extends PortableCheckQueue {

@@ -5,8 +5,10 @@
 
 import { owedAcceptanceTest, requiredUnverified } from "./acceptance.js";
 import { CALL_WORDS, followingCall } from "./call.js";
+import { checksCurrent } from "./check-activity.js";
 import { allowsReviewFix, coveredByDecision, reviewRoundEnd } from "./flow.js";
 import { portReviewerIndex } from "./journey-recording.js";
+import { proofDecision, proofTestNeeded, sameProofDecision, sameVersions } from "./proof-requests.js";
 import { reviewerAt, roleForTask } from "./roles.js";
 import type { DeliveryMode, GateKind, Id, Stage, State, StepClock, StepRecord, Task } from "./model.js";
 
@@ -257,23 +259,54 @@ function reviewersOf(task: Task, state: People, stage: Stage, at: number, from: 
 
 /** Final preparation resolves single-product patch equivalence; until then name the conditional test. */
 function finalTesting(state: People, task: Task): string | undefined {
-  if (!task.retest && task.proofRequests?.some(request => request.status === "pending" || request.status === "stale") && !task.acceptanceUnverified && (task.proofRefreshes ?? 0) < 2) return "final acceptance testing for requested proof";
   // Testing still owed, such as an acceptance repair's own run, comes first.
-  if (owedAcceptanceTest(task) || task.testedPatch === undefined || (task.acceptancePassed === false && task.acceptanceBlocked)) return undefined;
-  // Required acceptance that could not be verified is never tried again unchanged; a reproduced failure keeps its retest.
-  const reproduced = task.journey?.findLast((step) => step.kind === "agent" && step.endedAt !== undefined && roleForTask(
-    state.roles,
-    step.roleId ?? "",
-    task
-  )?.result === "checks")?.acceptanceChecks?.some((check) => check.result === "fail");
-  if (requiredUnverified(task) && !reproduced) return undefined;
+  if (owedAcceptanceTest(task)) return undefined;
   const tester = task.plan?.stages.find((stage) => stage.kind === "do" && roleForTask(state.roles, stage.roleId, task)?.result === "checks");
+  const exhausted = task.acceptancePassed === false && task.acceptanceBlocked;
+  // The count only bounds main-only refreshes. Use delivery's recorded patches when they name the current checks;
+  // while preparation is unfinished, an earlier limit only describes its exact checked versions and requests.
+  const works = task.repositories ?? [task];
+  const versions = Object.fromEntries(works.map((work) => [work.productId, work.checks?.tree ?? "unavailable"]));
+  const capturedPatches = works.every((work) => work.checks?.current && !!work.checks.sha && work.checks.sha === work.checkedSha && !!work.checkedPatch);
+  const refreshBlocked =
+    task.proofRefreshBlocked === true && works.every((work) => work.checks?.current) && sameProofDecision(
+      task.checkedProofDecision,
+      proofDecision(
+      task,
+      versions
+    )
+    );
+  const mainOnly = capturedPatches
+    ? sameVersions(
+      task.testedChanges,
+      Object.fromEntries(works.map((work) => [
+      work.productId,
+      work.checkedPatch!
+    ]))
+    ) && !sameVersions(
+      task.testedVersions,
+      versions
+    )
+    : refreshBlocked;
+  if (task.proofRequests?.length && mainOnly && (task.proofRefreshes ?? 0) >= 2) return undefined;
+  if (tester && !exhausted && proofTestNeeded(task, mainOnly)) {
+    const sameTestedVersion = works.every((work) => work.checks?.current) && sameVersions(task.testedVersions, versions);
+    const conditional = (task.proofRefreshes ?? 0) >= 2 && !capturedPatches && !sameTestedVersion;
+    return `final acceptance testing for requested proof${conditional ? " if the task's code changed" : ""}`;
+  }
+  if (task.testedPatch === undefined || exhausted) return undefined;
+  // Required acceptance that could not be verified is never tried again unchanged; a reproduced failure keeps its retest.
+  const reproduced = task.journey
+    ?.findLast((step) => step.kind === "agent" && step.endedAt !== undefined && roleForTask(state.roles, step.roleId ?? "", task)?.result === "checks")
+    ?.acceptanceChecks?.some((check) => check.result === "fail");
+  if (requiredUnverified(task) && !reproduced) return undefined;
   if (!tester) return undefined;
-  const versions = task.repositories?.every((work) => work.checks?.current && work.checks.tree && task.testedVersions?.[work.productId])
-    ? task.repositories.map((work) => work.checks!.tree === task.testedVersions![work.productId]) : undefined;
+  const sameTested = task.repositories?.every((work) => work.checks?.current && work.checks.tree && task.testedVersions?.[work.productId])
+    ? task.repositories.map((work) => work.checks!.tree === task.testedVersions![work.productId])
+    : undefined;
   const failed = task.acceptancePassed === false;
-  if (!failed && versions?.every(Boolean)) return undefined;
-  const knownChange = versions?.some((same) => !same);
+  if (!failed && sameTested?.every(Boolean)) return undefined;
+  const knownChange = sameTested?.some((same) => !same);
   return `final acceptance testing${by(state, tester.profileIds[0])}${failed || knownChange ? "" : " if the code changed"}`;
 }
 
@@ -398,10 +431,10 @@ export function nextSteps(state: People & Pick<State, "inbox">, task: Task): Nex
 
   // No agent on the step: waiting for a slot or paused, the step it starts (again) comes first. At a
   // checkpoint or a disagreement, what follows it. The Check finder and the Guide keeper only prepare
-  // a step: the card is already running, but the review, the test or the build they are getting ready
-  // has not started, so that work is still what comes next.
+  // a step, and Petrina's automated checks run before it: the card is already running, but the review,
+  // the test or the build they are getting ready has not started, so that work is still what comes next.
   const result = roleForTask(state.roles, task.agent?.roleId ?? "", task)?.result;
-  const preparing = result === "check-discovery" || result === "guide";
+  const preparing = result === "check-discovery" || result === "guide" || checksCurrent(task, state.roles);
   const onStep = !preparing && (task.state === "running" || items.some((item) => item.blocking));
   if (!onStep) {
     const past = task.state === "needs-you" && (stage.kind === "gate" || stage.kind === "converge");

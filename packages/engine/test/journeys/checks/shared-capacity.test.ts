@@ -77,10 +77,10 @@ try {
     };
     let waitedBeforeStart = false;
     let occupiedDuringChecks: number | undefined;
-    let waitingStep: { taskId: string; stepId: string; startedAt: number; evidence: NonNullable<Task["journey"]>[number]; running: { name: string; startedAt?: number } } | undefined;
+    let waitingStep: { taskId: string; stepId: string; startedAt: number; evidence: NonNullable<Task["journey"]>[number]; running: { name: string; startedAt?: number }; activity: Task["checkActivity"]; line: string } | undefined;
     const unsubscribe = engine.subscribe(() => {
       const state = engine.activeState();
-      const task = state.tasks.find((task) => task.statusLine === "Waiting to run the checks: another task's run comes first");
+      const task = state.tasks.find((task) => task.checkActivity?.phase === "waiting");
       if (!task || waitingStep) return;
       // A place is reserved before the diagnostic log opens and start is reported.
       // Compare the running check with its queued peer only after that report.
@@ -94,7 +94,7 @@ try {
       // Snapshot the evidence and assert after the run. An assertion thrown by an update listener
       // would abort the check and replace its pending evidence with "stopped" during cleanup.
       occupiedDuringChecks = slotUses(state).length;
-      waitingStep = { taskId: task.id, stepId: step.id, startedAt: step.startedAt, evidence: JSON.parse(JSON.stringify(step)) as typeof step, running: { ...running } };
+      waitingStep = { taskId: task.id, stepId: step.id, startedAt: step.startedAt, evidence: JSON.parse(JSON.stringify(step)) as typeof step, running: { ...running }, activity: structuredClone(task.checkActivity), line: task.statusLine };
     });
     caseOwner.onStop(unsubscribe);
     try {
@@ -126,6 +126,10 @@ try {
       expect(waitingStep!.evidence.productChecks).toEqual([expect.objectContaining({ name: "Held check", result: "pending" })]);
       expect(waitingStep!.running.name).toBe("Held check");
       expect(waitingStep!.running.startedAt).toBeNumber();
+      // The waiting task names the run ahead of it from the line itself: one whole run, by its task.
+      const other = ids.find((id) => id !== waitingStep!.taskId)!;
+      expect(waitingStep!.line).toBe("Waiting for checks · next in line");
+      expect(waitingStep!.activity).toMatchObject({ phase: "waiting", ahead: 0, place: 2, slots: 1, owners: [{ taskId: other, title: engine.task(other)!.title, kind: "checks" }] });
       const task = engine.getState().tasks.find((task) => task.id === waitingStep!.taskId)!;
       expect(task.journey!.find((step) => step.id === waitingStep!.stepId)).toMatchObject({ startedAt: waitingStep!.startedAt, end: "done", outcome: "The check passes" });
       for (const task of engine.getState().tasks) expect(journeyProblems(task)).toEqual([]);

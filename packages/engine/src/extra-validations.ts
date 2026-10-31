@@ -3,18 +3,27 @@ import { arch, platform } from "node:os";
 import { constants, realpathSync } from "node:fs";
 import { open, realpath } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
-import { openStep, runtimeWaitHolds, type DeepMutable, type ExtraValidation } from "@petrina/core";
+import { checkHoldLine, openStep, runtimeWaitHolds, type DeepMutable, type ExtraValidation } from "@petrina/core";
 import type { Kernel } from "./kernel.js";
 import { executionFor, ValidationRun } from "@petrina/orchestrator";
 import * as git from "@petrina/repositories/git";
 import { runCheckBatch, CHECK_TIMEOUT_MS, checkLogBeginning } from "./checks.js";
 import { containerEnv, ExtraContainer } from "./extra-container.js";
 import type { Result } from "./coordination.js";
+import type { CheckOwner } from "./check-queue.js";
+import { lineOwner } from "./check-activity.js";
 
 type Record = DeepMutable<ExtraValidation>;
 export interface ExtraRequest { taskId: string; productId?: string; name: string; reason: string; image: string; argv: string[]; requestId: string }
 const terminal = (record: ExtraValidation) => record.state === "finished";
 const VERSION_NOTE = "Saved version only; working edits are not included. Hand new work back to Petrina before requesting validation of it.";
+const PREREQUISITE_WAIT = "Waiting for this task's prerequisites before joining the check queue.";
+const RECOVERY_WAIT = "Waiting while Petrina confirms an earlier validation stopped, before joining the check queue.";
+/** Which wait keeps a request out of the line; a new wording of the same one is not another transition. */
+const waitKind = (reason: string | undefined) => !reason ? undefined : reason.startsWith(PREREQUISITE_WAIT) ? "prerequisites" : "recovery";
+/** One sentence, ending with its stop, so the next one never runs into it. */
+const sentence = (text: string) => /[.!?…]$/.test(text.trim()) ? text.trim() : `${text.trim()}.`;
+const ownerOf = (record: ExtraValidation): CheckOwner => ({ taskId: record.taskId, productId: record.productId, kind: "extra", validationId: record.id });
 
 /** Engine-owned runs, not leases. Callers only submit/read; their cancellation cannot release capacity. */
 export class ExtraValidations {
@@ -27,12 +36,17 @@ export class ExtraValidations {
 
   constructor(private readonly k: Kernel) {
     this.container = new ExtraContainer(k);
-    this.k.extraCheckBlocker = () => this.blocker;
     this.k.extraChecksActive = () => this.active > 0;
     for (const record of this.records) this.k.checkQueue.restoreOrder(record.queueOrder);
+    // A place comes only from the live line: a queued request gets its place again when it rejoins.
+    for (const record of this.records) delete record.queuePosition;
     const pending = this.records.filter(record => record.state !== "queued");
     this.k.extraRecovery = pending.length > 0;
-    for (const record of pending) this.jobs.set(record.id, { stop: new AbortController(), release: k.checkQueue.hold(), unblock: k.checkQueue.block() });
+    for (const record of pending) this.jobs.set(record.id, {
+      stop: new AbortController(),
+      release: k.checkQueue.hold(ownerOf(record)),
+      unblock: k.checkQueue.block(ownerOf(record)),
+    });
     this.ready = this.recover(pending).then(() => {
       this.k.extraRecovery = false;
       if (!k.stopped) {
@@ -48,27 +62,50 @@ export class ExtraValidations {
     });
   }
   private get records(): Record[] { return this.k.s.extraValidations ?? []; }
+  /** The same words as each waiting task's check activity: what holds the line, then the recorded cleanup explanation. */
   get blockers(): string[] {
-    return this.records.filter(record => record.state === "held").map(record =>
-      `Checks are waiting for extra validation “${record.name}”. ${record.cleanupDetail ?? `Make the local container service available, or stop container ${record.containerName}; Petrina will confirm cleanup.`}`);
+    return this.records.filter(record => record.state === "held").map(record => checkHoldLine({
+      kind: "cleanup",
+      owner: lineOwner(this.k, ownerOf(record)),
+      detail: record.cleanupDetail ?? `Make the local container service available, or stop container ${record.containerName}; Petrina will confirm cleanup.`,
+    }, this.k.s.tasks));
   }
   get blocker(): string | undefined { return this.blockers[0]; }
 
   get active(): number { return [...this.jobs.values()].filter(job => job.work).length; }
   outstanding(productId: string): ExtraValidation | undefined { return this.records.find(record => record.productId === productId); }
 
-  private prerequisiteWait(taskId: string): string | undefined {
+  /** Why a queued request is outside the shared line: its task's prerequisites, or Petrina confirming an earlier run stopped. */
+  private deferredWait(taskId: string): string | undefined {
     const task = this.k.s.tasks.find(task => task.id === taskId);
-    return task && runtimeWaitHolds(task)
-      ? `Waiting for this task's prerequisites before joining the check queue. ${this.k.taskAdmissionWait(task)}` : undefined;
+    if (task && runtimeWaitHolds(task)) return `${PREREQUISITE_WAIT} ${sentence(this.k.taskAdmissionWait(task))}`;
+    return this.k.extraRecovery ? RECOVERY_WAIT : undefined;
   }
-  private queuePosition(order: number): number {
-    return this.k.checkQueue.positionFor(order) + this.records.filter(record => record.state === "queued"
-      && record.queueOrder < order && !this.jobs.has(record.id) && !this.prerequisiteWait(record.taskId)).length;
+  /** A place only for a real member of the line, counted from the line itself. */
+  private queuePosition(record: ExtraValidation): number | undefined {
+    return this.k.checkQueue.has(record.queueOrder) ? this.k.checkQueue.positionFor(record.queueOrder) : undefined;
+  }
+  /** A request that never joined, or whose save failed, leaves the line without taking or reordering any place. */
+  private withdraw(id: string): void {
+    const job = this.jobs.get(id);
+    if (!job || job.work) return;
+    this.jobs.delete(id);
+    job.stop.abort("rollback");
+  }
+  /** The line changed: a waiting request's place follows silently, with no timeline line or event. */
+  private placeChanged(record: Record): void {
+    if (this.k.stopped || record.state !== "queued" || !this.records.includes(record)) return;
+    const place = this.queuePosition(record);
+    if (place === undefined || place === record.queuePosition) return;
+    record.queuePosition = place;
+    this.k.commit(this.k.task(record.taskId));
   }
   private queuedWords(record: ExtraValidation): string {
-    return record.waitingReason ? `Extra validation “${record.name}”: ${record.waitingReason} Working edits are not included.`
-      : `Extra validation “${record.name}” queued at place ${record.queuePosition}. Working edits are not included.`;
+    return record.waitingReason
+      ? `Extra validation “${record.name}”: ${sentence(record.waitingReason)} Working edits are not included.`
+      : record.queuePosition !== undefined
+        ? `Extra validation “${record.name}” queued at place ${record.queuePosition}. Working edits are not included.`
+        : `Extra validation “${record.name}” queued. Working edits are not included.`;
   }
 
   async submit(request: ExtraRequest, saveReceipt: (result: Result) => void): Promise<Result> {
@@ -103,22 +140,29 @@ export class ExtraValidations {
     ].includes(task.state)) throw new Error("The task changed while the version was inspected. Inspect it again.");
     const id = randomUUID();
     const queueOrder = this.k.checkQueue.reserveOrder();
-    const waitingReason = this.prerequisiteWait(task.id);
+    const waitingReason = this.deferredWait(task.id);
     const record: Record = { id, requestId: request.requestId, taskId: task.id, productId: scope.work.productId, productName: product.name,
       repository: product.repo, source, nodeId: openStep(task)?.id, name: request.name, reason: request.reason, image: request.image, argv: [...request.argv],
       ...saved, versionNote: VERSION_NOTE, workingEdits, host: { system: platform(), arch: arch() },
       containerName: `petrina-extra-${id}`, owner: createHash("sha256").update(realpathSync(this.k.dataDir)).digest("hex"),
       snapshot: join(this.k.dataDir, "extra-snapshots", id), state: "queued", queuedAt: Date.now(), queueOrder,
-      ...(waitingReason ? { waitingReason } : { queuePosition: this.queuePosition(queueOrder) }) };
-    // Insertion, timeline and receipt share one commit, including a pending to-do flush
+      ...(waitingReason ? { waitingReason } : {}) };
+    // Insertion, joining the line, timeline and receipt share one commit, including a pending to-do flush
     // triggered by logging. No startup can observe ownership without its retry identity.
-    return this.change(record, () => {
-      this.k.s.extraValidations = [...this.records, record];
-      this.note(record, "queued", this.queuedWords(record));
-      const reply = this.reply(record);
-      saveReceipt(reply);
-      return reply;
-    });
+    try {
+      return this.change(record, () => {
+        this.k.s.extraValidations = [...this.records, record];
+        // An eligible request joins the shared line at once, so its reply and timeline give the place it takes.
+        if (!waitingReason && !this.k.stopped) this.enqueue(record);
+        this.note(record, "queued", this.queuedWords(record));
+        const reply = this.reply(record);
+        saveReceipt(reply);
+        return reply;
+      });
+    } catch (error) {
+      this.withdraw(id); // The request was never accepted.
+      throw error;
+    }
   }
 
   get(requestId: string): Result | undefined {
@@ -131,7 +175,7 @@ export class ExtraValidations {
   }
   private reply(record: ExtraValidation): Result {
     return { outcome: terminal(record) ? "completed" : "pending", requestId: record.requestId, validation: structuredClone(record),
-      message: `${record.versionNote}${record.workingEdits ? " The working copy currently has changes that are excluded." : ""}${record.waitingReason ? ` ${record.waitingReason}` : ""}` };
+      message: `${record.versionNote}${record.workingEdits ? " The working copy currently has changes that are excluded." : ""}${record.waitingReason ? ` ${sentence(record.waitingReason)}` : ""}` };
   }
 
   pump(): void {
@@ -143,20 +187,31 @@ export class ExtraValidations {
         continue;
       }
       if (record.state !== "queued") continue;
-      const waitingReason = this.prerequisiteWait(record.taskId);
-      if (record.waitingReason !== waitingReason) this.change(record, () => {
-        if (waitingReason) {
-          record.waitingReason = waitingReason;
-          delete record.queuePosition;
+      const waitingReason = this.deferredWait(record.taskId);
+      // Joining or leaving the line is a real transition, said once; a new wording of the same wait is saved quietly.
+      const joining = !waitingReason && !this.jobs.has(record.id);
+      if (waitKind(record.waitingReason) !== waitKind(waitingReason)) {
+        try {
+          this.change(record, () => {
+            if (waitingReason) {
+              record.waitingReason = waitingReason;
+              delete record.queuePosition;
+            } else {
+              delete record.waitingReason;
+              if (joining) this.enqueue(record);
+            }
+            this.note(record, "queued", this.queuedWords(record));
+            this.persist();
+          });
+        } catch (error) {
+          if (joining) this.withdraw(record.id);
+          throw error;
         }
-        else {
-          delete record.waitingReason;
-          record.queuePosition = this.queuePosition(record.queueOrder);
-        }
-        this.note(record, "queued", this.queuedWords(record));
+      } else if (waitingReason && record.waitingReason !== waitingReason) {
+        record.waitingReason = waitingReason;
         this.persist();
-      });
-      if (this.jobs.has(record.id)) continue;
+      }
+      if (this.jobs.has(record.id) || waitingReason) continue;
       this.enqueue(record);
     }
     this.k.checkQueue.pump();
@@ -167,15 +222,19 @@ export class ExtraValidations {
     if (held()) return; // Keep the durable request and original order without occupying the shared line.
     const job = { stop: new AbortController() } as NonNullable<ReturnType<typeof this.jobs.get>>;
     this.jobs.set(record.id, job);
+    const forget = () => { if (this.jobs.get(record.id) === job) this.jobs.delete(record.id); };
     const unsubscribe = this.k.subscribe(() => { if (held()) job.stop.abort("prerequisite"); });
+    // The place it takes, from the live line as it joins: the runs holding or waiting for a place before it.
+    record.queuePosition = this.k.checkQueue.positionFor(record.queueOrder);
     // Queue membership is immediate; even paused submissions keep FIFO arrival order.
-    void this.k.checkQueue.acquire(job.stop.signal, true, record.queueOrder).then(place => {
+    void this.k.checkQueue.acquire(job.stop.signal, true, record.queueOrder, () => this.placeChanged(record), ownerOf(record)).then(place => {
       unsubscribe();
       job.release = place;
       if (job.stop.signal.aborted || this.k.stopped || this.k.taskAdmissionsClosed(record.taskId)) {
+        // A rolled-back join is retried by the next scheduling pass, never immediately.
         place();
-        this.jobs.delete(record.id);
-        if (!this.k.stopped) this.pump();
+        forget();
+        if (!this.k.stopped && job.stop.signal.reason !== "rollback") this.pump();
         return;
       }
       const work = this.execute(record, job.stop.signal).finally(() => {
@@ -187,8 +246,8 @@ export class ExtraValidations {
       this.k.syncIdleSleep();
     }, () => {
       unsubscribe();
-      this.jobs.delete(record.id);
-      if (!this.k.stopped) this.pump();
+      forget();
+      if (!this.k.stopped && job.stop.signal.reason !== "rollback") this.pump();
     })
       .catch(error => console.error("Could not update extra validation queue:", error));
   }
@@ -237,9 +296,9 @@ export class ExtraValidations {
 
   private hold(record: Record, detail: string): void {
     const job = this.jobs.get(record.id)!;
-    job.unblock ??= this.k.checkQueue.block();
     record.state = "held";
     record.cleanupDetail ??= detail;
+    job.unblock ??= this.k.checkQueue.block(ownerOf(record));
     this.note(record, "held", `Extra validation “${record.name}” is held: ${record.cleanupDetail}`);
     this.persist();
     this.k.checkQueue.pump();
@@ -306,7 +365,12 @@ export class ExtraValidations {
     if (task) {
       const node = task.journey?.find(node => node.id === record.nodeId);
       if (node) node.extraValidations = [...(node.extraValidations ?? []).filter(entry => entry.id !== record.id), structuredClone(record)];
-      this.k.log(task, kind === "held" ? "warn" : "milestone", words);
+      // Labelled with the product this run used, whichever product the task shows now.
+      const work =
+        [...(task.repositories ?? []), ...(task.excludedRepositories ?? [])].find(
+          (entry) => entry.productId === record.productId,
+        ) ?? (task.repository?.productId === record.productId ? task.repository : undefined);
+      this.k.log(work ? { task, work } : task, kind === "held" ? "warn" : "milestone", words);
       this.k.saveExtraValidationTask(record.id, task, task.timeline.at(-1)!);
     }
     const event = { at: Date.now(), kind: `extra.${kind}` as const, taskId: record.taskId, productIds: [record.productId], productId: record.productId,
@@ -404,15 +468,20 @@ export class ExtraValidations {
     return this.retrying ??= this.ready.then(async () => {
       if (this.k.stopped) return;
       for (const record of [...this.records].filter(record => record.state === "held")) {
+        const before = record.cleanupDetail;
         try {
           if (await this.container.cleanup(record)) {
             await this.sealLog(record);
             if (record.resumeQueued) this.requeue(record);
-          else this.finish(
-            record,
-            record.result ?? "stopped",
-            record.detail ?? "Cleanup confirmed."
-          );
+            else this.finish(
+              record,
+              record.result ?? "stopped",
+              record.detail ?? "Cleanup confirmed."
+            );
+          } else if (record.cleanupDetail !== before) {
+            // Capacity stays held. Waiting runs read the new evidence in the same words, with no new timeline line.
+            this.persist();
+            this.k.checkQueue.refresh();
           }
         } catch (error) { this.hold(record, `Cleanup is unconfirmed: ${String(error)}`); }
       }

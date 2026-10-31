@@ -5,13 +5,19 @@ import {
   checkOutcomeLabel,
   checkAttemptsOf,
   checkCounts,
+  checkReasonWords,
+  inCheckLine,
   incompleteCheckOutcome,
+  runsAhead,
+  type CheckActivity,
+  type CheckRunReason,
   type JourneyProductCheck
 } from "@petrina/core";
 import { duration, type Lookup } from "../lib";
 
 function outcome(checks: readonly JourneyProductCheck[]) {
   const { failed, passed } = checkCounts(checks);
+  if (checks.every((check) => check.result === "pending")) return `${checks.length} ${checks.length === 1 ? "check" : "checks"} not started yet`;
   if (checks.some((check) => check.result === "running" || check.result === "pending")) return `${passed} of ${checks.length} passed · in progress`;
   const incomplete = incompleteCheckOutcome(checks);
   if (incomplete) return `${incomplete} · ${passed} of ${checks.length} passed`;
@@ -19,6 +25,7 @@ function outcome(checks: readonly JourneyProductCheck[]) {
   return `${passed} of ${checks.length} passed${checks.some((check) => check.result === "skipped") ? " · remaining checks skipped" : ""}`;
 }
 
+/** `activity`: the task's current check fact, on the live step only. `reasons`: why each fresh run was needed, as recorded. */
 type Props = {
   checks: readonly JourneyProductCheck[];
   find: Lookup;
@@ -26,12 +33,27 @@ type Props = {
   taskId?: string;
   onOriginal?: (step: string, attempt?: string) => void;
   selectedAttempt?: string;
-  evidence?: boolean
+  evidence?: boolean;
+  activity?: CheckActivity;
+  reasons?: readonly CheckRunReason[];
 };
+
+const clock = (at: number) => new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+/** A run that has not started waits in the check line: since when, and how it stands there now. */
+function lineWords(activity: CheckActivity, since: number): string {
+  const where =
+    activity.phase === "held"
+      ? "held for cleanup"
+      : activity.phase === "paused"
+        ? `keeping its place while the pool is paused${activity.ahead !== undefined ? ` · ${runsAhead(activity.ahead)}` : ""}`
+        : runsAhead(activity.ahead ?? 0);
+  return `Waiting in the check line since ${clock(since)} · ${where}`;
+}
 
 const recordedDuration = (ms: number) => ms < 60_000 ? `${Math.round(ms / 100) / 10}s` : `${Math.floor(ms / 60_000)}m ${Math.round(ms % 60_000 / 1000)}s`;
 
-function Attempt({ checks, find, now, taskId, onOriginal, evidence }: Props) {
+function Attempt({ checks, find, now, taskId, onOriginal, evidence, activity, reasons }: Props) {
   const product = checks[0]?.productId;
   const reused = checks.some((check) => check.reusedAt !== undefined);
   const starts = checks.flatMap((check) => check.queuedAt ?? check.startedAt ?? check.run?.startedAt ?? []);
@@ -39,15 +61,23 @@ function Attempt({ checks, find, now, taskId, onOriginal, evidence }: Props) {
   const start = starts.length ? Math.min(...starts) : undefined;
   const running = checks.some((check) => check.result === "pending" || check.result === "running");
   const end = ends.length ? Math.max(...ends) : undefined;
-  const timing = start === undefined ? "Attempt timing unavailable" : `Started ${new Date(start).toLocaleString()} · ${running ? `${duration(
-    start,
-    now
-  )} so far` : end !== undefined ? `${duration(
-    start,
-    end
-  )} elapsed` : "duration unavailable"}`;
+  const queued = !!activity && inCheckLine(activity) && checks.every((check) => check.result === "pending");
+  const timing = start === undefined
+    ? "Attempt timing unavailable"
+    : queued
+      ? lineWords(activity!, start)
+      : `Started ${new Date(start).toLocaleString()} · ${running ? `${duration(
+        start,
+        now
+      )} so far` : end !== undefined ? `${duration(
+        start,
+        end
+      )} elapsed` : "duration unavailable"}`;
+  const attempt = checks[0]?.attemptId ?? "run-0";
+  const reason = reasons?.findLast((entry) => (entry.attemptId ?? "run-0") === attempt && (!entry.productId || entry.productId === product));
   return <div className="journey-context check-attempt">
     {(product || (!evidence && !reused)) && <p className="quiet-text num">{product && (find.product(product)?.name ?? "Removed product")}{!evidence && !reused && <>{product ? " · " : ""}{timing}</>}</p>}
+    {reason && !evidence && !reused && <p className="check-reason">Why these checks run: {checkReasonWords(reason)}</p>}
     <ul className="journey-check-list">{checks.map((recorded, index) => {
       const result = checkEntryResult(recorded);
       const check = { ...recorded, result };
@@ -126,7 +156,7 @@ export function CheckAttempts(props: Props) {
       open={props.selectedAttempt !== undefined && checks.some((check) => (check.attemptId ?? check.id?.match(/^run-\d+(?=:)/)?.[0] ?? "run-0") === props.selectedAttempt)}
     >
       <summary>Earlier attempt {attempts.length - index - 1} · {outcome(checks)}</summary>
-      <Attempt {...props} checks={checks} />
+      <Attempt {...props} checks={checks} activity={undefined} />
     </details>)}
   </div>;
 }

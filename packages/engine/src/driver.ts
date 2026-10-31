@@ -167,7 +167,12 @@ export class Driver {
       trackWork: work => k.trackWork(work), reportDriverError: (id, error) => { console.error(`Could not finish task ${id}:`, error); },
     }, {
       ...shared, plannerProfileId: PLANNER_PROFILE,
-      checkPreparation: { claim: id => checks.claimPreparation(id), release: id => checks.releasePreparation(id) },
+      checkPreparation: {
+        claim: id => checks.claimPreparation(id),
+        release: id => checks.releasePreparation(id),
+        slots: () => k.checkQueue.view().limit,
+        clear: task => checks.clearActivity(task),
+      },
       phases: {
         prepareWorkspace: (
           task,
@@ -433,6 +438,7 @@ export class Driver {
    */
   recover(): void {
     this.k.s.inbox = recoverStartupWork(this.k.s.tasks, this.k.s.inbox, {
+      waitingLine: (task) => this.k.waitingLine(task),
       onDroppedPermission: (task, item) =>
         this.k.log(
           task,

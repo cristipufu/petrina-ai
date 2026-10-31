@@ -2,6 +2,7 @@
 // Routine tool actions, streamed text, progress wording and clocks stay out, so an unchanged save produces nothing.
 
 import { exhaustedAcceptanceFailure } from "./acceptance.js";
+import { CHECK_WORDS, checkActivityLine, checkReasonWords, inCheckLine, type CheckActivity } from "./check-activity.js";
 import { findingKind } from "./findings.js";
 import { checkSetupOutcome } from "./check-environment.js";
 import { checkCounts, checkEntryResult } from "./check-evidence.js";
@@ -12,7 +13,7 @@ import type { Finding, Id, JourneyAgentInput, JourneyStep, Role, Task, TaskState
 import { publishingResult } from "./publishing-result.js";
 import { assignedProducts, displayTask, landingState, taskProductIds } from "./repositories.js";
 import { roleForTask } from "./roles.js";
-import { runtimeWaitView } from "./runtime-wait.js";
+import { runtimeWaitView, runtimeWaitWords } from "./runtime-wait.js";
 import {
   clip,
   EVENT_MANIFEST_ENTRIES,
@@ -31,17 +32,20 @@ import {
 export * from "./workflow-fact-types.js";
 
 function waitKindOf(task: TaskState, ctx: WorkflowContext): WaitKind | undefined {
-  if (task.state !== "waiting" && !(task.state === "queued" && task.statusLine.startsWith("Waiting for “"))) return undefined;
-  const wait = runtimeWaitView(task, ctx.findTask ?? (() => undefined));
+  const waiting = task.state === "waiting" || (task.state === "queued" && task.statusLine.startsWith("Waiting for “"));
+  const wait = waiting ? runtimeWaitView(task, ctx.findTask ?? (() => undefined)) : undefined;
   if (wait?.held) return wait.decisionNeeded ? "needs-your-decision" : "dependencies";
+  // A run in the check line keeps its task running: its structured fact, never its words, names the wait.
+  if (inCheckLine(task.checkActivity) && (task.state === "running" || task.state === "waiting")) return "checks";
+  if (!waiting) return undefined;
   const now = ctx.now;
   if (task.capacityPaused?.length || task.modelCapacity?.some((entry) => entry.until > now)) return "capacity";
   const line = task.statusLine;
   if (line.startsWith("Waiting for usage") || (ctx.limited?.length && /usage|limit/i.test(line))) return "usage";
   if (line.startsWith("Waiting for “")) return "dependencies";
   if (line.startsWith("Waiting for the pool to resume") || line.startsWith("Waiting: Petrina is")) return "pool";
+  if (line.startsWith(CHECK_WORDS.recovery)) return "checks";
   if (line.startsWith("Waiting for room to prepare")) return "preparation";
-  if (line.startsWith("Waiting to run the checks")) return "checks";
   if (line.startsWith("Waiting for a free")) return "slot";
   if (/^Checking .+ before (returning to its saved conversation|the Builder returns)$/.test(line)) return "readiness";
   return "other";
@@ -172,7 +176,9 @@ function nodeFacts(step: JourneyStep, index: number, journey: readonly JourneySt
     ...(step.work ? { work: step.work } : {}), ...(step.waitsFor ? { waitsFor: step.waitsFor } : {}), ...(step.waitsOn ? { waitsOn: step.waitsOn } : {}),
     startedAt: step.startedAt, ...(step.endedAt !== undefined ? { endedAt: step.endedAt } : {}), ...(step.end ? { end: step.end } : {}),
     ...(step.outcome ? { outcome: step.outcome } : {}), ...(step.reason ? { reason: step.reason } : {}), ...(step.tone ? { tone: step.tone } : {}),
-    ...(step.trigger ? { trigger: step.trigger } : {}), ...(step.builderConversation ? { builderConversation: step.builderConversation } : {}), ...(step.legacy ? { legacy: true } : {}),
+    ...(step.trigger ? { trigger: step.trigger } : {}),
+    ...(step.checkReasons?.length ? { checkReasons: step.checkReasons.map((reason) => ({ ...reason, words: checkReasonWords(reason) })) } : {}),
+    ...(step.builderConversation ? { builderConversation: step.builderConversation } : {}), ...(step.legacy ? { legacy: true } : {}),
     inputs, results, checks, ...(step.work === "check-reuse" && step.productChecks ? { reusedFailed: checkCounts(step.productChecks).failed } : {}), asks, ...(acceptance ? { acceptance } : {}),
     ...(step.checkSetups?.length ? { localSetup: { count: step.checkSetups.length, omittedEarlier: Math.max(
       0,
@@ -187,6 +193,11 @@ function nodeFacts(step: JourneyStep, index: number, journey: readonly JourneySt
     ...(step.result?.findingsSettled ? { findingsSettled: true } : {}),
     ...(step.result?.findingsSettled && step.result.findingChanges ? { findingChanges: step.result.findingChanges } : {}),
   };
+}
+
+function checkWaitFacts(activity: CheckActivity): NonNullable<WorkflowFacts["checkWait"]> {
+  const { since: _since, running: _running, ...rest } = activity;
+  return { ...rest, line: checkActivityLine(activity) };
 }
 
 /** The compact facts the event log watches for one task. Everything volatile stays out. */
@@ -218,7 +229,9 @@ export function workflowFacts(task: TaskState, ctx: WorkflowContext): WorkflowFa
       prerequisites: wait.prerequisites,
       phase: wait.phase
     } } : {}),
-    statusLine: task.statusLine,
+    // A held prerequisite wait is described by its own record, never by a status line left from an earlier wait.
+    statusLine: wait?.held && task.state === "waiting" ? runtimeWaitWords(wait) : task.statusLine,
+    ...(task.checkActivity && inCheckLine(task.checkActivity) ? { checkWait: checkWaitFacts(task.checkActivity) } : {}),
     agents: [
       task.agent,
       ...(task.helpers ?? [])

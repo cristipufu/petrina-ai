@@ -1,15 +1,15 @@
 import { afterAll, expect, it, spyOn } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { commandInputText, proofDecision, proofGap } from "@petrina/core";
-import { executionFor } from "@petrina/orchestrator";
+import { commandInputText, nextLine, proofDecision, proofGap } from "@petrina/core";
+import { executionFor, repositoryView } from "@petrina/orchestrator";
 import { versionsOf } from "../../../src/repositories.js";
 import { recordReviewProofs } from "@petrina/orchestrator";
 import * as gitSteps from "@petrina/repositories/git";
 import { proofRequestFixtures } from "../../fixtures/proof-requests.js";
 import { readRef, readWorktreeCommit } from "../../fixtures/shared-preparation.js";
 
-const { signal, fixture, close } = proofRequestFixtures();
+const { signal, fixture, testerReply, close } = proofRequestFixtures();
 afterAll(close);
 it("checks a saved prepared delivery again after main moves and retains the publishing return reason", async () => {
   const f = await fixture(); await f.request(); await f.recordPass();
@@ -181,4 +181,35 @@ it("guards a pending local push through interrupted delivery recovery while pres
     expect(push).not.toHaveBeenCalled(); expect(f.scope.work.landed?.sha).toBe(tested.slice(0, 7));
     expect(f.scope.work.confirmedDelivery?.sha).toBe(tested);
   } finally { push.mockRestore(); refs.mockRestore(); contains.mockRestore(); connection.mockRestore(); await f.close(); }
+});
+
+for (const ownCodeChanged of [true, false]) it(`Next agrees with requested-proof execution after two refreshes when ${ownCodeChanged ? "the task code changed" : "only main changed"}`, async () => {
+  const f = await fixture(false, true);
+  const unavailable = testerReply(f, () => [], undefined, [{ text: "Linux recovery works", result: "blocked", reason: "No private recovery service" }]);
+  let stop: ReturnType<typeof spyOn> | undefined;
+  try {
+    f.task.stageIndex = 1;
+    await f.run(f.engine, () => f.engine["work"].runDo(f.scope, f.tester, signal()));
+    unavailable.mockRestore();
+    expect(f.task.acceptanceUnverified).toBe(true);
+    const original = JSON.stringify(f.task.journey!.at(-1));
+    const originalId = f.task.journey!.at(-1)!.id;
+    await f.request(); f.task.proofRefreshes = 2;
+    if (ownCodeChanged) {
+      writeFileSync(join(f.scope.work.worktree!, "feature.txt"), "The task's revised implementation\n");
+      await gitSteps.commitChanges(f.scope.work.worktree!, "Revise the implementation");
+    } else await f.advance();
+    await f.run(f.engine, () => f.engine["updates"].upToDate(f.scope, signal()));
+    await f.run(f.engine, () => f.engine["checks"].failing(f.scope, signal(), undefined, "delivery-check"));
+    f.scope.work.checkedSha = readWorktreeCommit(f.scope.work.worktree!)!.commit;
+    f.scope.work.checkedPatch = await f.run(f.engine, () => f.engine["updates"].patch(f.scope));
+    f.task.stageIndex = 3; f.task.state = "running";
+    expect(nextLine(f.engine.activeState(), repositoryView(f.scope))).toContain(ownCodeChanged ? "final acceptance testing for requested proof" : "Next: your OK to ship");
+    stop = spyOn(f.engine["work"], "runDo").mockResolvedValue("stop");
+    await f.drive();
+    expect(f.task.retest === true).toBe(ownCodeChanged);
+    expect(stop).toHaveBeenCalledTimes(ownCodeChanged ? 1 : 0);
+    expect(f.task.proofRefreshes).toBe(2);
+    expect(JSON.stringify(f.task.journey!.find(step => step.id === originalId))).toBe(original);
+  } finally { unavailable.mockRestore(); stop?.mockRestore(); await f.close(); }
 });
