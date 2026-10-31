@@ -1,5 +1,6 @@
-import { afterEach, afterAll, describe, expect, it, spyOn } from "bun:test";
+import { afterEach, afterAll, describe, expect, it } from "bun:test";
 import { createProcessLease } from "@petrina/test-support/process-lease";
+import { currentSlow } from "@petrina/test-support/slow";
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, sep } from "node:path";
@@ -71,22 +72,23 @@ while (!existsSync(${JSON.stringify(release)})) await Bun.sleep(20);`;
     const gone = Bun.spawn([process.execPath, "-e", "process.exit(0)"], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
     await gone.exited;
     const standIn = (pid: number, out: string, err: string) => ({ pid, exited: new Promise<number>(() => {}), stdout: new Response(out).body!, stderr: new Response(err).body!, kill() {} }) as unknown as ReturnType<typeof Bun.spawn>;
-    const spawning = spyOn(Bun, "spawn");
     try {
-      await waitFor(async () => (await childState(defunct.pid)) === "ended", "the stand-in to be defunct", 10_000);
-      spawning.mockReturnValueOnce(standIn(defunct.pid, "finished\n", "complaint\n"));
+      await waitFor(async () => (await childState(defunct.pid)) === "ended", "the stand-in to be defunct", 10_000 * currentSlow());
       const started = Date.now();
-      const lost = await operations.run(["git", "status"], temp);
+      const lost = await operations.run(["git", "status"], temp, undefined, {
+        start: () => standIn(defunct.pid, "finished\n", "complaint\n"),
+      });
       const elapsed = Date.now() - started;
       expect(lost).toEqual({ code: 124, stdout: "finished", stderr: `complaint\n${operations.EXIT_UNREPORTED}`, timedOut: true, exitUnreported: true });
       expect(elapsed).toBeGreaterThanOrEqual(operations.EXIT_GRACE_MS);
-      expect(elapsed).toBeLessThan(25_000);
+      expect(elapsed).toBeLessThan(25_000 * currentSlow());
       // A child already collected without its exit reported, under a time limit that is not what ends the wait.
-      spawning.mockReturnValueOnce(standIn(gone.pid, "", ""));
-      const collected = await operations.run(["git", "status"], temp, undefined, { timeoutMs: 60_000 });
+      const collected = await operations.run(["git", "status"], temp, undefined, {
+        timeoutMs: 60_000 * currentSlow(),
+        start: () => standIn(gone.pid, "", ""),
+      });
       expect(collected).toEqual({ code: 124, stdout: "", stderr: operations.EXIT_UNREPORTED, timedOut: true, exitUnreported: true });
     } finally {
-      spawning.mockRestore();
       await defunct.release();
     }
   }));
@@ -97,9 +99,8 @@ while (!existsSync(${JSON.stringify(release)})) await Bun.sleep(20);`;
     const lease = await createProcessLease();
     const ready = join(temp, "pipe-holder-ready"), parentReady = join(temp, "pipe-parent-ready"), release = join(temp, "pipe-parent-release");
     const child = lease.program(`require("node:fs").writeFileSync(${JSON.stringify(ready)}, "ready"); await new Promise(() => {});`);
-    const parent = lease.program(`const { spawn } = require("node:child_process");
-      const { existsSync, writeFileSync } = require("node:fs");
-      spawn(process.execPath, ["-e", ${JSON.stringify(child)}], { stdio: "inherit" });
+    const parent = lease.program(`const { existsSync, writeFileSync } = require("node:fs");
+      Bun.spawn([process.execPath, "--no-env-file", "-e", ${JSON.stringify(child)}], { stdin: "ignore", stdout: "inherit", stderr: "inherit", detached: true }).unref();
       while (!existsSync(${JSON.stringify(ready)})) await new Promise(resolve => setTimeout(resolve, 1));
       writeFileSync(${JSON.stringify(parentReady)}, "ready");
       while (!existsSync(${JSON.stringify(release)})) await new Promise(resolve => setTimeout(resolve, 1));`);
@@ -114,7 +115,7 @@ while (!existsSync(${JSON.stringify(release)})) await Bun.sleep(20);`;
       });
       expect(result).toMatchObject({ code: 124, timedOut: true });
       expect(result.stderr).toContain("timed out");
-      expect(Date.now() - started).toBeLessThan(1_500);
+      expect(Date.now() - started).toBeLessThan(1_500 * currentSlow());
       expect(existsSync(ready)).toBe(true);
       expect(owned.exitCode).toBe(0);
     } finally {
@@ -130,15 +131,22 @@ while (!existsSync(${JSON.stringify(release)})) await Bun.sleep(20);`;
       start(controller) { controller.enqueue(new TextEncoder().encode("partial diagnostic\n")); },
       cancel() { cancelled = true; },
     });
-    const spawning = spyOn(Bun, "spawn");
     try {
       await waitFor(async () => (await childState(defunct.pid)) === "ended", "the owned process to be defunct");
-      spawning.mockReturnValueOnce({ pid: defunct.pid, exited: new Promise<number>(() => {}), stdout, stderr: new Response("").body!, kill() {} } as unknown as ReturnType<typeof Bun.spawn>);
       const started = Date.now();
-      const result = await operations.run(["git", "worktree", "prune"], temp);
+      const result = await operations.run(["git", "worktree", "prune"], temp, undefined, {
+        start: () =>
+          ({
+            pid: defunct.pid,
+            exited: new Promise<number>(() => {}),
+            stdout,
+            stderr: new Response("").body!,
+            kill() {},
+          }) as unknown as ReturnType<typeof Bun.spawn>,
+      });
       expect(result).toEqual({ code: 124, timedOut: true, exitUnreported: true, stdout: "partial diagnostic", stderr: operations.EXIT_UNREPORTED });
-      expect(Date.now() - started).toBeLessThan(25_000);
+      expect(Date.now() - started).toBeLessThan(25_000 * currentSlow());
       expect(cancelled).toBe(true);
-    } finally { spawning.mockRestore(); await defunct.release(); }
+    } finally { await defunct.release(); }
   }));
 });

@@ -283,7 +283,7 @@ it("owns only this run's repositories, database and captures", async () => {
   }
 });
 
-for (const signal of ["SIGINT", "SIGTERM"] as const) it(`stops its parallel workers and reclaims their temporary folder on ${signal}`, async () => {
+for (const signal of ["SIGINT", "SIGTERM"] as const) it.skipIf(process.platform === "win32")(`stops its parallel workers and reclaims their temporary folder on ${signal}`, async () => {
   const record = join(fixture, `${signal}.json`);
   const test = join(fixture, `${signal}.test.ts`);
   writeFileSync(test, `import { afterAll, it } from "bun:test";
@@ -315,7 +315,7 @@ it("waits to be interrupted", async () => {
     expect(existsSync(saved.folder)).toBe(false);
     expect(existsSync(saved.browsers)).toBe(false);
     expect(existsSync(saved.owned)).toBe(false);
-    expect(realpathSync(dirname(saved.folder))).toBe(realpathSync(tmpdir()));
+    expect(realpathSync.native(dirname(saved.folder))).toBe(realpathSync.native(tmpdir()));
     expect(existsSync(tmpdir())).toBe(true);
   } finally {
     if (child.exitCode === null) { child.kill("SIGKILL"); await child.exited; }

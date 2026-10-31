@@ -23,6 +23,8 @@ export function processHostFor(platform: NodeJS.Platform, helper: ProcessHelper,
     ownedSpawn: { detached: groups, windowsHide: true },
     ...(!groups ? { stopTree: (pid: number, timeoutMs: number): Promise<boolean> => {
       if (!Number.isSafeInteger(pid) || pid <= 0 || !(timeoutMs > 0 && timeoutMs <= 2_147_483_647)) return Promise.resolve(false);
+      const budget = Math.ceil(timeoutMs);
+      if (budget > 2_147_483_647) return Promise.resolve(false);
       return new Promise<boolean>(resolve => {
         let cancel: (() => void) | undefined;
         let child: HelperProcess | undefined;
@@ -34,12 +36,12 @@ export function processHostFor(platform: NodeJS.Platform, helper: ProcessHelper,
           resolve(success);
         };
         try {
-          child = helper("taskkill", ["/pid", String(pid), "/T", "/F"], { timeout: timeoutMs, windowsHide: true }, error => finish(!error));
+          child = helper("taskkill", ["/pid", String(pid), "/T", "/F"], { timeout: budget, windowsHide: true }, error => finish(!error));
           if (!settled) cancel = arm(() => {
             if (settled) return;
             finish(false);
             try { child?.kill("SIGKILL"); } catch { /* The helper already stopped. */ }
-          }, timeoutMs);
+          }, budget);
         } catch {
           finish(false);
           try { child?.kill("SIGKILL"); } catch { /* The helper already stopped. */ }

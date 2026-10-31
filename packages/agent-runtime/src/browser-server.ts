@@ -5,7 +5,7 @@ import type { connectBrowser } from "./browser-connection.js";
 
 export function runBrowserServer(args: readonly string[] = process.argv.slice(2)): void {
   const [root, secret, owner] = args as [string, string, string];
-  process.chdir(root);
+  if (process.platform !== "win32") process.chdir(root);
   // Most conversations never use a page. Keep their supplied endpoint ready without
   // loading Playwright and its protocol libraries in another process for each one.
   let connection: ReturnType<typeof connectBrowser> | undefined;

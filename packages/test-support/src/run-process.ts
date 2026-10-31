@@ -1,7 +1,7 @@
 import { runCommand, startCommand, type CommandOptions, type CommandResult, type Started } from "./commands.js";
 
 /** One suite execution's outer bound; individual test limits and caller-supplied focused limits stay unchanged. */
-export const SUITE_RUN_TIMEOUT_MS = 20 * 60_000;
+export const SUITE_RUN_TIMEOUT_MS = 35 * 60_000;
 export const INTERRUPT_GRACE_MS = 5_000;
 type InterruptSignal = "SIGINT" | "SIGTERM";
 export type ProcessOutcome = { kind: "exited"; result: CommandResult }

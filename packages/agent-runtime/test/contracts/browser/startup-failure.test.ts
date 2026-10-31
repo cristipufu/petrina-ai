@@ -83,7 +83,7 @@ it("keeps a failed startup registered when the helper exits but another owned ac
   const lease = await createProcessLease(), actor = join(root, "actor.ts"), sidecar = join(root, "sidecar.ts");
   writeFileSync(sidecar, lease.program(`require("node:fs").writeFileSync(${JSON.stringify(sidecarReady)}, "ready"); await new Promise(() => undefined);`));
   writeFileSync(actor, lease.program(`const { existsSync, writeFileSync } = require("node:fs");
-    require("node:child_process").spawn(process.execPath, [${JSON.stringify(sidecar)}], { stdio: ["ignore", process.stdout, process.stderr] });
+    Bun.spawn([process.execPath, "--no-env-file", ${JSON.stringify(sidecar)}], { stdin: "ignore", stdout: "inherit", stderr: "inherit", detached: true }).unref();
     while (!existsSync(${JSON.stringify(sidecarReady)})) await Bun.sleep(5); writeFileSync(${JSON.stringify(ready)}, "ready");
     while (!existsSync(${JSON.stringify(release)})) await Bun.sleep(5);
     await new Promise(resolve => process.stdout.write("{broken\\n", resolve)); process.exit(0);`));

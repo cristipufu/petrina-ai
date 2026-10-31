@@ -31,7 +31,28 @@ export async function stopAll(
   if (child.pid === undefined) return true;
   if (processHost.stopTree) {
     if (!isChildRunning(child)) return true;
-    return processHost.stopTree(child.pid, 3000);
+    const pid = child.pid;
+    const missing = () => {
+      try {
+        process.kill(pid, 0);
+        return false;
+      } catch (error) {
+        return (error as NodeJS.ErrnoException).code === "ESRCH";
+      }
+    };
+    const stopped = await processHost.stopTree(pid, 3000);
+    if (isChildRunning(child)) {
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        /* Already gone. */
+      }
+    }
+    const deadline = Date.now() + 2_000;
+    while ((isChildRunning(child) || !missing()) && Date.now() < deadline) {
+      await Bun.sleep(10);
+    }
+    return !isChildRunning(child) && (stopped || missing());
   }
   return stopAgentPrograms({ pid: child.pid, running: () => isChildRunning(child) }, graceMs, collectPrograms, {
     now: () => Date.now(),

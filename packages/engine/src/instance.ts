@@ -84,7 +84,8 @@ export function readConnection(home: string): Connection | undefined {
 export function previousToken(home: string): string | undefined {
   try {
     const info = lstatSync(connectionPath(home));
-    if (!info.isFile() || (process.getuid && info.uid !== process.getuid()) || (info.mode & 0o077) !== 0) return undefined;
+    const readableByOthers = process.platform !== "win32" && (info.mode & 0o077) !== 0;
+    if (!info.isFile() || (process.getuid && info.uid !== process.getuid()) || readableByOthers) return undefined;
     const token = (JSON.parse(readFileSync(connectionPath(home), "utf8")) as { token?: unknown }).token;
     return typeof token === "string" && /^[A-Za-z0-9_-]{32}$/.test(token) ? token : undefined;
   } catch {

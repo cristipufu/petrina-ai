@@ -26,10 +26,11 @@ describe("what Codex's app-server says about usage", () => {
       try {
         const command = await f.command(server.command);
         const reports = await f.run(() => readCodexUsage({ command, env: process.env, signal: f.signal, onProcess: process => { f.observe(process); child = process; } }));
+        const expectedSignal = process.platform === "win32" ? "SIGTERM" : "SIGKILL";
         expect(reports[0]!.utilization).toBe(0.1);
-        expect(child!.signalCode).toBe("SIGKILL");
+        expect(child!.signalCode).toBe(expectedSignal);
         expect(child!.stdout!.closed && child!.stderr!.closed).toBe(true);
-        await waitFor(() => child?.signalCode === "SIGKILL", "the stubborn app-server to be forced closed", 5000);
+        await waitFor(() => child?.signalCode === expectedSignal, "the stubborn app-server to be forced closed", 5000);
         expect(alive(child!.pid!)).toBe(false);
       } finally { if (child && child.exitCode === null && child.signalCode === null) child.kill("SIGKILL"); }
     });

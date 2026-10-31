@@ -17,10 +17,13 @@ import { runChecks } from "./check-runner.js";
 
 type Child = Bun.Subprocess<"ignore", "pipe", "pipe">;
 const arm = (expired: () => void, ms: number) => { const timer = setTimeout(expired, ms); return () => clearTimeout(timer); };
-const dispose = (dir: string) => {
-  removeDir(dir);
-  try { lstatSync(dir); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw error; }
+const dispose = async (dir: string) => {
+  for (let attempt = 0; attempt < 20; attempt++) {
+    removeDir(dir);
+    try { lstatSync(dir); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw error; }
+    await Bun.sleep(100);
+  }
   throw new Error(`The check fixture could not remove ${dir}`);
 };
 
@@ -91,8 +94,10 @@ export async function checkExecutionFixture(mode: "plain" | "running" | "read-er
     } catch (error) { errors.push(error); }
     try { await locked?.cancel(); } catch (error) { errors.push(error); }
     try { locked?.releaseLock(); } catch (error) { errors.push(error); }
-    // Before handoff, these real descriptors remain the fixture's own responsibility.
-    if (child && !handed) for (const stream of [child.stdout, child.stderr]) try { await stream.cancel(); } catch (error) { errors.push(error); }
+    // Release any remaining stream handles once the lease and child have stopped.
+    if (child) for (const stream of [child.stdout, child.stderr]) {
+      if (!stream.locked || !handed) try { await stream.cancel(); } catch (error) { if (!handed) errors.push(error); }
+    }
     if (child) try {
       await waitFor(async () => await childState(child!.pid) === "ended", "the independently owned check process to end", CLEANUP_MS * SLOW);
     } catch (error) { errors.push(error); }

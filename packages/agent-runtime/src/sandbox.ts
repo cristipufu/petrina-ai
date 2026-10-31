@@ -7,7 +7,7 @@
 
 import { realpathSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { posix, win32 } from "node:path";
 
 /** The part of Claude Code's sandbox settings Petrina sets. */
 export interface ClaudeSandbox {
@@ -53,6 +53,7 @@ export function claudeSandbox(machine: Machine = thisMachine()): ClaudeSandbox {
 function writable({ home, tmp, platform, env }: Machine): string[] {
   const mac = platform === "darwin";
   const windows = platform === "win32";
+  const join = windows ? win32.join : posix.join;
   const local = env.LOCALAPPDATA || join(home, "AppData", "Local");
   const cache = mac ? join(home, "Library", "Caches") : windows ? local : env.XDG_CACHE_HOME || join(home, ".cache");
   const data = mac ? join(home, "Library") : windows ? local : env.XDG_DATA_HOME || join(home, ".local", "share");

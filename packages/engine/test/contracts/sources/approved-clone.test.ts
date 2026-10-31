@@ -123,7 +123,7 @@ for (const progress of ["empty", "interrupted", "complete"]) it(`resumes an appr
       }
       await add();
       expect(engine.task(id)!.workRows![0]!.addition?.ready).toBe(true);
-      expect(engine.s.products.find((entry) => entry.id === product.id)?.path).toBe(realpathSync(path));
+      expect(engine.s.products.find((entry) => entry.id === product.id)?.path).toBe(realpathSync.native(path));
       expect(readRef(join(path, ".git"), "refs/heads/main")).toBe(world.initial);
       if (progress === "complete") expect(readFileSync(join(path, "keep.txt"), "utf8")).toBe("Preserve existing work\n");
     } finally { await engine.shutdown(); }

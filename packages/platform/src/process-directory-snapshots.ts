@@ -4,7 +4,13 @@ import type { ProcessState } from "./process-snapshots.js";
 export interface ProcessFolderSnapshot { readonly pids: readonly number[]; readonly states: ReadonlyMap<number, ProcessState>; readonly commands?: readonly string[] }
 
 export function namesProcessFolder(command: string, directory: string): boolean {
-  return command.includes(`${directory}/`) || command.includes(`${directory} `) || command.endsWith(directory);
+  return (
+    command.includes(`${directory}/`)
+    || command.includes(`${directory}\\`)
+    || command.includes(`${directory} `)
+    || command.includes(`${directory}"`)
+    || command.endsWith(directory)
+  );
 }
 
 /** Preserve the completed-list and first-row state interpretation used by browser cleanup. */

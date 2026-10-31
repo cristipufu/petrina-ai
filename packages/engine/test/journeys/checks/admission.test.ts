@@ -174,10 +174,12 @@ it("captures a newly configured commit hook before a queued review starts", asyn
     await waitForFile(join(f.root, "first.started"), { during: firstReview });
     secondReview = f.review(second); await waitFor(() => f.engine.checkQueue.waiting === 1, "second review to queue before the hook changes");
     await f.land();
-    const folder = join(f.root, "hooks"), hookLog = join(f.root, "hook-runs"); mkdirSync(folder);
-    writeFileSync(join(folder, "pre-commit"), `#!/usr/bin/env bun\nimport { appendFileSync } from "node:fs";\nappendFileSync(${JSON.stringify(hookLog)}, "hook\\n");\n`, { mode: 0o755 });
+    const folder = join(f.root, "hooks"), hookLog = join(f.root, "hook-runs"), hookScript = join(folder, "pre-commit.ts");
+    mkdirSync(folder);
+    writeFileSync(hookScript, `import { appendFileSync } from "node:fs";\nappendFileSync(${JSON.stringify(hookLog)}, "hook\\n");\n`);
+    writeFileSync(join(folder, "pre-commit"), `#!/bin/sh\n"${process.execPath.replaceAll("\\", "/")}" "${hookScript.replaceAll("\\", "/")}"\n`, { mode: 0o755 });
     const cfgPath = join(f.clone, ".git", "config");
-    writeFileSync(cfgPath, readFileSync(cfgPath, "utf8").replace(/^\[core\]\r?\n/im, (header) => `${header}\thooksPath = ${folder}\n`));
+    writeFileSync(cfgPath, readFileSync(cfgPath, "utf8").replace(/^\[core\]\r?\n/im, (header) => `${header}\thooksPath = ${folder.replaceAll("\\", "/")}\n`));
     f.release(); expect(await firstReview).toBe("continue"); expect(await secondReview).toBe("continue");
     expect(readFileSync(hookLog, "utf8").trim().split("\n")).toHaveLength(2);
     expect(second.scope.work.checks!.results.map(run => run.name)).toEqual(["Tests", "Pre-commit hook"]);

@@ -75,7 +75,7 @@ it("uses the shared admission owners through actual repository preparation, desi
     const primary = executionFor(owner).work.worktree!;
     expect(held.cwd).not.toBe(primary);
     expect(readWorktreeCommit(held.cwd)?.commit).toBe(readWorktreeCommit(primary)?.commit);
-    expect(await git(f.repo, "worktree", "list", "--porcelain")).toContain(held.cwd);
+    expect((await git(f.repo, "worktree", "list", "--porcelain")).replaceAll("\\", "/")).toContain(held.cwd.replaceAll("\\", "/"));
     expect(f.engine.screenGroups.get(owner.id)?.running("review-0") || f.engine.screenGroups.get(owner.id)?.running("review-1") || f.engine.screenGroups.get(owner.id)?.running("review-2")).toBe(true);
     await waitFor(() => {
       const state = advance(true);

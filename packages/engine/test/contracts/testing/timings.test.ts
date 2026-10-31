@@ -56,7 +56,7 @@ it("the installed Bun executes every file and starts the measured slow file firs
   for (const name of ["fast", "slow"]) writeFileSync(join(f.folder, "test", `${name}.test.ts`), `import { expect, it } from "bun:test";
 import { appendFileSync } from "node:fs";
 it(${JSON.stringify(name)}, () => { appendFileSync(${JSON.stringify(log)}, ${JSON.stringify(name + "\n")}); expect(process.cwd()).toBe(${JSON.stringify(f.folder)}); });`);
-  writeFixtureJson(f.output, { version: 1, files: { "test/fast.test.ts": 1, "test/slow.test.ts": 1000 } });
+  writeFixtureJson(f.output, { version: 1, files: { [join("test", "fast.test.ts")]: 1, [join("test", "slow.test.ts")]: 1000 } });
   // This tiny boundary probe uses one worker to observe dispatch order deterministically.
   // The repository's required run keeps Bun's normal worker count.
   const run = await runCommand([process.execPath, TEST_RUNNER, "test/fast.test.ts", "test/slow.test.ts", "--parallel=1", `--timings=${f.output}`, "--update-timings", "--reporter=junit", `--reporter-outfile=${report}`], { cwd: f.folder });

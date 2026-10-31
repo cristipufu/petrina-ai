@@ -6,12 +6,13 @@ import { runCommand, type Started } from "../../../src/commands.js";
 import { removeDir, tempDir, waitForFile } from "../../../src/fixtures.js";
 import { createSetupSteps } from "../../../src/setup-steps.js";
 import { createProcessLease } from "../../../src/process-lease.js";
+import { currentSlow } from "../../../src/slow.js";
 
 it("receives a real completion and its complete output before the deadline while later setup steps are ready", async () => {
   const root = tempDir("petrina-setup-completion-");
   const ready = join(root, "ready"), release = join(root, "release"), proof = join(root, "finished");
   const lifetime = new AbortController(), setup = createSetupSteps(), lease = await createProcessLease();
-  const limit = 3_000, count = 8;
+  const limit = 3_000 * currentSlow(), count = 8;
   let started = 0;
   let completed = 0, received: { at: number; completed: number } | undefined;
   const receipts: Partial<Record<"exit" | "stdout" | "stderr", number>> = {};

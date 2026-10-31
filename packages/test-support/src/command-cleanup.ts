@@ -335,7 +335,8 @@ async function stopWindows(child: Started, reported: () => boolean, end: number)
     }
     return "unconfirmed";
   }
-  const killed = (await host.stopTree?.(pid, Math.max(100, Math.min(2_500 * SLOW, (end - Date.now()) / 2)))) ?? false;
+  const halfBudget = Math.floor((end - Date.now()) / 2);
+  const killed = (await host.stopTree?.(pid, Math.max(100, Math.min(2_500 * SLOW, halfBudget)))) ?? false;
   // The handle stops the program itself even when taskkill failed or ran out of time.
   if (!reported()) {
     try {

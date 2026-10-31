@@ -17,6 +17,9 @@ const repositories = committedRepositoryFixtures(temp);
 
 /** A file as checked out, in one line-ending style: git on Windows writes CRLF. */
 const checkedOut = (path: string) => readFileSync(path, "utf8").replace(/\r\n/g, "\n");
+/** Git's worktree list uses forward slashes on Windows too. */
+const gitPath = (path: string) => realpathSync.native(path).replaceAll("\\", "/");
+const slashPath = (path: string) => path.replaceAll("\\", "/");
 
 describe("Petrina's own git steps", () => {
   afterAll(() => repositories.close());
@@ -40,8 +43,8 @@ describe("Petrina's own git steps", () => {
     expect(existsSync(oldFolder)).toBe(false);
     expect(readFileSync(join(active, "unsaved.txt"), "utf8")).toBe("Keep my work");
     const registered = await git(repo, "worktree", "list", "--porcelain", "-z");
-    expect(registered).toContain(realpathSync.native(active));
-    expect(registered).not.toContain(old);
+    expect(registered).toContain(gitPath(active));
+    expect(registered).not.toContain(slashPath(old));
   }));
 
   it("ignores already absent copies when the product moved, but preserves existing folders for recovery", () => repositories.run(async () => {
@@ -76,8 +79,8 @@ describe("Petrina's own git steps", () => {
       expect(listed).toHaveBeenCalledTimes(2);
       expect(existsSync(folder)).toBe(false);
       const remaining = await git(repo, "worktree", "list", "--porcelain", "-z");
-      for (const copy of copies) expect(remaining).not.toContain(copy);
-      expect(remaining).toContain(realpathSync.native(unrelated));
+      for (const copy of copies) expect(remaining).not.toContain(slashPath(copy));
+      expect(remaining).toContain(gitPath(unrelated));
       expect(readFileSync(join(unrelated, "unsaved.txt"), "utf8")).toBe("Still working\n");
       listed.mockClear();
       expect(await removeWorktree(repo, join(temp, "already-gone"))).toBe(false);
@@ -95,7 +98,7 @@ describe("Petrina's own git steps", () => {
     try {
       await expectRejection(removeWorktree(repo, blocked, faults.files), "in use or locked");
       expect(readFileSync(join(blocked, "keep"), "utf8")).toBe("Still recoverable");
-      expect(await git(repo, "worktree", "list", "--porcelain", "-z")).toContain(realpathSync.native(blocked));
+      expect(await git(repo, "worktree", "list", "--porcelain", "-z")).toContain(gitPath(blocked));
       await expectRejection(removeFinishedCopies(repo, folder, faults.files), "in use or locked");
       expect(existsSync(clear)).toBe(false);
       expect(readFileSync(join(blocked, "keep"), "utf8")).toBe("Still recoverable");
@@ -103,7 +106,7 @@ describe("Petrina's own git steps", () => {
       expect(await removeFinishedCopies(repo, folder, faults.files)).toBe(true);
       expect(existsSync(folder)).toBe(false);
       const recorded = await git(repo, "worktree", "list", "--porcelain", "-z");
-      expect(recorded).not.toContain(blocked); expect(recorded).not.toContain(clear);
+      expect(recorded).not.toContain(slashPath(blocked)); expect(recorded).not.toContain(slashPath(clear));
       expect(await git(repo, "rev-parse", "HEAD")).toBe(sha);
     } finally { release(); }
   }));
@@ -119,11 +122,11 @@ describe("Petrina's own git steps", () => {
     await removeCopies(repo, folder, [kept]);
     const registered = await git(repo, "worktree", "list", "--porcelain", "-z");
     expect(readFileSync(join(kept, "screen.txt"), "utf8")).toBe("Keep the screen work");
-    expect(registered).toContain(realpathSync.native(kept)); expect(registered).toContain(realpathSync.native(unrelated));
-    for (const copy of gone) { expect(existsSync(copy)).toBe(false); expect(registered).not.toContain(copy); }
+    expect(registered).toContain(gitPath(kept)); expect(registered).toContain(gitPath(unrelated));
+    for (const copy of gone) { expect(existsSync(copy)).toBe(false); expect(registered).not.toContain(slashPath(copy)); }
     await removeCopies(repo, folder);
     expect(existsSync(folder)).toBe(false);
-    expect(await git(repo, "worktree", "list", "--porcelain", "-z")).not.toContain(kept);
+    expect(await git(repo, "worktree", "list", "--porcelain", "-z")).not.toContain(slashPath(kept));
     expect(checkedOut(join(unrelated, "README.md"))).toBe("Keep the product\n");
   }));
 
@@ -155,7 +158,7 @@ describe("Petrina's own git steps", () => {
     await removeCopies(repo, alias, [join(alias, "screen")]);
     expect(existsSync(alias)).toBe(false);
     expect(readFileSync(join(peer, "unsaved.txt"), "utf8")).toBe("Unrelated work");
-    expect(await git(repo, "worktree", "list", "--porcelain", "-z")).toContain(realpathSync.native(screen));
+    expect(await git(repo, "worktree", "list", "--porcelain", "-z")).toContain(gitPath(screen));
   }));
 
   it("unlinks a finished copy's replacement link without deleting another copy, its unsaved files, or the main clone", () => repositories.run(async () => {

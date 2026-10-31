@@ -75,7 +75,7 @@ export function testEnvironment(folder: string, browsers: string, inherited: Nod
 export function createTestRun(): { env: NodeJS.ProcessEnv; close(): boolean } {
   const parent = testTempParent(tmpdir());
   mkdirSync(parent, { recursive: true, mode: 0o700 });
-  const folder = mkdtempSync(join(parent, "petrina-tests-"));
+  const folder = fixtureFiles.canonical(mkdtempSync(join(parent, "petrina-tests-")));
   const journal = join(folder, "fixture-journal");
   let browsers: string | undefined;
   let prepared = false;
@@ -99,7 +99,7 @@ export function createTestRun(): { env: NodeJS.ProcessEnv; close(): boolean } {
   try {
     // The parent must retain these actual paths if this nested runner cannot dispose them.
     registerFixtureRoot(folder);
-    browsers = mkdtempSync(join(shortTempParent(process.platform, folder), "pb-"));
+    browsers = fixtureFiles.canonical(mkdtempSync(join(shortTempParent(process.platform, folder), "pb-")));
     registerFixtureRoot(browsers);
     createFixtureJournal(journal);
     prepared = true;

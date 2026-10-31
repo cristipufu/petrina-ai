@@ -67,7 +67,7 @@ export async function repoInfo(path: string): Promise<RepoInfo> {
     const local = /^(?:[A-Za-z]:[\\/]|[\\/]|file:)/.test(remote ?? "");
     const match = local ? null : REMOTE.exec(remote ?? "");
     const segments = match?.[2]?.split("/").filter(Boolean) ?? [];
-    const name = segments.at(-1) ?? root.split("/").at(-1) ?? "repo";
+    const name = segments.at(-1) ?? root.split(/[\\/]/).at(-1) ?? "repo";
     const owner = segments.slice(0, -1).join("/") || "local";
     return {
       root,
@@ -78,7 +78,7 @@ export async function repoInfo(path: string): Promise<RepoInfo> {
       github: !local && remote !== undefined && githubRepoOf(remote) !== undefined
     };
   }
-  const root = await must(["git", "rev-parse", "--show-toplevel"], path);
+  const root = canonical(await must(["git", "rev-parse", "--show-toplevel"], path));
   const [remote, branch] = await Promise.all([
     remoteAddress(root), run(["git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"], root),
   ]);
@@ -86,7 +86,7 @@ export async function repoInfo(path: string): Promise<RepoInfo> {
   const local = /^(?:[A-Za-z]:[\\/]|[\\/]|file:)/.test(remote ?? "");
   const match = local ? null : REMOTE.exec(remote ?? "");
   const segments = match?.[2]?.split("/").filter(Boolean) ?? [];
-  const name = segments.at(-1) ?? root.split("/").at(-1) ?? "repo";
+  const name = segments.at(-1) ?? root.split(/[\\/]/).at(-1) ?? "repo";
   const owner = segments.slice(0, -1).join("/") || "local";
   const head = branch.stdout;
   const defaultBranch = head.startsWith("origin/") ? head.slice("origin/".length) : (await run(

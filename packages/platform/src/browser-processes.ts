@@ -1,5 +1,5 @@
 import { processHost } from "./process-host.js";
-import { descendants, descendantsKnown, processList } from "./process-tree.js";
+import { descendants, descendantsKnown, processList, windowsCommandList } from "./process-tree.js";
 import { processFolderSnapshot, type ProcessFolderSnapshot } from "./process-directory-snapshots.js";
 
 /** Only the process operations consumed by an owned browser stop. */
@@ -21,6 +21,10 @@ export const browserProcesses: BrowserProcessControl = {
   descendants,
   descendantsKnown,
   async readFolder(directory) {
+    if (process.platform === "win32") {
+      const stdout = await windowsCommandList(10_000, 32 * 1024 * 1024);
+      return stdout === undefined ? undefined : processFolderSnapshot(stdout, directory);
+    }
     const column = process.platform === "linux" ? "args=" : "command=";
     const stdout = await processList(["-axww", "-o", `pid=,ppid=,stat=,${column}`], 2_000, 32 * 1024 * 1024);
     return stdout === undefined ? undefined : processFolderSnapshot(stdout, directory);
@@ -35,7 +39,9 @@ export const browserProcesses: BrowserProcessControl = {
   forceKill(pids) {
     for (const pid of pids) {
       // The adapter's caller owns these targets for this stop attempt. No saved PID establishes ownership.
-      try { process.kill(-pid, "SIGKILL"); } catch { /* Not a process group leader. */ }
+      if (processHost.groups) {
+        try { process.kill(-pid, "SIGKILL"); } catch { /* Not a process group leader. */ }
+      }
       try { process.kill(pid, "SIGKILL"); } catch { /* Already gone. */ }
     }
   },

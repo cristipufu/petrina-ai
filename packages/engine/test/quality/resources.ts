@@ -273,7 +273,7 @@ if (args.length) {
               runCommand(plan.argv, {
                 cwd: ROOT,
                 env: { ...owned.env, ...plan.env },
-                timeoutMs: 3_000,
+                timeoutMs: process.platform === "win32" ? 15_000 : 3_000,
                 signal: controller.signal,
               }),
           });

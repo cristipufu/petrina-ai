@@ -301,6 +301,26 @@ mod tests {
         command
     }
 
+    #[cfg(windows)]
+    fn clear_std_handle_inheritance() {
+        use std::os::windows::io::{AsRawHandle, RawHandle};
+        const HANDLE_FLAG_INHERIT: u32 = 0x0000_0001;
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn SetHandleInformation(h_object: RawHandle, dw_mask: u32, dw_flags: u32) -> i32;
+        }
+        for handle in [io::stdin().as_raw_handle(), io::stdout().as_raw_handle()] {
+            // SAFETY: `stdin` and `stdout` are live Win32 handles owned by this fixture child;
+            // clearing `HANDLE_FLAG_INHERIT` keeps `CreateProcessW(..., bInheritHandles = TRUE)`
+            // from leaking `stdout` or `stdin` into `stderr-holder` when only `stderr` is inherited.
+            let ok = unsafe { SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0) };
+            assert_ne!(
+                ok, 0,
+                "clearing HANDLE_FLAG_INHERIT on fixture stdio must succeed"
+            );
+        }
+    }
+
     #[test]
     fn startup_actor() {
         let Ok(mode) = std::env::var("PETRINA_STARTUP_ACTOR") else {
@@ -342,6 +362,8 @@ mod tests {
         }
         if mode == "held-stderr" {
             let helper = std::env::var("PETRINA_STARTUP_HELPER").unwrap();
+            #[cfg(windows)]
+            clear_std_handle_inheritance();
             // Its private control is independently held by the parent; stderr is the actual inherited pipe.
             #[allow(clippy::zombie_processes)]
             let _helper = actor_command("stderr-holder", &helper, None)

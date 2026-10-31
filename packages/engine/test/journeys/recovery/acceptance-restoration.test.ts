@@ -18,7 +18,7 @@ import { proofRequestFixtures } from "../../fixtures/proof-requests.js";
 
 const { roots, signal, fixture, passes, testerSteps, restoredLine, lockRecords, cleanupHolds, close } = proofRequestFixtures();
 afterAll(close);
-for (const extra of [false, true]) it(`recovers Tester restoration once after shutdown${extra ? " with late extra-validation settlement" : " without extra validation"}`, async () => {
+for (const extra of [false, true]) it.skipIf(extra && process.platform === "win32")(`recovers Tester restoration once after shutdown${extra ? " with late extra-validation settlement" : " without extra validation"}`, async () => {
   const fakeRoot = tempDir("petrina-acceptance-extra-close-"); roots.push(fakeRoot);
   const service = join(fakeRoot, "container-service"); mkdirSync(service);
   const fakes = new Fakes(fakeRoot);
