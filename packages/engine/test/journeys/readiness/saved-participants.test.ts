@@ -29,7 +29,7 @@ function engineIn(caseOwner: EngineCaseOwner, root: string, checkTimeoutMs = 8_0
   const scriptedProbe: ToolProbe = {
     absent: (id) => baseProbe.absent(id),
     async run(id, request) {
-      if (id === "git" || id === "node" || id === "gh") return baseProbe.run(id, request);
+      if (id === "git" || id === "gh") return baseProbe.run(id, request);
       const flags = [...(inChecks[id] ?? [])];
       appendFileSync(join(fakes.dir, "checks.jsonl"), `${JSON.stringify({ pid: process.pid, tool: id })}\n`);
       const holdFlag = flags.find((flag) => flag.startsWith("--hold-open-in-checks="));

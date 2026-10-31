@@ -1,8 +1,7 @@
 // A fresh command runner for each private home. At most this process and one stand-in run at once.
-// No installed Git, Node.js, Apple tools or GitHub account is consulted.
+// No installed Git, Apple tools or GitHub account is consulted.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { checkNode } from "../../src/setup.js";
 import { checkGh, checkGit } from "@petrina/repositories/tool-readiness";
 import { run } from "@petrina/repositories/git";
 
@@ -41,9 +40,8 @@ try {
   const raw = await run([process.execPath, "--version"], root, undefined, { timeoutMs: limit });
   const git = await checkGit(() => process.execPath, "linux", { timeoutMs: limit });
   const macGit = await checkGit(() => "/usr/bin/git", "darwin", { timeoutMs: limit });
-  const node = await checkNode(() => process.execPath, limit);
   const gh = await checkGh([process.execPath, "-e", 'console.log("Logged in to github.com account fixture-user")', "--"], limit);
-  console.log(JSON.stringify({ raw, git, macGit, node, gh }));
+  console.log(JSON.stringify({ raw, git, macGit, gh }));
 } finally {
   Bun.spawn = spawn;
   clearTimeout(deadline);

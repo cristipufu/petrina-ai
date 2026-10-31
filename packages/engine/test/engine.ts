@@ -24,8 +24,8 @@ export function fixtureEngineOptions(dataDir: string, options: EngineOptions = {
     home: join(dataDir, "home"),
     terminals: () => [],
     awakeObserver: () => {},
-    // Native Git and Node are prerequisites. All account-bearing services need explicit stand-ins.
-    which: name => ["git", "node"].includes(name) ? Bun.which(name, { PATH: process.env.PATH ?? "" }) : null,
+    // Native Git is a prerequisite. All account-bearing services need explicit stand-ins.
+    which: name => name === "git" ? Bun.which(name, { PATH: process.env.PATH ?? "" }) : null,
     gh: missing("GitHub"),
     containerTool: missing("container"),
     browser: false,

@@ -85,7 +85,7 @@ export async function preparedReviewerInputs(options: { single?: boolean; native
     const engine = owners.open(join(root, "data"), {
       ...(fakes ? { agentCommand: () => [process.execPath, join(import.meta.dir, "../fake-agent.ts"), fakes.dir], toolPath: () => process.execPath }
         : { startAgentSession: agents.start, agentCommand: () => { throw new Error("Prepared reviewer inputs require their scripted session"); } }),
-      toolProbe: scriptedToolProbe({ git: { status: "ready" }, node: { status: "ready" }, gh: { status: "ready" },
+      toolProbe: scriptedToolProbe({ git: { status: "ready" }, gh: { status: "ready" },
         codex: { status: "ready" }, "claude-code": { status: "ready" }, grok: { status: "ready" }, antigravity: { status: "ready" } }),
     });
     // Only the explicitly invoked review phases may run; their real check queue still receives notifications.

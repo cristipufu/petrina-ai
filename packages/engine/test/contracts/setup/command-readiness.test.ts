@@ -3,7 +3,6 @@ import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import * as commands from "@petrina/repositories/git";
 import { checkGh, checkGit } from "@petrina/repositories/tool-readiness";
-import { checkNode } from "../../../src/setup.js";
 import type { ToolProbeResult } from "@petrina/orchestrator";
 import { removeDir, tempDir } from "@petrina/test-support/fixtures";
 import { SLOW } from "@petrina/test-support/slow";
@@ -29,7 +28,7 @@ async function probe(blocked: boolean) {
     const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
     expect(expired, `Incomplete probe: deadline reached. ${stderr}`).toBe(false);
     expect(code, stderr).toBe(0);
-    return JSON.parse(stdout) as { raw: commands.RunResult } & Record<"git" | "macGit" | "node" | "gh", ToolProbeResult>;
+    return JSON.parse(stdout) as { raw: commands.RunResult } & Record<"git" | "macGit" | "gh", ToolProbeResult>;
   } finally {
     clearTimeout(deadline); clearTimeout(killDeadline);
     child.stdin.end();
@@ -46,7 +45,7 @@ describe("Command preparation and tool readiness", () => {
       expect(answers.raw.startFailure?.kind).toBe("temporary-directory");
       expect(answers.raw.startFailure?.message).toBe(answers.raw.stderr);
       expect(answers.raw.stderr).toContain("runtime-tmp");
-      for (const answer of [answers.git, answers.macGit, answers.node, answers.gh]) {
+      for (const answer of [answers.git, answers.macGit, answers.gh]) {
         expect(answer.status).toBe("unknown");
         expect(answer.detail).toStartWith("Petrina couldn't prepare the temporary folder it uses for checks.");
         expect(answer.detail).toContain(answers.raw.stderr);
@@ -57,7 +56,6 @@ describe("Command preparation and tool readiness", () => {
       expect(answers.raw.startFailure).toBeUndefined();
       expect(answers.git).toEqual({ status: "ready" });
       expect(answers.macGit).toEqual({ status: "ready" });
-      expect(answers.node).toEqual({ status: "ready" });
       expect(answers.gh).toEqual({ status: "ready", account: "fixture-user" });
     }
   });
@@ -107,7 +105,6 @@ describe("Command preparation and tool readiness", () => {
 
   it("requires real missing-program evidence and keeps nonzero answers, including 127, uncertain", async () => {
     expect(await checkGit(() => null, "linux")).toEqual({ status: "not-installed" });
-    expect(await checkNode(() => null)).toEqual({ status: "not-installed" });
     expect(await checkGh(["petrina-no-such-program-114005"], limit)).toEqual({ status: "not-installed" });
     expect(await checkGh([join(temp, "missing-gh")], limit)).toEqual({ status: "not-installed" });
     // Use the installed Bun as the version stand-in, replacing only the version command's arguments.
@@ -117,7 +114,6 @@ describe("Command preparation and tool readiness", () => {
     try {
       for (exit of [1, 127]) {
         expect(await checkGit(() => process.execPath, "linux", { timeoutMs: limit })).toEqual({ status: "unknown", detail: "No selected version" });
-        expect(await checkNode(() => process.execPath, limit)).toEqual({ status: "unknown", detail: "No selected version" });
         expect(await checkGh([process.execPath, "-e", `console.error("No selected version"); process.exit(${exit})`, "--"], limit)).toEqual({ status: "unknown", detail: "No selected version" });
       }
     } finally { version.mockRestore(); }
@@ -147,10 +143,9 @@ describe("Command preparation and tool readiness", () => {
     };
     try {
       expect(await stopped(checkGit(() => process.execPath, "linux", { timeoutMs: 30 }))).toEqual({ status: "unknown", detail: "It did not answer in time." });
-      expect(await stopped(checkNode(() => process.execPath, 30))).toEqual({ status: "unknown", detail: "It did not answer in time." });
       expect(await stopped(checkGh([process.execPath], 30))).toEqual({ status: "unknown", detail: "The GitHub CLI did not answer within 0 seconds." });
       expect(await stopped(checkGit(() => "/usr/bin/git", "darwin", { timeoutMs: 30 }))).toEqual({ status: "unknown", detail: "Apple's developer tools lookup did not answer in time." });
-      expect(children).toHaveLength(4);
+      expect(children).toHaveLength(3);
     } finally {
       spawning.mockRestore();
       for (const child of children) if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
@@ -186,7 +181,7 @@ describe("Command preparation and tool readiness", () => {
     } finally { lookup.mockRestore(); }
   });
 
-  it("shares failed-launch advice across Git, Node.js and the GitHub CLI", async () => {
+  it("shares failed-launch advice across Git and the GitHub CLI", async () => {
     const lookup = spyOn(commands, "run");
     try {
       for (const [kind, sentence] of [
@@ -196,7 +191,6 @@ describe("Command preparation and tool readiness", () => {
       ] as const) {
         lookup.mockResolvedValue({ code: 127, stdout: "", stderr: "System detail", startFailure: { kind, message: "System detail" } });
         expect(await checkGit(() => process.execPath, "linux")).toEqual({ status: "unknown", detail: `${sentence}\nSystem detail` });
-        expect(await checkNode(() => process.execPath)).toEqual({ status: "unknown", detail: `${sentence}\nSystem detail` });
         expect(await checkGh([process.execPath])).toEqual({ status: "unknown", detail: `${sentence}\nSystem detail` });
       }
     } finally { lookup.mockRestore(); }

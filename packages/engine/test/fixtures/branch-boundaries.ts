@@ -29,7 +29,7 @@ async function branchBoundary(input: BoundaryInput) {
     const replies = "check" in input && input.check === "commit-message"
       ? updateAgents(join(root, "builder-replies"), { title: input.builderTitle }) : undefined;
     const readiness = scriptedToolProbe({ "claude-code": { status: "ready" }, codex: { status: "ready" },
-      grok: { status: "ready" }, antigravity: { status: "not-installed" }, gh: { status: "ready" }, git: { status: "ready" }, node: { status: "ready" } });
+      grok: { status: "ready" }, antigravity: { status: "not-installed" }, gh: { status: "ready" }, git: { status: "ready" } });
     const engine = owners.open(join(root, "data"), {
       ...(fakes ? { agentCommand: () => [process.execPath, FAKE_AGENT, fakes.dir], startAgentSession: fakeAgentSessions(fakes), toolPath: () => process.execPath }
         : replies ? { startAgentSession: replies.startAgentSession, agentCommand: () => { throw new Error("The title boundary requires its explicit scripted Builder"); } }

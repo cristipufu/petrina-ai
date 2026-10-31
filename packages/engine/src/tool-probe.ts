@@ -4,7 +4,6 @@ import type { AgentProfile, CheckId } from "@petrina/core";
 import type { ToolProbe, ToolProbeRequest, ToolProbeResult } from "@petrina/orchestrator";
 import type { Kernel } from "./kernel.js";
 import { agentEnv } from "@petrina/platform/process-environment";
-import { checkNode } from "./setup.js";
 import { checkGh, checkGit, type Which } from "@petrina/repositories/tool-readiness";
 import { checkAgentTool } from "@petrina/agent-runtime/probe";
 import { ADAPTERS, agentCommandFor, findProgram } from "@petrina/agent-runtime/tools";
@@ -15,7 +14,7 @@ export class NativeToolProbe implements ToolProbe {
 
   absent(id: CheckId): boolean {
     const which = this.which();
-    if (id === "git" || id === "node") return which(id) === null;
+    if (id === "git") return which(id) === null;
     if (id === "gh") return !this.k.options.gh && which("gh") === null;
     if (this.k.options.requireAgentCommand && !this.k.options.agentCommand) return true;
     return !this.k.options.agentCommand && (which(ADAPTERS[id]!.cli) === null || !(ADAPTERS[id]!.installed?.() ?? true));
@@ -33,7 +32,6 @@ export class NativeToolProbe implements ToolProbe {
       ...(this.k.options.developerTools ? { developerTools: this.k.options.developerTools } : {})
     }
     );
-    if (id === "node") return checkNode(which, timeoutMs);
     if (id === "gh") {
       const gh = this.k.options.gh ?? [which("gh")].filter((path): path is string => path !== null);
       return gh.length ? checkGh(gh, timeoutMs) : { status: "not-installed" };

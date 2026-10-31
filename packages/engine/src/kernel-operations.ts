@@ -9,6 +9,7 @@ import {
   clearTaskStep,
   finishTaskStep,
   involvesProduct,
+  isCheckId,
   libraryRoles,
   NO_ROLE_CHANGES,
   queueOf,
@@ -87,6 +88,12 @@ export function initializeKernelState(
       pauseAgentStep(task, state.now);
       stopCheckProgress(task, state.now);
       clearRunningTools(task);
+    }
+    for (const item of state.inbox) {
+      if (item.toolId && !isCheckId(item.toolId)) {
+        delete item.toolId;
+        delete item.toolProblem;
+      }
     }
   }
   state.roleChanges = (loaded?.roleChanges ?? structuredClone(NO_ROLE_CHANGES)) as RuntimeState["roleChanges"];

@@ -10,6 +10,6 @@ export function heldPlanning() {
    if (signal.aborted) abort();
  }); });
  return { startAgentSession: agents.start,
-   toolProbe: scriptedToolProbe({ codex: { status: "ready" }, "claude-code": { status: "not-installed" }, grok: { status: "not-installed" }, antigravity: { status: "not-installed" }, gh: { status: "not-installed" }, git: { status: "ready" }, node: { status: "ready" } }),
+   toolProbe: scriptedToolProbe({ codex: { status: "ready" }, "claude-code": { status: "not-installed" }, grok: { status: "not-installed" }, antigravity: { status: "not-installed" }, gh: { status: "not-installed" }, git: { status: "ready" } }),
  };
 }

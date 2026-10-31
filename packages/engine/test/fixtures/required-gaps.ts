@@ -48,7 +48,7 @@ export function requiredGapFixtures(required: string) {
       const github = options.github ? join(root, "github.git") : undefined;
       // Saved maintenance profiles also read startup tool availability: every tool here is a stand-in.
       const engineOptions = { ...(native ? fakeEngineSettings(native)
-        : { startAgentSession: replies.start, toolProbe: scriptedToolProbe({ "claude-code": { status: "ready" }, codex: { status: "ready" }, grok: { status: "ready" }, antigravity: { status: "not-installed" }, gh: { status: "not-installed" }, git: { status: "ready" }, node: { status: "ready" } }) }),
+        : { startAgentSession: replies.start, toolProbe: scriptedToolProbe({ "claude-code": { status: "ready" }, codex: { status: "ready" }, grok: { status: "ready" }, antigravity: { status: "not-installed" }, gh: { status: "not-installed" }, git: { status: "ready" } }) }),
         terminals: () => [], ...(github ? { remote: github } : {}) };
       const engine = lifetime.open(join(root, "data"), engineOptions);
       engine.schedule = () => {};

@@ -92,5 +92,5 @@ export function sourceAgents(world: Pick<World, "setScript">, fakes: Fakes) {
     names.set(role.id, role.name.toLowerCase());
     return agents.start(options, role);
   };
-  return { startAgentSession, toolProbe: scriptedToolProbe({ "claude-code": { status: "ready" }, codex: { status: "ready" }, grok: { status: "ready" }, antigravity: { status: "not-installed" }, gh: { status: "ready" }, git: { status: "ready" }, node: { status: "ready" } }) };
+  return { startAgentSession, toolProbe: scriptedToolProbe({ "claude-code": { status: "ready" }, codex: { status: "ready" }, grok: { status: "ready" }, antigravity: { status: "not-installed" }, gh: { status: "ready" }, git: { status: "ready" } }) };
 }

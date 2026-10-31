@@ -12,7 +12,6 @@ const observed: Pick<ToolCheck, "id" | "status" | "account" | "detail">[] = [
   { id: "antigravity", status: "ready" },
   { id: "gh", status: "unknown", detail: "This test must supply a scripted GitHub command." },
   { id: "git", status: "ready" },
-  { id: "node", status: "ready" },
 ];
 
 for (const stage of ["reviewer", "design"] as const) for (const nativeProbes of [true, false]) it(`preserves calibrated ${stage} availability with ${nativeProbes ? "native" : "scripted"} probes`, async () => {

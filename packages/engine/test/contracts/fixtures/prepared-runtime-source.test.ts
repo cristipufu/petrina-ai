@@ -19,7 +19,7 @@ it("calibrates a declared initial source against Git, keeps the default fresh, a
     let providerStarts = 0;
     const engine = owner.open(join(owner.root, "data"), { admissionsClosed: true,
       agentCommand: () => { providerStarts++; throw new Error("Source calibration starts no provider"); },
-      toolProbe: scriptedToolProbe({ git: { status: "ready" }, gh: { status: "unknown" }, node: { status: "ready" },
+      toolProbe: scriptedToolProbe({ git: { status: "ready" }, gh: { status: "unknown" },
         "claude-code": { status: "not-installed" }, codex: { status: "not-installed" }, grok: { status: "not-installed" }, antigravity: { status: "not-installed" } }),
     });
     engine.schedule = () => {};

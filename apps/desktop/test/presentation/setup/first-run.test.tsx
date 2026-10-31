@@ -129,7 +129,6 @@ describe('first run', () => {
       { id: 'grok', status: 'ready' },
       { id: 'gh', status: 'ready', account: 'octocat' },
       { id: 'git', status: 'ready' },
-      { id: 'node', status: 'ready' },
     ]));
     expect(rows()).toEqual(['Claude Code', 'Codex', 'Grok', 'GitHub CLI']);
     expect(button('Continue').disabled).toBe(false);
@@ -138,31 +137,28 @@ describe('first run', () => {
 
   for (const surface of ['first run', 'Agents'] as const) {
     for (const status of ['unknown', 'not-installed', 'ready', 'unchecked'] as const) {
-      it(`shows Git and Node.js advice for ${status} in ${surface}`, async () => {
+      it(`shows Git advice for ${status} in ${surface}`, async () => {
         const detail = "Petrina couldn't prepare the temporary folder it uses for checks. System detail.";
         const checks = [
           { id: 'claude-code' as const, status: 'ready' as const },
           { id: 'git' as const, status, detail },
-          { id: 'node' as const, status, detail },
         ];
         const state = onTools(checks);
         if (surface === 'Agents') history.replaceState(null, '', '/agents');
         await mount(surface === 'Agents' ? { ...state, setup: { ...state.setup!, done: true } } : state);
-        for (const [id, name] of [['git', 'Git'], ['node', 'Node.js']]) {
-          const row = host.querySelector<HTMLElement>(`.tool-row[aria-label^="${name}:"]`);
-          if (status === 'ready' || status === 'unchecked') {
-            expect(row).toBeNull();
-            continue;
-          }
+        const row = host.querySelector<HTMLElement>('.tool-row[aria-label^="Git:"]');
+        if (status === 'ready' || status === 'unchecked') {
+          expect(row).toBeNull();
+        } else {
           expect(row).not.toBeNull();
           expect(row!.textContent).toContain(status === 'unknown' ? "Couldn't check" : 'Not installed');
-          expect(row!.querySelector('a')!.textContent).toContain(`${name} guide`);
+          expect(row!.querySelector('a')!.textContent).toContain('Git guide');
           if (status === 'unknown') {
             expect(row!.querySelector('.command')).toBeNull();
             await click(row!.querySelector('button')!);
             expect(row!.textContent).toContain(detail);
           } else {
-            expect(row!.querySelector('.command')!.textContent).toContain(id === 'git' ? 'xcode-select --install' : 'brew install node');
+            expect(row!.querySelector('.command')!.textContent).toContain('xcode-select --install');
           }
         }
         expect(button('Check again')).toBeDefined();

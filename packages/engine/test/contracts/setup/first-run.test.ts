@@ -90,4 +90,48 @@ it("opens only its own guides", async () => {
 
   });
 });
+it("drops retired Node.js check rows and inbox tool references when loading an older saved database", async () => {
+  return engineCases.use("petrina-setup-case-", async caseOwner => {
+    const existing = fresh("data", caseOwner.root);
+    mkdirSync(existing, { recursive: true });
+    const store = new Store(join(existing, "petrina.db"));
+    const closeStore = caseOwner.afterBody(() => store.close());
+    const blank = caseOwner.open(fresh("data", caseOwner.root), probe);
+    const before = structuredClone(blank.getState());
+    await caseOwner.stop(blank);
+    store.save({
+      ...before,
+      setup: {
+        done: false,
+        platform: "darwin",
+        checks: [
+          { id: "git", status: "ready" },
+          { id: "node", status: "not-installed" },
+          { id: "claude-code", status: "ready" },
+        ],
+      },
+      inbox: [
+        {
+          id: "legacy-node-stuck",
+          taskId: "t-legacy",
+          kind: "stuck",
+          title: "Legacy tool check",
+          at: 1,
+          blocking: false,
+          toolId: "node",
+          toolProblem: "not-installed",
+        },
+      ],
+    } as unknown as State);
+    await closeStore();
+    const upgraded = caseOwner.open(existing, probe);
+    try {
+      expect(upgraded.getState().setup?.checks.map((check) => check.id)).toEqual(["git", "claude-code"]);
+      expect(upgraded.getState().inbox[0]?.toolId).toBeUndefined();
+      expect(upgraded.getState().inbox[0]?.toolProblem).toBeUndefined();
+    } finally {
+      await caseOwner.stop(upgraded);
+    }
+  });
+});
 });

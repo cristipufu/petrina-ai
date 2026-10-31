@@ -28,7 +28,7 @@ describe("the checks found for each set of CI and build files", () => {
       : fakes.respond(prompt, signal));
     const engine = installSharedWorkflowFastPaths(
       caseOwner.open(join(root, "data"), { startAgentSession: agents.start,
-        toolProbe: scriptedToolProbe({ "claude-code": { status: "ready" }, codex: { status: "ready" }, grok: { status: "ready" }, antigravity: { status: "not-installed" }, gh: { status: "not-installed" }, git: { status: "ready" }, node: { status: "ready" } }) }),
+        toolProbe: scriptedToolProbe({ "claude-code": { status: "ready" }, codex: { status: "ready" }, grok: { status: "ready" }, antigravity: { status: "not-installed" }, gh: { status: "not-installed" }, git: { status: "ready" } }) }),
       { skipDriverPrepare: true, skipUpToDate: true, skipPrepareChecks: true, skipReviewCopies: true, skipReviewInputDiffs: true, fastCheckCapture: true, fastCleanup: true },
     );
     try {

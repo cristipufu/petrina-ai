@@ -1,7 +1,12 @@
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { compiledExecutableDir, findBunRuntime, isCompiledBinary } from "@petrina/platform/compiled-runtime";
+import {
+  compiledExecutableDir,
+  findBunRuntime,
+  findJsRuntime,
+  isCompiledBinary,
+} from "@petrina/platform/compiled-runtime";
 import type { ToolAdapter } from "./tool-adapter.js";
 
 export const CLAUDE_AGENT_ENTRY = "@agentclientprotocol/claude-agent-acp/dist/index.js";
@@ -59,5 +64,5 @@ export function adapterLaunchCommand(
     resolveAdapterEntry(adapter.entry ?? INTERNAL_SUBCOMMAND_ENTRY[adapter.internalSubcommand], execPath, metaDir);
     return [findBunRuntime(execPath, metaDir), join(metaDir, INTERNAL_SUBCOMMAND_SOURCE[adapter.internalSubcommand])];
   }
-  return ["node", resolveAdapterEntry(adapter.entry ?? "", execPath, metaDir)];
+  return [findJsRuntime(execPath, metaDir), resolveAdapterEntry(adapter.entry ?? "", execPath, metaDir)];
 }

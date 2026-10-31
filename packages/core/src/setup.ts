@@ -6,7 +6,7 @@
 import type { Id, InboxItem, State } from "./model.js";
 
 /** What Petrina checks: the agent tools, the GitHub CLI, and what Petrina itself needs. */
-export type CheckId = "claude-code" | "codex" | "grok" | "antigravity" | "gh" | "git" | "node";
+export type CheckId = "claude-code" | "codex" | "grok" | "antigravity" | "gh" | "git";
 
 /** The two starter tools, in the order the squad prefers them; Grok and Antigravity join once their checks find them (see agentTools). */
 export const AGENT_TOOLS = ["claude-code", "codex"] as const;
@@ -69,8 +69,11 @@ export const CHECK_NAMES: Record<CheckId, string> = {
   antigravity: "Antigravity",
   gh: "GitHub CLI",
   git: "Git",
-  node: "Node.js",
 };
+
+export function isCheckId(id: string): id is CheckId {
+  return Object.hasOwn(CHECK_NAMES, id);
+}
 
 export const CHECK_LABELS: Record<CheckStatus, string> = {
   unchecked: "Checking",
@@ -98,7 +101,6 @@ const GUIDES: Record<CheckId, { install: string; login?: string }> = {
   antigravity: { install: "https://antigravity.google/docs/cli/install/", login: "https://antigravity.google/docs/ide/extensions/zed" },
   gh: { install: "https://github.com/cli/cli#installation", login: "https://cli.github.com/manual/gh_auth_login" },
   git: { install: "https://git-scm.com/downloads" },
-  node: { install: "https://nodejs.org/en/download" },
 };
 
 const INSTALL: Record<CheckId, PerPlatform> = {
@@ -108,7 +110,6 @@ const INSTALL: Record<CheckId, PerPlatform> = {
   antigravity: "bun run petrina antigravity install",
   gh: { darwin: "brew install gh", win32: "winget install --id GitHub.cli", linux: "sudo apt install gh" },
   git: { darwin: "xcode-select --install", win32: "winget install --id Git.Git -e", linux: "sudo apt install git" },
-  node: { darwin: "brew install node", win32: "winget install OpenJS.NodeJS.LTS", linux: "sudo apt install nodejs npm" },
 };
 
 const LOGIN: Partial<Record<CheckId, string>> = {
@@ -119,10 +120,9 @@ const LOGIN: Partial<Record<CheckId, string>> = {
   gh: "gh auth login",
 };
 
-/** What Git and Node.js are for, at the start of the sentence that asks for them. */
+/** What Git is for, at the start of the sentence that asks for it. */
 const NEEDED_FOR: Partial<Record<CheckId, string>> = {
   git: "Petrina needs Git to add products and give each task its own working copy",
-  node: "Petrina needs Node.js to start its agents",
 };
 
 /** The guides Petrina links to: the only pages it opens for the coordinator. */
@@ -166,7 +166,7 @@ export function fixFor(id: CheckId, status: CheckStatus, platform: Platform): Fi
 }
 
 /** The program behind each check, to see whether it runs at all. */
-const PROGRAM: Record<CheckId, string> = { "claude-code": "claude", codex: "codex", grok: "grok", antigravity: "agy", gh: "gh", git: "git", node: "node" };
+const PROGRAM: Record<CheckId, string> = { "claude-code": "claude", codex: "codex", grok: "grok", antigravity: "agy", gh: "gh", git: "git" };
 
 /** The fix shown on a Stuck item for a tool that would not start, when its check found nothing wrong. */
 export function wontStartFix(id: CheckId, platform: Platform): Fix {
@@ -208,7 +208,7 @@ export function usableAgentTools(checks: readonly ToolCheck[] | undefined): Chec
 
 /**
  * Whether the Tools screen may go on, what is missing in one sentence, and the notes under Continue,
- * one sentence each. Continue needs Git, Node.js and one agent tool (Claude Code, Codex, or Grok or
+ * one sentence each. Continue needs Git and one agent tool (Claude Code, Codex, or Grok or
  * Antigravity when installed) that is Ready or that Petrina couldn't check. The notes describe what
  * the squad will really use (see usableAgentTools).
  */
@@ -216,7 +216,7 @@ export function toolsGate(checks: readonly ToolCheck[] | undefined): { ok: boole
   const status = (id: CheckId) => checkOf(checks, id).status;
   const name = (id: CheckId) => CHECK_NAMES[id];
   const tools = agentTools(checks);
-  const lacking = (["git", "node"] as const).filter((id) => !present(status(id)));
+  const lacking = (["git"] as const).filter((id) => !present(status(id)));
   const agents = tools.filter((id) => present(status(id)));
   const notes: string[] = [];
   if (lacking.length || !agents.length) {

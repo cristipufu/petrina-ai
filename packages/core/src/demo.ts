@@ -294,7 +294,6 @@ export function createFirstRunDemo(now: number): Demo {
           { id: "codex", status: "not-installed", at: now },
           { id: "gh", status: "logged-out", at: now },
           { id: "git", status: "ready", at: now },
-          { id: "node", status: "ready", at: now },
         ],
       },
     },

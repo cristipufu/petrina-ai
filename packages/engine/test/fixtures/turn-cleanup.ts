@@ -87,7 +87,7 @@ export function turnCleanupFixtures() {
         const current = engine = owner.open(join(root, "data"), {
           agentCommand: () => [join(root, "unconfigured-agent-must-never-launch")],
           ...(input.nativeOpening ? {} : { startAgentSession: start }),
-          toolProbe: scriptedToolProbe({ gh: { status: "ready" }, git: { status: "ready" }, node: { status: "ready" },
+          toolProbe: scriptedToolProbe({ gh: { status: "ready" }, git: { status: "ready" },
             codex: { status: "ready" }, "claude-code": { status: "ready" }, grok: { status: "ready" }, antigravity: { status: "not-installed" } }),
         });
         current.schedule = () => {};

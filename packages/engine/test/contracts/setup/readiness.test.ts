@@ -4,7 +4,7 @@ import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import * as processes from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { checkOf, completeAll } from "@petrina/core";
+import { checkOf, completeAll, toolsGate } from "@petrina/core";
 import { stopOwnedProcess } from "@petrina/platform/owned-process";
 import { engineProcessCases } from "../../support.js";
 import { shutdownActors } from "../../fixtures/shutdown-actors.js";
@@ -71,7 +71,7 @@ it("shows Couldn't check for a tool that will not start, and Not installed when 
     const bare = caseOwner.open(fresh("data", caseOwner.root), { which: () => null });
     try {
       await caseOwner.run(bare, async () => { await bare.checkTools(); });
-      for (const id of ["claude-code", "codex", "git", "node"] as const) expect(status(bare, id)).toBe("not-installed");
+      for (const id of ["claude-code", "codex", "git"] as const) expect(status(bare, id)).toBe("not-installed");
       // The Library reads the agent tools from here too.
       expect(bare.getState().tools.find((tool) => tool.id === "codex")?.status).toBe("not-installed");
     } finally {
@@ -280,8 +280,6 @@ it.skipIf(process.platform === "win32")("looks tools up on the PATH as it is now
     const bin = fresh("bin", caseOwner.root);
     mkdirSync(bin, { recursive: true });
     fixtureFiles.fileLink(Bun.which("git")!, join(bin, "git"));
-    const node = Bun.which("node");
-    if (node) fixtureFiles.fileLink(node, join(bin, "node"));
     // A GitHub CLI that only fails: no real one ever answers Couldn't check here.
     fixtureFiles.fileLink(Bun.which("false")!, join(bin, "gh"));
     const path = process.env.PATH;
@@ -300,7 +298,6 @@ it.skipIf(process.platform === "win32")("looks tools up on the PATH as it is now
       await checking;
       expect(status(engine, "gh")).toBe("unknown");
       expect(status(engine, "git")).toBe("ready");
-      if (node) expect(status(engine, "node")).toBe("ready");
       // Not on this PATH, though they may be on the one Petrina started with.
       expect(status(engine, "claude-code")).toBe("not-installed");
       expect(status(engine, "codex")).toBe("not-installed");
@@ -311,7 +308,7 @@ it.skipIf(process.platform === "win32")("looks tools up on the PATH as it is now
 
   });
 });
-it("checks Git and Node.js, and on a Mac never runs Git without Apple's developer tools", async () => {
+it("checks Git without requiring Node.js, and on a Mac never runs Git without Apple's developer tools", async () => {
   return engineCases.use("petrina-setup-case-", async caseOwner => {
     const which = () => process.execPath;
     expect((await checkGit(which, "linux")).status).toBe("ready");
@@ -321,16 +318,17 @@ it("checks Git and Node.js, and on a Mac never runs Git without Apple's develope
     expect(noTools.status).toBe("not-installed");
     const emptyTools = await checkGit(() => "/usr/bin/git", "darwin", { developerTools: async () => ({ kind: "found", path: fresh("no-git-here", caseOwner.root) }) });
     expect(emptyTools.status).toBe("not-installed");
-    const fakes = new Fakes(fresh("git-node-gh", caseOwner.root));
+    const fakes = new Fakes(fresh("git-gh", caseOwner.root));
     const engine = caseOwner.open(fresh("data", caseOwner.root), {
       which: (name) => name === "node" ? null : process.execPath,
       gh: [process.execPath, fakeGh, join(fakes.dir, "github.json"), join(fakes.dir, "github.git")],
       agentCommand: agents({}), toolCheckTimeoutMs: LIMIT,
     });
     try {
-      await caseOwner.run(engine, async () => { await completeAll([engine["tools"].check("git"), engine["tools"].check("node")]); });
+      await caseOwner.run(engine, async () => { await completeAll([engine["tools"].check("git"), engine["tools"].check("claude-code")]); });
       expect(status(engine, "git")).toBe("ready");
-      expect(status(engine, "node")).toBe("not-installed");
+      expect(status(engine, "claude-code")).toBe("ready");
+      expect(toolsGate(engine.getState().setup?.checks).ok).toBe(true);
     } finally {
       await caseOwner.stop(engine);
     }

@@ -21,9 +21,12 @@ export function runBrowserServer(args: readonly string[] = process.argv.slice(2)
       if (closing) return new Response("Session ended", { status: 503 });
       try {
         if (!connection) console.log(JSON.stringify({ used: true }));
-        const browser = await (connection ??= import("./browser-connection.js").then(({ connectBrowser }) =>
-          connectBrowser(root),
-        ));
+        const browser = await (connection ??= import("./browser-connection.js")
+          .then(({ connectBrowser }) => connectBrowser(root))
+          .catch((error) => {
+            connection = undefined;
+            throw error;
+          }));
         if (closing) return new Response("Session ended", { status: 503 });
         return browser.fetch(request);
       } catch {

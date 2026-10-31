@@ -73,7 +73,7 @@ export function updateAgents(dir: string, script: Scenario) {
       signal.throwIfAborted();
       return finishBuild(cwd, false, base.acceptedInitialBuild(cwd), signal);
     },
-    toolProbe: scriptedToolProbe({ "claude-code": { status: "ready" }, codex: { status: "ready" }, grok: { status: "ready" }, antigravity: { status: "not-installed" }, gh: { status: "ready" }, git: { status: "ready" }, node: { status: "ready" } }),
+    toolProbe: scriptedToolProbe({ "claude-code": { status: "ready" }, codex: { status: "ready" }, grok: { status: "ready" }, antigravity: { status: "not-installed" }, gh: { status: "ready" }, git: { status: "ready" } }),
     received, prompts: (role: string) => received(role).map(prompt => prompt.text),
     openings: (role: string) => received(role).filter(prompt => prompt.turn === 1).map(prompt => prompt.text),
   };

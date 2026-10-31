@@ -70,12 +70,12 @@ it("preserves every non-GH native observation and its stop callback, including m
   };
   const probe = worldToolProbe("unused-state", "unused-remote", () => native);
   const request = { signal: new AbortController().signal, onGone: () => {} };
-  for (const id of ["git", "node", "claude-code", "codex", "grok", "antigravity"] as const) {
+  for (const id of ["git", "claude-code", "codex", "grok", "antigravity"] as const) {
     expect(probe.absent(id)).toBe(id === "antigravity");
     expect(await probe.run(id, request)).toEqual(id === "antigravity" ? { status: "not-installed" } : { status: "unknown", detail: `Explicit ${id} observation` });
     expect(calls.at(-1)).toEqual({ id, request }); expect(calls.at(-1)!.request).toBe(request);
   }
-  expect(absent).toEqual(["git", "node", "claude-code", "codex", "grok", "antigravity"]);
+  expect(absent).toEqual(["git", "claude-code", "codex", "grok", "antigravity"]);
 });
 
 it("keeps native probe opt-ins and explicit command or probe overrides", async () => {

@@ -117,7 +117,7 @@ export function sharedWorldFixtures() {
       const engine = shop.start({ ...common,
         github: scriptedGitHub({ "acme/demo": { state: join(prepared.shop.dir, "github.json"), remote: prepared.shop.remote }, "acme/api": { state: join(prepared.api.dir, "github.json"), remote: prepared.api.remote } }),
         agentCommand: () => undefined,
-        toolProbe: scriptedToolProbe({ "claude-code": { status: "ready" }, codex: { status: "ready" }, grok: { status: "ready" }, antigravity: { status: "ready" }, gh: { status: "ready" }, git: { status: "ready" }, node: { status: "ready" } }),
+        toolProbe: scriptedToolProbe({ "claude-code": { status: "ready" }, codex: { status: "ready" }, grok: { status: "ready" }, antigravity: { status: "ready" }, gh: { status: "ready" }, git: { status: "ready" } }),
         startAgentSession: (launch, role) => { fakes.roles(engine.s.roles); return fakes.start(launch, role); },
         ...options,
         runCheckCommand: async (req) => {

@@ -13,7 +13,7 @@ async function preparePlannerCheckpoint(owner: EngineCaseOwner) {
     startAgentSession: agents.start,
     agentCommand: () => [process.execPath, join(import.meta.dir, "..", "unconfigured-service.ts"), "planner checkpoint"],
     toolProbe: scriptedToolProbe({ "claude-code": { status: "ready" }, codex: { status: "ready" }, grok: { status: "not-installed" }, antigravity: { status: "not-installed" },
-      gh: { status: "not-installed" }, git: { status: "ready" }, node: { status: "ready" } }),
+      gh: { status: "not-installed" }, git: { status: "ready" } }),
   });
     engine.setPoolPaused(true); await engine.waitUntilReady();
     owner.check();

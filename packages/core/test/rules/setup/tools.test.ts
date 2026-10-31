@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { CHECK_NAMES, fixFor, isGuide, toolsGate, usableAgentTools, wontStartFix, type CheckId, type CheckStatus, type Platform, type ToolCheck } from "../../../src/setup.js";
+import { CHECK_NAMES, fixFor, isCheckId, isGuide, toolsGate, usableAgentTools, wontStartFix, type CheckId, type CheckStatus, type Platform, type ToolCheck } from "../../../src/setup.js";
 
 const checks = (statuses: Partial<Record<CheckId, CheckStatus>>): ToolCheck[] => Object.entries(statuses).map(([id, status]) => ({ id: id as CheckId, status: status! }));
 
-const all = { git: "ready", node: "ready", gh: "ready" } as const;
+const all = { git: "ready", gh: "ready" } as const;
 
 const sentences = (text: string) => text.split(/[.!?](?:\s|$)/).filter((part) => part.trim()).length;
 
@@ -63,10 +63,13 @@ describe("the Tools screen with Grok", () => {
 });
 
 describe("the Tools screen's Continue", () => {
-  it("goes on with Git, Node.js and one agent tool that is Ready or couldn't be checked, without waiting for slower rows", () => {
+  it("goes on with Git and one agent tool that is Ready or couldn't be checked, without requiring Node.js or waiting for slower rows", () => {
+    expect(isCheckId("git")).toBe(true);
+    expect(isCheckId("node")).toBe(false);
     expect(toolsGate(checks({ ...all, "claude-code": "ready", codex: "ready" }))).toEqual({ ok: true, notes: [] });
     // Codex and the GitHub CLI still checking: Continue does not wait for them.
-    expect(toolsGate(checks({ git: "ready", node: "unknown", "claude-code": "ready" })).ok).toBe(true);
+    expect(toolsGate(checks({ git: "ready", "claude-code": "ready" })).ok).toBe(true);
+    expect(toolsGate(checks({ git: "unknown", "claude-code": "ready" })).ok).toBe(true);
   });
 
   it("says in one sentence what is missing", () => {
@@ -74,12 +77,12 @@ describe("the Tools screen's Continue", () => {
     expect(noAgents).toMatchObject({ ok: false, missing: "To go on, Petrina needs Claude Code or Codex, and the fix is above." });
     const noGit = toolsGate(checks({ ...all, git: "not-installed", "claude-code": "ready" }));
     expect(noGit.missing).toBe("To go on, Petrina needs Git, and the fix is above.");
-    const waiting = toolsGate(checks({ "claude-code": "ready", node: "ready" }));
+    const waiting = toolsGate(checks({ "claude-code": "ready" }));
     expect(waiting).toMatchObject({ ok: false, missing: "Waiting for the check of Git." });
   });
 
   it("notes a single tool, tools it will only try, and a GitHub CLI that is not ready", () => {
-    const one = toolsGate(checks({ git: "ready", node: "ready", gh: "logged-out", "claude-code": "unknown", codex: "not-installed" }));
+    const one = toolsGate(checks({ git: "ready", gh: "logged-out", "claude-code": "unknown", codex: "not-installed" }));
     expect(one.ok).toBe(true);
     expect(one.notes).toEqual([
       "Only Claude Code is set up, so agents will review each other's work on the same tool, and setting up Codex gives a second opinion.",

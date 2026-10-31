@@ -3,6 +3,7 @@
 import type { FileOperations } from "@petrina/platform/file-operations";
 import {
   CHECK_NAMES,
+  isCheckId,
   MAX_SESSION_LINES,
   openStep,
   stepKey,
@@ -102,11 +103,11 @@ export function setupOf(loaded: State | undefined): DeepMutable<NonNullable<Stat
       checks: [],
     };
   }
-  // Nothing is being checked right after a start.
+  // Nothing is being checked right after a start; retired check ids from older saves are dropped.
   return {
     ...(saved as DeepMutable<NonNullable<State["setup"]>>),
     platform,
-    checks: saved.checks.map(({ checking: _, ...check }) => check),
+    checks: saved.checks.filter((check) => isCheckId(check.id)).map(({ checking: _, ...check }) => check),
   };
 }
 
