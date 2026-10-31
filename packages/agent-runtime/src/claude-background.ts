@@ -1,19 +1,29 @@
-import { createRequire } from "node:module";
-import { CLAUDE_AGENT_ENTRY, resolveAdapterEntry } from "./tool-entry.js";
+import { SettingsManager } from "@agentclientprotocol/claude-agent-acp";
 
 /** Turn off inherited plugins through Claude's session settings, preserving its other settings,
  * including the coordinator's sandbox additions. No settings files are changed. */
 export async function claudeBackground(cwd: string): Promise<Record<string, unknown>> {
-  const loadFromAdapter = createRequire(resolveAdapterEntry(CLAUDE_AGENT_ENTRY));
-  const sdk = loadFromAdapter("@anthropic-ai/claude-agent-sdk") as {
-    resolveSettings(options: { cwd: string }): Promise<{ effective: { enabledPlugins?: Record<string, unknown> } }>;
-  };
-  const { effective } = await sdk.resolveSettings({ cwd });
+  const manager = new SettingsManager(cwd, {
+    logger: {
+      log() {},
+      error() {},
+    },
+  });
+  let effective: { enabledPlugins?: Record<string, unknown> };
+  try {
+    await manager.initialize();
+    effective = manager.getSettings();
+  } finally {
+    manager.dispose();
+  }
   return {
     strictMcpConfig: true,
     plugins: [],
     extraArgs: { "no-chrome": null },
-    settings: { enabledPlugins: Object.fromEntries(Object.keys(effective.enabledPlugins ?? {}).map((id) => [id, false])), syncClaudeAiPlugins: false },
+    settings: {
+      enabledPlugins: Object.fromEntries(Object.keys(effective.enabledPlugins ?? {}).map((id) => [id, false])),
+      syncClaudeAiPlugins: false,
+    },
     tools: [
       "Bash",
       "Read",
@@ -36,7 +46,7 @@ export async function claudeBackground(cwd: string): Promise<Record<string, unkn
       "EnterPlanMode",
       "ExitPlanMode",
       "Skill",
-      "NotebookEdit"
+      "NotebookEdit",
     ],
     disallowedTools: ["mcp__claude-in-chrome__*", "Computer", "ComputerUse"],
   };

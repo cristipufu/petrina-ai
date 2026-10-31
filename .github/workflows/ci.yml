@@ -174,3 +174,22 @@ jobs:
         run: bun run build:engine --verify
       - name: Check and test the Rust host
         run: bun run rust:check
+      - name: Package Tauri desktop bundle (unsigned verification)
+        shell: bash
+        run: >-
+          bun run --cwd apps/desktop tauri build --ci --no-sign
+          --config '{"build":{"beforeBuildCommand":""}}'
+          --bundles ${{ runner.os == 'macOS' && 'app' || runner.os == 'Linux' && 'deb' || 'nsis' }}
+      - name: Verify bundled engine resources
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            test -x apps/desktop/src-tauri/target/release/bundle/macos/Petrina.app/Contents/Resources/engine/petrina-engine
+            test -x apps/desktop/src-tauri/target/release/bundle/macos/Petrina.app/Contents/Resources/engine/codex-background
+          elif [ "$RUNNER_OS" = "Linux" ]; then
+            deb="$(ls apps/desktop/src-tauri/target/release/bundle/deb/*.deb | head -n 1)"
+            test -f "$deb"
+            dpkg-deb -c "$deb" | grep -q "engine/petrina-engine"
+          else
+            ls apps/desktop/src-tauri/target/release/bundle/nsis/*-setup.exe
+          fi

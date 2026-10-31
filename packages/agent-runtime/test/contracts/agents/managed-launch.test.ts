@@ -5,10 +5,12 @@ import { ADAPTERS } from "@petrina/agent-runtime/tools";
 import { ownSession } from "@petrina/platform/process-environment";
 import { AgentRun } from "@petrina/agent-runtime/acp-run";
 import { readProcessList } from "@petrina/platform/process-tree";
+import { resolveInstalledClaudeCli } from "@petrina/agent-runtime/claude-acp";
+import { resolveInstalledCodexCli } from "@petrina/agent-runtime/codex-acp";
 import { backgroundCommand } from "@petrina/agent-runtime/codex-background";
 import { removeDir, tempDir } from "@petrina/test-support/fixtures";
 import { SLOW } from "@petrina/test-support/slow";
-import { mkdirSync } from "node:fs";
+import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 
 const root = tempDir("petrina-managed-launch-");
 afterAll(() => removeDir(root));
@@ -58,10 +60,31 @@ for (const id of ["claude-code", "codex", "grok", "antigravity"]) {
   });
 }
 
-it("refuses a self-referencing Codex command without starting a recursive process", async () => {
+it("refuses a self-referencing Codex command and resolves installed agent CLIs strictly from PATH", async () => {
   await expectRejection(backgroundCommand(wrapper), "launcher points back to itself");
   expect(await backgroundCommand(process.execPath)).toEqual([process.execPath]);
-  expect((await backgroundCommand(undefined))[1]).toEndWith("codex.js");
+
+  const binDir = join(root, "private-bin");
+  const emptyBinDir = join(root, "empty-bin");
+  mkdirSync(binDir, { recursive: true });
+  mkdirSync(emptyBinDir, { recursive: true });
+  const ext = process.platform === "win32" ? ".cmd" : "";
+  const fakeCodex = join(binDir, `codex${ext}`);
+  const fakeClaude = join(binDir, `claude${ext}`);
+  for (const bin of [fakeCodex, fakeClaude]) {
+    writeFileSync(bin, process.platform === "win32" ? "@echo off\r\n" : "#!/bin/sh\n", "utf8");
+    if (process.platform !== "win32") chmodSync(bin, 0o755);
+  }
+
+  expect(await backgroundCommand(undefined, binDir)).toEqual([fakeCodex]);
+  await expectRejection(backgroundCommand(undefined, emptyBinDir), "no `codex` on PATH");
+
+  expect(resolveInstalledCodexCli({ PATH: binDir })).toBe(fakeCodex);
+  expect(() => resolveInstalledCodexCli({ PATH: emptyBinDir })).toThrow("no `codex` on PATH");
+
+  expect(resolveInstalledClaudeCli({ PATH: binDir })).toBe(fakeClaude);
+  expect(resolveInstalledClaudeCli({ PATH: emptyBinDir, CLAUDE_CODE_EXECUTABLE: fakeClaude })).toBe(fakeClaude);
+  expect(() => resolveInstalledClaudeCli({ PATH: emptyBinDir })).toThrow("no `claude` on PATH");
 });
 
 for (const toolId of ["claude-code", "codex", "grok", "antigravity"]) it(`${toolId}: the actual connector receives an independent environment`, async () => {

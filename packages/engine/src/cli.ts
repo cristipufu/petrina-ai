@@ -15,6 +15,8 @@ import { coordinationCli } from "./coordination-cli.js";
 import { runMcp } from "./mcp.js";
 import { installAntigravity } from "@petrina/agent-runtime/antigravity-runtime";
 import { runBrowserServer } from "@petrina/agent-runtime/browser-server";
+import { runClaudeAcp } from "@petrina/agent-runtime/claude-acp";
+import { runCodexAcp } from "@petrina/agent-runtime/codex-acp";
 import { runCodexBackground } from "@petrina/agent-runtime/codex-background";
 import { checkAgentTool } from "@petrina/agent-runtime/probe";
 import { ADAPTERS, ENGINE_PROFILES, findProgram } from "@petrina/agent-runtime/tools";
@@ -93,6 +95,14 @@ export async function runCli(args: readonly string[] = process.argv.slice(2), st
   }
   if (command === "__internal-codex-background") {
     await runCodexBackground(rest);
+    return;
+  }
+  if (command === "__internal-claude-acp") {
+    await runClaudeAcp(rest);
+    return;
+  }
+  if (command === "__internal-codex-acp") {
+    await runCodexAcp(rest);
     return;
   }
   const newKey = rest.includes("--new-key");

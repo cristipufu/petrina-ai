@@ -1,10 +1,6 @@
 import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
-import {
-  FROZEN_PRODUCTION_LINE_CEILINGS,
-  formatProductionSource,
-  productionFormattingViolations,
-} from "./format.js";
+import { formatProductionSource, productionFormattingViolations } from "./format.js";
 import { isTest, WORKSPACES } from "./test-paths.js";
 
 const ROOT = resolve(import.meta.dir, "../../../..");
@@ -35,7 +31,7 @@ function productionFiles(root: string): string[] {
   for (const workspace of WORKSPACES) {
     for (const full of walkSourceFiles(join(root, workspace, "src"))) {
       const rel = relative(root, full).replaceAll("\\", "/");
-      if (isTest(rel) || rel in FROZEN_PRODUCTION_LINE_CEILINGS) continue;
+      if (isTest(rel)) continue;
       files.push(rel);
     }
   }

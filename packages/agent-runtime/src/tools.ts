@@ -7,8 +7,8 @@ import { GrokUsage } from "./grok-usage.js";
 import { AntigravityUsage } from "./antigravity-usage.js";
 import { antigravityCommand } from "./antigravity-runtime.js";
 import { ADAPTERS as CATALOG_ADAPTERS } from "./tool-catalog.js";
-import { adapterEntry, GROK_AGENT_COMMAND } from "./tool-entry.js";
-export { adapterEntry } from "./tool-entry.js";
+import { adapterLaunchCommand, GROK_AGENT_COMMAND } from "./tool-entry.js";
+export { adapterEntry, adapterLaunchCommand } from "./tool-entry.js";
 
 CATALOG_ADAPTERS["claude-code"]!.usageReader ??= {
   command: () => CLAUDE_USAGE_COMMAND,
@@ -61,20 +61,20 @@ export function agentCommandFor(options: AgentLaunchOptions, profile: AgentProfi
 /** Which tools are usable on this machine: the CLI is installed and the adapter resolves. */
 export function detectTools(available?: (toolId: string) => boolean): Tool[] {
   return Object.values(ADAPTERS).map((adapter) => {
-    let resolved = adapter.command !== undefined;
-    if (!resolved) {
-      try {
-        adapterEntry(adapter);
-        resolved = true;
-      } catch {
-        resolved = false;
-      }
+    let launchCommand: string[] | undefined;
+    try {
+      launchCommand = adapterLaunchCommand(adapter);
+    } catch {
+      launchCommand = undefined;
     }
-    const installed = available ? available(adapter.id) : resolved && findProgram(adapter.cli) !== null && (adapter.installed?.() ?? true);
+    const resolved = launchCommand !== undefined;
+    const installed = available
+      ? available(adapter.id)
+      : resolved && findProgram(adapter.cli) !== null && (adapter.installed?.() ?? true);
     return {
       id: adapter.id,
       name: adapter.name,
-      command: adapter.command ? [...adapter.command] : ["node", adapter.entry ?? adapter.cli],
+      command: launchCommand ?? [adapter.cli],
       status: installed ? "ready" : "not-installed",
       models: adapter.models,
     };

@@ -18,7 +18,7 @@ import type { ProfileChoices, AgentProfile } from "@petrina/core";
 import type { ClaudeSandbox } from "./sandbox.js";
 import { SandboxUnavailable, sandboxFailure } from "./sandbox-failures.js";
 import { ADAPTERS } from "./tool-catalog.js";
-import { adapterEntry } from "./tool-entry.js";
+import { adapterLaunchCommand } from "./tool-entry.js";
 import { AgentBrowser } from "./browser.js";
 export { AGENT_CLEANUP_NOTE } from "./browser-cleanup.js";
 import { CLEANUP_INCOMPLETE } from "@petrina/platform/process-tree";
@@ -149,7 +149,7 @@ export class AgentRun implements AgentSession {
     // Stopped before it started: an aborted signal never fires again, so never start the agent at all.
     if (signal.aborted) throw new Error("Stopped before the agent started");
 
-    const [program, ...args] = options.command ?? adapter.command ?? ["node", adapterEntry(adapter)];
+    const [program, ...args] = options.command ?? adapterLaunchCommand(adapter);
     const env = ownSession(options.env ?? process.env);
     adapter.prepareEnv?.(env);
 

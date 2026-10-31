@@ -3,7 +3,7 @@ import type { AgentProfile } from "@petrina/core";
 import type { ToolProbeResult } from "@petrina/orchestrator";
 import { isAuthRequired } from "./failures.js";
 import { AgentRun } from "./acp-run.js";
-import { adapterEntry, type ToolAdapter } from "./tools.js";
+import { adapterLaunchCommand, type ToolAdapter } from "./tools.js";
 
 export type ExecutableLookup = (name: string) => string | null;
 /** Native agents open a full session; cold startup can exceed a simple command's deadline. */
@@ -40,7 +40,7 @@ export async function checkAgentTool(options: {
   const { adapter } = options;
   if (!options.command) {
     try {
-      if (!adapter.command) adapterEntry(adapter);
+      adapterLaunchCommand(adapter);
     } catch {
       return { status: "not-installed", detail: `Petrina's connector for ${adapter.name} is missing. Run bun install in Petrina's folder.` };
     }

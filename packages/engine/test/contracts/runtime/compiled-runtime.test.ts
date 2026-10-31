@@ -2,15 +2,23 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { defaultBrowserServerLaunch } from "@petrina/agent-runtime/browser";
-import { codexWrapperPath } from "@petrina/agent-runtime/tool-catalog";
-import { resolveAdapterEntry } from "@petrina/agent-runtime/tool-entry";
+import { ADAPTERS, codexWrapperPath } from "@petrina/agent-runtime/tool-catalog";
+import { adapterLaunchCommand, GROK_AGENT_COMMAND, resolveAdapterEntry } from "@petrina/agent-runtime/tool-entry";
 import {
   compiledExecutableDir,
   findBunRuntime,
   findJsRuntime,
   isCompiledBinary,
 } from "@petrina/platform/compiled-runtime";
-import { codexWrapperName, engineBinaryName, writeCodexWrapper } from "../../../src/build-engine.js";
+import {
+  codexWrapperName,
+  engineBinaryName,
+  engineReleaseArchiveName,
+  packageEngineRelease,
+  sha256File,
+  writeCodexWrapper,
+  writeSha256Sums,
+} from "../../../src/build-engine.js";
 import { resolveDefaultUiDir } from "../../../src/cli.js";
 import { defaultManagedSpawnCommand } from "../../../src/engine-client.js";
 import { ReleaseStore } from "../../../src/release-store.js";
@@ -73,6 +81,24 @@ describe("standalone compiled engine runtime contracts", () => {
     );
     expect(codexWrapperPath(realBinaryExec, "/$bunfs/root", "darwin")).toBe(join(realBundleDir, "codex-background"));
     expect(codexWrapperPath(realBinaryExec, "B:\\~BUN\\root", "win32")).toBe(join(realBundleDir, "codex-background.cmd"));
+
+    expect(adapterLaunchCommand(ADAPTERS["claude-code"]!, "/usr/bin/bun", "/repo/packages/agent-runtime/src")).toEqual([
+      "/usr/bin/bun",
+      join("/repo/packages/agent-runtime/src", "claude-acp.ts"),
+    ]);
+    expect(adapterLaunchCommand(ADAPTERS.codex!, "/usr/bin/bun", "/repo/packages/agent-runtime/src")).toEqual([
+      "/usr/bin/bun",
+      join("/repo/packages/agent-runtime/src", "codex-acp.ts"),
+    ]);
+    expect(adapterLaunchCommand(ADAPTERS["claude-code"]!, realBinaryExec, "/$bunfs/root")).toEqual([
+      realBinaryExec,
+      "__internal-claude-acp",
+    ]);
+    expect(adapterLaunchCommand(ADAPTERS.codex!, realBinaryExec, "B:\\~BUN\\root")).toEqual([
+      realBinaryExec,
+      "__internal-codex-acp",
+    ]);
+    expect(adapterLaunchCommand(ADAPTERS.grok!, realBinaryExec, "/$bunfs/root")).toEqual([...GROK_AGENT_COMMAND]);
 
     expect(resolveDefaultUiDir("/usr/bin/bun", "/repo/packages/engine/src")).toBe(resolve("/repo/apps/desktop/dist"));
     expect(resolveDefaultUiDir(realBinaryExec, "/$bunfs/root")).toBe(join(realBundleDir, "ui"));
@@ -154,5 +180,42 @@ describe("standalone compiled engine runtime contracts", () => {
     const promoted = store.promote("0.2.0");
     expect(promoted.current.kind).toBe("binary");
     expect(store.commandFor(promoted.current, ["app"])).toEqual([promoted.current.entrypoint, "app"]);
+  });
+
+  it("packages standalone engine release archives and deterministic SHA256SUMS.txt manifests", async () => {
+    const root = tempDir("petrina-release-archive-");
+    roots.push(root);
+
+    expect(engineReleaseArchiveName("v0.2.1", "darwin", "arm64")).toBe("petrina-engine-0.2.1-darwin-arm64.tar.gz");
+    expect(engineReleaseArchiveName("0.2.1", "linux", "x64")).toBe("petrina-engine-0.2.1-linux-x64.tar.gz");
+    expect(engineReleaseArchiveName("v0.2.1", "win32", "x64")).toBe("petrina-engine-0.2.1-win32-x64.zip");
+
+    const bundleDir = join(root, "bundle");
+    const releaseDir = join(root, "dist-release");
+    mkdirSync(bundleDir, { recursive: true });
+    const binaryPath = join(bundleDir, engineBinaryName());
+    writeFileSync(binaryPath, "standalone-binary-payload\n", "utf8");
+    if (process.platform !== "win32") chmodSync(binaryPath, 0o755);
+    writeCodexWrapper(bundleDir);
+
+    const packaged = await packageEngineRelease({
+      bundleDir,
+      releaseDir,
+      version: "v0.2.1",
+    });
+    expect(existsSync(packaged.archivePath)).toBe(true);
+    expect(existsSync(packaged.checksumsPath)).toBe(true);
+
+    const archiveDigest = sha256File(packaged.archivePath);
+    expect(archiveDigest).toMatch(/^[0-9a-f]{64}$/);
+    const checksumsText = readFileSync(packaged.checksumsPath, "utf8");
+    expect(checksumsText).toBe(`${archiveDigest}  ${engineReleaseArchiveName("v0.2.1")}\n`);
+
+    writeFileSync(join(releaseDir, "Petrina_0.2.1_aarch64.dmg"), "dmg-payload", "utf8");
+    const refreshedPath = writeSha256Sums(releaseDir);
+    const refreshedLines = readFileSync(refreshedPath, "utf8").trim().split("\n");
+    expect(refreshedLines).toHaveLength(2);
+    expect(refreshedLines[0]).toContain("Petrina_0.2.1_aarch64.dmg");
+    expect(refreshedLines[1]).toContain(engineReleaseArchiveName("v0.2.1"));
   });
 });

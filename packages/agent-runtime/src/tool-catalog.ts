@@ -46,6 +46,7 @@ export const ADAPTERS: Record<string, ToolAdapter> = {
     id: "claude-code",
     name: "Claude Code",
     entry: CLAUDE_AGENT_ENTRY,
+    internalSubcommand: "__internal-claude-acp",
     cli: "claude",
     options: { model: "model", effort: "effort", mode: "mode" },
     // Auto: Claude Code's own classifier makes the permission decisions.
@@ -79,6 +80,7 @@ export const ADAPTERS: Record<string, ToolAdapter> = {
     id: "codex",
     name: "Codex",
     entry: CODEX_AGENT_ENTRY,
+    internalSubcommand: "__internal-codex-acp",
     cli: "codex",
     options: { model: "model", effort: "reasoning_effort", mode: "mode" },
     // Auto review: Codex's own reviewer approves, and asks only about actions it finds unsafe.

@@ -2,15 +2,6 @@ import { parse } from "@babel/parser";
 
 export const MAX_PRODUCTION_LINE_WIDTH = 160;
 
-/** Low-level native Git binary/plumbing and process-execution boundary adapters frozen at their current line counts. */
-export const FROZEN_PRODUCTION_LINE_CEILINGS: Readonly<Record<string, number>> = {
-  "packages/repositories/src/git/loose-objects.ts": 1268,
-  "packages/repositories/src/git/loose-index.ts": 1183,
-  "packages/repositories/src/git/diff-merge.ts": 991,
-  "packages/repositories/src/git/worktrees.ts": 707,
-  "packages/test-support/src/commands.ts": 689,
-};
-
 export interface FormattingViolation {
   line: number;
   reason: string;
@@ -340,7 +331,7 @@ export function formatPass(
 }
 
 export function formatProductionSource(source: string, filename: string): string {
-  if (filename in FROZEN_PRODUCTION_LINE_CEILINGS || filename.endsWith(".d.ts")) return source;
+  if (filename.endsWith(".d.ts")) return source;
   let current = source;
   for (let pass = 0; pass < 8; pass++) {
     const result = formatPass(current, filename);
@@ -351,6 +342,6 @@ export function formatProductionSource(source: string, filename: string): string
 }
 
 export function productionFormattingViolations(source: string, filename: string): FormattingViolation[] {
-  if (filename in FROZEN_PRODUCTION_LINE_CEILINGS || filename.endsWith(".d.ts")) return [];
+  if (filename.endsWith(".d.ts")) return [];
   return formatPass(source, filename).violations;
 }

@@ -3,12 +3,10 @@
 // its effective configuration and switch inherited MCP servers off through Codex's
 // own per-server enabled option. No personal settings are written.
 import { spawn } from "node:child_process";
-import { createRequire } from "node:module";
 import { createInterface } from "node:readline";
 import { realpath } from "node:fs/promises";
 import { resolve } from "node:path";
-import { findJsRuntime, isCompiledBinary } from "@petrina/platform/compiled-runtime";
-import { CODEX_AGENT_ENTRY, resolveAdapterEntry } from "./tool-entry.js";
+import { isCompiledBinary } from "@petrina/platform/compiled-runtime";
 
 export const BACKGROUND_FEATURES = ["apps", "plugins", "computer_use", "browser_use", "browser_use_external", "browser_use_full_cdp_access", "in_app_browser"];
 
@@ -38,24 +36,27 @@ export function backgroundConfig(config: Record<string, unknown>, inherited: Rec
   return withoutNulls({ ...config, ...controls, mcp_servers: mcp }) as Record<string, unknown>;
 }
 
-export async function backgroundCommand(executable: string | undefined): Promise<string[]> {
-  if (executable) {
-    const resolvedExec = await realpath(resolve(executable)).catch(() => resolve(executable));
-    const selfPaths = [
-      ...(isCompiledBinary() ? [] : [await realpath(import.meta.path).catch(() => import.meta.path)]),
-      ...(process.env.PETRINA_CODEX_WRAPPER
-        ? [await realpath(resolve(process.env.PETRINA_CODEX_WRAPPER)).catch(() => resolve(process.env.PETRINA_CODEX_WRAPPER!))]
-        : []),
-    ];
-    if (selfPaths.includes(resolvedExec)) {
-      throw new Error(
-        "Codex could not start because its launcher points back to itself. Restart Petrina before trying again.",
-      );
-    }
-    return [executable];
+export async function backgroundCommand(
+  executable: string | undefined,
+  pathEnv: string | undefined = process.env.PATH,
+): Promise<string[]> {
+  const candidate = executable ?? Bun.which("codex", { PATH: pathEnv ?? "" }) ?? undefined;
+  if (!candidate) {
+    throw new Error("Codex is not installed: no `codex` on PATH.");
   }
-  const require = createRequire(resolveAdapterEntry(CODEX_AGENT_ENTRY));
-  return [findJsRuntime(), require.resolve("@openai/codex/bin/codex.js")];
+  const resolvedExec = await realpath(resolve(candidate)).catch(() => resolve(candidate));
+  const selfPaths = [
+    ...(isCompiledBinary() ? [] : [await realpath(import.meta.path).catch(() => import.meta.path)]),
+    ...(process.env.PETRINA_CODEX_WRAPPER
+      ? [await realpath(resolve(process.env.PETRINA_CODEX_WRAPPER)).catch(() => resolve(process.env.PETRINA_CODEX_WRAPPER!))]
+      : []),
+  ];
+  if (selfPaths.includes(resolvedExec)) {
+    throw new Error(
+      "Codex could not start because its launcher points back to itself. Restart Petrina before trying again.",
+    );
+  }
+  return [candidate];
 }
 
 export async function runCodexBackground(rawArgs: readonly string[] = process.argv.slice(2)): Promise<void> {

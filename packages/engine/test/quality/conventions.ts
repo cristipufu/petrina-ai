@@ -1,16 +1,12 @@
 import { engineConstructionBoundaries } from "./engine-construction.js";
-import {
-  FROZEN_PRODUCTION_LINE_CEILINGS,
-  MAX_PRODUCTION_LINE_WIDTH,
-  productionFormattingViolations,
-} from "./format.js";
+import { MAX_PRODUCTION_LINE_WIDTH, productionFormattingViolations } from "./format.js";
 import { childFixtureBoundaries, layerBoundaries, packageBoundaries } from "./layers.js";
 import { sourceCandidates } from "./source-paths.js";
 import { sourceFacts } from "./source.js";
 import { isSource, isTest, workspaceOf } from "./test-paths.js";
 import { TEST_WORKSPACES } from "./workspaces.js";
 
-export { FROZEN_PRODUCTION_LINE_CEILINGS, MAX_PRODUCTION_LINE_WIDTH };
+export { MAX_PRODUCTION_LINE_WIDTH };
 export const MAX_PRODUCTION_LINES = 650;
 
 /** Contravariant Error constructor signature in the test rejection helper (`new (...args: any[]) => Error`). */
@@ -54,10 +50,9 @@ export function conventions(files: ReadonlyMap<string, string>): string[] {
       const workspace = workspaceOf(file);
       if (isRustProduction(file, workspace)) {
         const lines = countLines(source);
-        const ceiling = FROZEN_PRODUCTION_LINE_CEILINGS[file] ?? MAX_PRODUCTION_LINES;
-        if (lines > ceiling) {
+        if (lines > MAX_PRODUCTION_LINES) {
           errors.push(
-            `${file}: ${lines} lines exceeds the ${ceiling}-line production Rust module ceiling; split cohesive responsibilities into focused modules`,
+            `${file}: ${lines} lines exceeds the ${MAX_PRODUCTION_LINES}-line production Rust module ceiling; split cohesive responsibilities into focused modules`,
           );
         }
         const rawLines = source.split(/\r?\n/);
@@ -84,10 +79,9 @@ export function conventions(files: ReadonlyMap<string, string>): string[] {
 
     if (production) {
       const lines = countLines(source);
-      const ceiling = FROZEN_PRODUCTION_LINE_CEILINGS[file] ?? MAX_PRODUCTION_LINES;
-      if (lines > ceiling) {
+      if (lines > MAX_PRODUCTION_LINES) {
         errors.push(
-          `${file}: ${lines} lines exceeds the ${ceiling}-line production module ceiling; split cohesive responsibilities into focused modules`,
+          `${file}: ${lines} lines exceeds the ${MAX_PRODUCTION_LINES}-line production module ceiling; split cohesive responsibilities into focused modules`,
         );
       }
       if (!file.endsWith(".d.ts")) {

@@ -281,15 +281,15 @@ it("attributes failures to structured runner outcomes, including XML escaping an
   expect(testResults(xml.replace('tests="2" failures="1"', 'tests="3" failures="2"').replace('</testsuites>', '<testsuite file="test/a&amp;b.test.ts" tests="1" failures="1"><testcase><failure /></testcase></testsuite></testsuites>'), "packages/engine", "bun", root).failures).toEqual(["packages/engine/test/a&b.test.ts"]);
 });
 
-it("enforces the 650-line production module ceiling and frozen native boundary ratchets", () => {
+it("enforces the universal 650-line production module and stylesheet ceiling with zero exemptions", () => {
   const lines = (count: number) => Array.from({ length: count }, (_, index) => `export const v${index} = ${index};`).join("\n") + "\n";
   expect(found(lines(650), "packages/core/src/example.ts")).toEqual([]);
   expect(found(lines(651), "packages/core/src/example.ts")).toEqual([
     expect.stringContaining("651 lines exceeds the 650-line production module ceiling"),
   ]);
-  expect(found(lines(707), "packages/repositories/src/git/worktrees.ts")).toEqual([]);
-  expect(found(lines(708), "packages/repositories/src/git/worktrees.ts")).toEqual([
-    expect.stringContaining("708 lines exceeds the 707-line production module ceiling"),
+  expect(found(lines(650), "packages/repositories/src/git/worktrees.ts")).toEqual([]);
+  expect(found(lines(651), "packages/repositories/src/git/worktrees.ts")).toEqual([
+    expect.stringContaining("651 lines exceeds the 650-line production module ceiling"),
   ]);
   const cssLines = (count: number) => Array.from({ length: count }, (_, index) => `.r${index} { gap: 4px; }`).join("\n") + "\n";
   expect(found(cssLines(650), "apps/desktop/src/styles/base.css")).toEqual([]);

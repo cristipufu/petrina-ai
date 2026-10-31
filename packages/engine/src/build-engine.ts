@@ -1,5 +1,16 @@
 // Compile Petrina's standalone engine binary (`petrina-engine`) for desktop bundling and release staging.
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { ShellMessage } from "./launch.js";
@@ -27,6 +38,77 @@ export function writeCodexWrapper(dir: string, platform: NodeJS.Platform = proce
     chmodSync(filePath, 0o755);
   }
   return filePath;
+}
+
+export function sha256File(filePath: string): string {
+  return createHash("sha256").update(readFileSync(filePath)).digest("hex");
+}
+
+export function writeSha256Sums(dir: string, fileNames?: readonly string[]): string {
+  const names = (
+    fileNames
+      ? [...fileNames]
+      : readdirSync(dir).filter((name) => name !== "SHA256SUMS.txt" && statSync(join(dir, name)).isFile())
+  ).sort();
+  const lines = names.map((name) => `${sha256File(join(dir, name))}  ${name}`);
+  const checksumsPath = join(dir, "SHA256SUMS.txt");
+  writeFileSync(checksumsPath, lines.length ? `${lines.join("\n")}\n` : "", "utf8");
+  return checksumsPath;
+}
+
+export function engineReleaseArchiveName(
+  version: string,
+  platform: NodeJS.Platform = process.platform,
+  arch: string = process.arch,
+): string {
+  const cleanVersion = version.trim().replace(/^v/, "") || "0.1.0";
+  const ext = platform === "win32" ? "zip" : "tar.gz";
+  return `petrina-engine-${cleanVersion}-${platform}-${arch}.${ext}`;
+}
+
+export interface PackageEngineReleaseOptions {
+  readonly bundleDir: string;
+  readonly releaseDir: string;
+  readonly version: string;
+  readonly platform?: NodeJS.Platform;
+  readonly arch?: string;
+}
+
+export interface PackagedEngineRelease {
+  readonly archivePath: string;
+  readonly checksumsPath: string;
+}
+
+export async function packageEngineRelease(options: PackageEngineReleaseOptions): Promise<PackagedEngineRelease> {
+  const platform = options.platform ?? process.platform;
+  const arch = options.arch ?? process.arch;
+  mkdirSync(options.releaseDir, { recursive: true });
+  const archiveName = engineReleaseArchiveName(options.version, platform, arch);
+  const archivePath = join(options.releaseDir, archiveName);
+  rmSync(archivePath, { force: true });
+
+  const entries = readdirSync(options.bundleDir)
+    .filter((name) => !name.startsWith("."))
+    .sort();
+  if (!entries.length) {
+    throw new Error(`Cannot package empty engine bundle directory: ${options.bundleDir}`);
+  }
+  const tarArgs =
+    platform === "win32"
+      ? ["tar", "-a", "-cf", archivePath, "-C", options.bundleDir, ...entries]
+      : ["tar", "-czf", archivePath, "-C", options.bundleDir, ...entries];
+  const proc = Bun.spawn(tarArgs, {
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+    windowsHide: true,
+  });
+  const [code, stderr] = await Promise.all([proc.exited, new Response(proc.stderr).text()]);
+  if (code !== 0 || !existsSync(archivePath)) {
+    throw new Error(`Failed to package engine release archive (exit ${code}): ${stderr}`);
+  }
+  const checksumsPath = writeSha256Sums(options.releaseDir);
+  return { archivePath, checksumsPath };
 }
 
 export interface BuildCompiledEngineOptions {
@@ -63,6 +145,10 @@ export async function buildCompiledEngine(options: BuildCompiledEngineOptions = 
         "chromium-bidi/*",
         "--external",
         "electron",
+        "--external",
+        "@anthropic-ai/claude-agent-sdk-*",
+        "--external",
+        "@openai/codex*",
         entrypoint,
         "--outfile",
         binaryPath,
@@ -115,6 +201,63 @@ async function readFirstJsonLine(stream: ReadableStream<Uint8Array>, timeoutMs: 
   }
 }
 
+async function verifyEmbeddedAcpTranslators(binaryPath: string, tempRoot: string): Promise<void> {
+  const isolatedEnv = {
+    PATH: "",
+    ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
+    ...(process.env.COMSPEC ? { COMSPEC: process.env.COMSPEC } : {}),
+    TMPDIR: tempRoot,
+    TMP: tempRoot,
+    TEMP: tempRoot,
+    HOME: tempRoot,
+    USERPROFILE: tempRoot,
+  };
+
+  for (const subcommand of ["__internal-claude-acp", "__internal-codex-acp"] as const) {
+    const versionRun = Bun.spawn([binaryPath, subcommand, "--version"], {
+      cwd: tempRoot,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+      windowsHide: true,
+      env: isolatedEnv,
+    });
+    const [code, stdout, stderr] = await Promise.all([
+      versionRun.exited,
+      new Response(versionRun.stdout).text(),
+      new Response(versionRun.stderr).text(),
+    ]);
+    if (code !== 0 || !stdout.trim()) {
+      throw new Error(`Embedded ${subcommand} --version failed (exit ${code}): ${stderr || stdout}`);
+    }
+  }
+
+  for (const [subcommand, cliName] of [
+    ["__internal-claude-acp", "claude"],
+    ["__internal-codex-acp", "codex"],
+  ] as const) {
+    const missingCliRun = Bun.spawn([binaryPath, subcommand], {
+      cwd: tempRoot,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+      windowsHide: true,
+      env: isolatedEnv,
+    });
+    const [code, stdout, stderr] = await Promise.all([
+      missingCliRun.exited,
+      new Response(missingCliRun.stdout).text(),
+      new Response(missingCliRun.stderr).text(),
+    ]);
+    const combined = `${stdout}\n${stderr}`;
+    if (code === 0 || !combined.includes(`no \`${cliName}\` on PATH`)) {
+      throw new Error(
+        `Embedded ${subcommand} did not require installed \`${cliName}\` on PATH (exit ${code}): ${combined}`,
+      );
+    }
+  }
+}
+
 export async function verifyCompiledEngine(outDir: string): Promise<void> {
   const tempRoot = mkdtempSync(join(tmpdir(), "petrina-compiled-verify-"));
   try {
@@ -132,6 +275,8 @@ export async function verifyCompiledEngine(outDir: string): Promise<void> {
     if (promoted.current.kind !== "binary") {
       throw new Error(`Expected promoted compiled release kind 'binary', got '${promoted.current.kind}'.`);
     }
+
+    await verifyEmbeddedAcpTranslators(promoted.current.entrypoint, tempRoot);
 
     const command = store.commandFor(promoted.current, ["app"]);
     const child = Bun.spawn(command, {
@@ -195,15 +340,45 @@ export async function verifyCompiledEngine(outDir: string): Promise<void> {
   }
 }
 
+function defaultDesktopVersion(): string {
+  const pkgPath = resolve(import.meta.dir, "../../../apps/desktop/package.json");
+  const parsed = JSON.parse(readFileSync(pkgPath, "utf8")) as { version?: string };
+  return parsed.version ?? "0.1.0";
+}
+
+function flagValue(args: readonly string[], flag: string): string | undefined {
+  const idx = args.indexOf(flag);
+  return idx >= 0 ? args[idx + 1] : undefined;
+}
+
 export async function runBuildEngineCli(args: readonly string[] = process.argv.slice(2)): Promise<void> {
-  const outFlag = args.indexOf("--out");
-  const outDir = outFlag >= 0 ? args[outFlag + 1] : undefined;
+  const checksumsOnlyDir = flagValue(args, "--checksums-only");
+  if (checksumsOnlyDir) {
+    const checksumsPath = writeSha256Sums(resolve(checksumsOnlyDir));
+    console.log(`Wrote SHA-256 checksums: ${checksumsPath}`);
+    return;
+  }
+
+  const outDir = flagValue(args, "--out");
+  const releaseDir = flagValue(args, "--package-release");
+  const version = flagValue(args, "--version") ?? defaultDesktopVersion();
   const verify = args.includes("--verify");
+
   const built = await buildCompiledEngine(outDir ? { outDir } : {});
   console.log(`Built standalone engine binary: ${built.binaryPath}`);
   if (verify) {
     await verifyCompiledEngine(built.outDir);
-    console.log("Verified standalone engine binary boot, /api/health, ReleaseStore staging, and cooperative shutdown.");
+    console.log(
+      "Verified standalone engine binary boot, embedded Claude/Codex ACP translators, /api/health, ReleaseStore staging, and cooperative shutdown.",
+    );
+  }
+  if (releaseDir) {
+    const packaged = await packageEngineRelease({
+      bundleDir: built.outDir,
+      releaseDir: resolve(releaseDir),
+      version,
+    });
+    console.log(`Packaged standalone engine release: ${packaged.archivePath} (${packaged.checksumsPath})`);
   }
 }
 
