@@ -377,6 +377,74 @@ describe("paged analytics reads", () => {
 
     });
   });
+  it("includes archived History tasks in throughput without loading archived conversations, and keeps paged reads stable across midnight", async () => {
+    return cases.use("petrina-engine-case-", async owner => {
+      const { e, c } = fixture(owner);
+      const { clock, restore } = frozen(START);
+      try {
+        await owner.run(e, async () => {
+          const archivedId = e.addTask({ productId: "product", title: "Archived landed change" });
+          const archivedTask = e.s.tasks.find((entry) => entry.id === archivedId)!;
+          archivedTask.createdAt = START - 3 * 3_600_000;
+          archivedTask.startedAt = START - 2 * 3_600_000;
+          archivedTask.finishedAt = START - 3_600_000;
+          archivedTask.state = "done";
+          archivedTask.column = "done";
+          archivedTask.repository = {
+            ...(archivedTask.repository ?? { productId: "product", delivery: "local", completedStages: [] }),
+            productId: "product",
+            delivery: "local",
+            landed: { branch: "main", sha: "abc1234" },
+            confirmedDelivery: { sha: "abc1234", tree: "tree1234", repo: "local/example", branch: "main", at: START - 3_600_000 },
+          };
+          archivedTask.session.push({
+            id: "private-msg",
+            at: START - 5_000_000,
+            from: "agent",
+            text: "Private archived conversation ".repeat(100),
+          });
+          await e.commitNow();
+          expect(e.s.tasks.some((entry) => entry.id === archivedId)).toBe(false);
+          expect(e.store.history.has(archivedId)).toBe(true);
+
+          const getSpy = spyOn(e.store.history, "get").mockImplementation(() => {
+            throw new Error("analytics.inspect must not read archived task bodies");
+          });
+          try {
+            const live = structuredClone(e.s.pool.usage!);
+            const original = JSON.stringify(
+              e.tracking.usageAt({ view: "analytics", period: "7d", productId: "product" }, START, live),
+              null,
+              2,
+            );
+            const limit = Math.ceil(original.length / 4);
+            const pages = await readAll(c, { productId: "product", period: "7d", limit }, () => {
+              clock.now += 25_000;
+            });
+            expect(pages.length).toBeGreaterThanOrEqual(4);
+            expect(new Date(clock.now).getDate()).not.toBe(new Date(START).getDate());
+            expectWhole(pages, original, START);
+            expect(original).not.toContain("Private archived conversation");
+            const parsed = JSON.parse(original);
+            expect(parsed.throughput.coverage).toMatchObject({
+              asOf: START,
+              archivedTasks: 1,
+            });
+            expect(parsed.throughput.delivery).toMatchObject({
+              landed: 1,
+              createdToStart: { count: 1, medianMs: 3_600_000 },
+              startToDelivery: { count: 1, medianMs: 3_600_000 },
+            });
+            expect(getSpy).not.toHaveBeenCalled();
+          } finally {
+            getSpy.mockRestore();
+          }
+        });
+      } finally {
+        restore();
+      }
+    });
+  });
 });
 
 describe("analytics reads from the terminal and connected agents", () => {

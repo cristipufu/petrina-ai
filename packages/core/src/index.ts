@@ -34,6 +34,8 @@ export * from "./usage.js";
 export * from "./usage-history.js";
 export * from "./charts.js";
 export * from "./analytics.js";
+export * from "./analytics-throughput-record.js";
+export { throughputView } from "./analytics-throughput.js";
 export * from "./node-usage.js";
 export * from "./source.js";
 export * from "./screen.js";

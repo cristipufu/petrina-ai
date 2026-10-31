@@ -118,8 +118,10 @@ export class Tracking {
       now,
       ...(live ? { usage: live } : {}),
       state: this.k.activeState(),
+      checkSlots: this.k.options.checkRuns ?? 1,
       task: (id) => this.k.task(id),
-      taskName: (id) => this.k.s.tasks.find((task) => task.id === id)?.title ?? this.k.store.history.title(id)
+      taskName: (id) => this.k.s.tasks.find((task) => task.id === id)?.title ?? this.k.store.history.title(id),
+      archivedThroughputTasks: (filter) => this.k.store.history.throughputTasks(filter)
     }
     );
   }

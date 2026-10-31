@@ -21,6 +21,7 @@ import { BarsOverTime, ViewToggle, dayWords, type BarPoint, type ChartSeries } f
 import { AboutNote, UsageList, ColumnChart, FigureText, SplitList, Stat, modelColors, providerColor, toolColor } from "./Usage";
 import { LimitHistory } from "./LimitHistory";
 import { ReviewsPanel } from "./Reviews";
+import { ThroughputSection } from "./AnalyticsThroughput";
 
 const PERIODS: readonly { id: UsagePeriod; label: string; words: string }[] = [
   { id: "today", label: "Today", words: "today" },
@@ -101,6 +102,13 @@ export function AnalyticsPage({ state, find, product, about, onAboutSeen, onOpen
         <div className="empty-state">Adding up the work log…</div>
       ) : (
         <>
+          <ThroughputSection
+            throughput={view.throughput}
+            state={state}
+            scope={scope ?? "All products"}
+            words={words}
+            onOpen={onOpen}
+          />
           <Usage
             view={view}
             state={state}

@@ -1,4 +1,5 @@
 import { figures, type Detail } from "./analytics-figures.js";
+import type { AnalyticsThroughput, ThroughputTaskRecord } from "./analytics-throughput-record.js";
 import type { OverTimeView } from "./charts.js";
 import type { LimitsOverTime, ReadingsRequest, ReadingsView } from "./limit-history-view.js";
 import type { AgentProfile, Id, State, Task, UsageReport } from "./model.js";
@@ -31,6 +32,14 @@ export interface UsageContext {
   taskName?: (taskId: Id) => string | undefined;
   /** The live allowance readings Analytics uses instead of the pool's current ones: a paged read keeps its first page's. */
   usage?: readonly UsageReport[];
+  /** Configured concurrent automated check slots (defaults to 1). */
+  checkSlots?: number;
+  /** Compact throughput records for archived tasks in the window, without loading conversations. */
+  archivedThroughputTasks?: (filter: {
+    from: number;
+    productId?: Id;
+    taskIds: readonly Id[];
+  }) => readonly ThroughputTaskRecord[];
 }
 
 export interface WorkUsageLine {
@@ -165,6 +174,7 @@ export interface AnalyticsUsage {
   byProduct?: WorkUsageLine[];
   byTask: WorkUsageLine[];
   squad: SquadUsage;
+  throughput: AnalyticsThroughput;
   about: AboutCounts;
 }
 

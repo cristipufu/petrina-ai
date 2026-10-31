@@ -202,6 +202,12 @@ History and the simulator attach tokens, agent time and the empty-state marker t
 
 The card labels time as “agent time” and uses the same compact numbers and independent `>` markers as What it used. Without a figure it says “Tokens not reported”, “Tokens not known” or “Agent time not known”. An entirely untracked task says “Tokens and agent time not recorded”; a task with nothing run has no line, including cancellations before starting and combined requests. Recorded totals mixed with earlier or lost work keep their partial markers. This empty History summary does not change task usage reads: task details and the coordinator’s analytics read retain exact zero figures with the “nothing run” marker when no agent has run.
 
+### Throughput and bottleneck projection
+
+The `analytics` usage view also computes `throughput` strictly at `ctx.now` (`asOf`), clipping the elapsed window to `[from, min(asOf, to)]` so paged coordinator `analytics.inspect` continuations remain deterministic across clock ticks and midnight boundaries. Live board tasks are combined with archived tasks in `task_history` through a compact `throughput` JSON projection stored alongside each archived row (omitting conversations, prompt bodies, tool invocations, check command output, file paths and git hashes) and queried via `task_history_newest` or `task_history_membership_newest` without calling `TaskHistory.get`. Pre-column archive rows fall back to an in-SQLite field projection that strips conversations and check outputs before crossing into JavaScript and performs no writes during reads.
+
+Intervals crossing window boundaries are clipped to `[from, min(asOf, to)]`; overlapping parallel work and waits report both merged wall time and summed task time; permission waits inside turns are subtracted once before summing agent work; fresh automated check batches exclude check-reuse snapshot copies while `JourneyCheckReuse` records count reused passes and reused cached failures separately; and role attribution uses `role.result` (`build`, `checks`, `findings`, `votes`, `guide`) rather than role names.
+
 ### Partial totals
 
 A total uses `>` only when whole turns are known to be missing, judged separately for tokens and time. Tokens: a turn with no token report, a turn lost when Petrina stopped, or work from before tracking began. Time: a lost turn or work from before tracking began. Turns counting the main agent only, cache reuse, the tools counting differently and model changes never make a total partial; they are explained once in the "About these numbers" note.

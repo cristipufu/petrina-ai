@@ -1,7 +1,8 @@
 // Completed tasks live outside the live snapshot. The board only reads the small current state;
 // history uses an index for its next page and reads a conversation only when it is opened.
 import type { Database, SQLQueryBindings } from "bun:sqlite";
-import { EVIDENCE_STEP_LIMIT, EVIDENCE_TASK_LIMIT, type CheckEvidenceTask } from "@petrina/core";
+import { EVIDENCE_STEP_LIMIT, EVIDENCE_TASK_LIMIT, throughputTaskRecord, type CheckEvidenceTask, type ThroughputTaskRecord } from "@petrina/core";
+import { ensureThroughputColumn, queryThroughputTasks } from "./history-throughput.js";
 import {
   blocksDependents,
   combineReviewStats,
@@ -43,9 +44,10 @@ export class TaskHistory {
     db.run(`CREATE TABLE IF NOT EXISTS task_history (
       id TEXT PRIMARY KEY, product_id TEXT NOT NULL, title TEXT NOT NULL, finished_at INTEGER NOT NULL,
       state TEXT NOT NULL, client_id TEXT, item TEXT NOT NULL, body TEXT NOT NULL, reviews TEXT NOT NULL,
-      steps TEXT NOT NULL, roles TEXT NOT NULL, final_status TEXT NOT NULL DEFAULT 'marked-done'
+      steps TEXT NOT NULL, roles TEXT NOT NULL, final_status TEXT NOT NULL DEFAULT 'marked-done', throughput TEXT
     )`);
     db.transaction(() => {
+      ensureThroughputColumn(db);
       const columns = db.query<{ name: string }, []>("PRAGMA table_info(task_history)").all();
       if (!columns.some(column => column.name === "final_status")) {
         db.run("ALTER TABLE task_history ADD COLUMN final_status TEXT NOT NULL DEFAULT 'marked-done'");
@@ -130,7 +132,7 @@ export class TaskHistory {
         body: string;
         reviews: string;
         steps: string;
-        roles: string
+        roles: string;
       }, [string]>("SELECT rowid, product_id, state, title, body, reviews, steps, roles FROM task_history WHERE id = ?").get(task.id);
       this.rememberShape(task);
       if (old?.body === body) continue;
@@ -144,11 +146,12 @@ export class TaskHistory {
         stage.reviewerRoleId,
         ...(stage.roleIds ?? [])
       ]).filter((id): id is string => !!id))]);
-      this.db.query(`INSERT INTO task_history(id, product_id, title, finished_at, state, client_id, item, body, reviews, steps, roles, final_status)
-        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET
+      const throughput = JSON.stringify(throughputTaskRecord(task));
+      this.db.query(`INSERT INTO task_history(id, product_id, title, finished_at, state, client_id, item, body, reviews, steps, roles, final_status, throughput)
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET
         product_id=excluded.product_id, title=excluded.title, finished_at=excluded.finished_at, state=excluded.state,
-        client_id=excluded.client_id, item=excluded.item, body=excluded.body, reviews=excluded.reviews, steps=excluded.steps, roles=excluded.roles, final_status=excluded.final_status`)
-        .run(task.id, task.productId, task.title, historyAt(task), task.state, task.clientId ?? null, JSON.stringify(item), body, JSON.stringify(reviews), steps, roles, historyStatus(item));
+        client_id=excluded.client_id, item=excluded.item, body=excluded.body, reviews=excluded.reviews, steps=excluded.steps, roles=excluded.roles, final_status=excluded.final_status, throughput=excluded.throughput`)
+        .run(task.id, task.productId, task.title, historyAt(task), task.state, task.clientId ?? null, JSON.stringify(item), body, JSON.stringify(reviews), steps, roles, historyStatus(item), throughput);
       const rowid = old?.rowid ?? this.db.query<{ rowid: number }, [string]>("SELECT rowid FROM task_history WHERE id = ?").get(task.id)!.rowid;
       if (!old || old.title !== task.title) {
         if (old) this.db.query("DELETE FROM task_history_search WHERE rowid = ?").run(rowid);
@@ -243,6 +246,11 @@ export class TaskHistory {
     return rows.map((row) => ({ id: row.id, state: row.state, held: !!row.held,
       journey: (JSON.parse(row.journey) as CheckEvidenceTask["journey"]).slice().reverse(),
       ...(row.delivery ? { delivery: JSON.parse(row.delivery) } : {}) }));
+  }
+
+  /** Bounded indexed throughput projection for archived tasks in an analytics window; never reads conversations. */
+  throughputTasks(filter: { from: number; productId?: Id; taskIds?: readonly Id[] }): ThroughputTaskRecord[] {
+    return queryThroughputTasks(this.db, filter);
   }
 
   item(id: Id): HistoryPage["items"][number] | undefined {

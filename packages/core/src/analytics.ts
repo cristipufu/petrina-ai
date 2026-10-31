@@ -16,6 +16,7 @@ export {
   type UsageContext, type UsagePeriod, type UsageRequest, type UsageView, type UsageViewFor, type WorkUsageLine,
 };
 import { tokensOverTime } from "./charts.js";
+import { throughputView } from "./analytics-throughput.js";
 import { limitBuckets, limitsOverTime, readingsView } from "./limit-history-view.js";
 import type { Id } from "./model.js";
 import { nodeUsage } from "./node-usage.js";
@@ -344,6 +345,7 @@ function analyticsView(log: WorkLogReader, request: { period: UsagePeriod; produ
     ...(byProduct ? { byProduct } : {}),
     byTask,
     squad: squadView(turns, moments, dayBuckets(request.period, ctx.now), lookup, (taskId) => log.turns({ taskId })),
+    throughput: throughputView(log, request, range, ctx, lookup, before),
     about: { turns: tally.turns, codexHelperTurns, claudeMainOnly, tools: toolIds },
   };
 }
