@@ -8,6 +8,15 @@ import { isTyping } from "./keyboard";
 import { appActions, taskActions } from "./paletteActions";
 import type { AppRoute } from "./routes";
 import { applyTheme, type Theme } from "./theme";
+import {
+  checkForUpdates,
+  installUpdate,
+  restartToUpdate,
+  setAutoCheck,
+  updatesSupported,
+  useAutoCheck,
+  useUpdate,
+} from "./updates";
 
 type ActiveArea = ReturnType<typeof keyArea>;
 
@@ -255,6 +264,8 @@ export function useWorkspaceFocus({
     message,
   });
 
+  const update = useUpdate();
+  const autoCheckUpdates = useAutoCheck();
   const actions = appActions({
     state,
     singleKeys,
@@ -265,6 +276,21 @@ export function useWorkspaceFocus({
     sendAction,
     theme,
     onTheme,
+    updates: {
+      supported: updatesSupported(),
+      update,
+      autoCheck: autoCheckUpdates,
+      onCheck: () => {
+        void checkForUpdates(true, toast);
+      },
+      onInstall: () => {
+        void installUpdate();
+      },
+      onRestart: () => {
+        void restartToUpdate();
+      },
+      onToggleAuto: () => setAutoCheck(!autoCheckUpdates),
+    },
   });
   const forTask = taskActions({
     task: paletteTask,

@@ -132,14 +132,14 @@ Managed Grok sessions disable its persistent workspace memory through the native
 
 The Planner supplies a short public explanation for each role/profile seat. Plans retain the requested assignment and any readiness adjustment, even when review groups are joined. Coordinator edits replace the affected seat's explanation. At agent admission the engine records its selection reason separately, alongside requested and selected profiles and native settings confirmed at startup. Journey inputs retain that evidence per reviewer seat; missing historical explanations remain unknown rather than being reconstructed from current usage.
 
-Petrina talks to agents through the [Agent Client Protocol](https://agentclientprotocol.com) (ACP). Claude Code and Codex have maintained ACP adapters. Grok and Antigravity expose native ACP servers:
+Petrina talks to agents through the [Agent Client Protocol](https://agentclientprotocol.com) (ACP). Claude Code, Codex and Antigravity run through embedded ACP translators inside Petrina's engine that spawn the user's installed CLI; Grok exposes a native ACP server:
 
 | Tool | ACP adapter |
 |---|---|
-| Claude Code | `agentclientprotocol/claude-agent-acp` (Claude Agent SDK) |
-| Codex | `agentclientprotocol/codex-acp` (Codex App Server) |
-| Grok | `grok --permission-mode auto agent stdio` (no Node adapter; model `grok-4.7`, effort `reasoning_effort`) |
-| Antigravity | Google's pinned native ACP distribution (see below) |
+| Claude Code | Embedded `agentclientprotocol/claude-agent-acp` spawning installed `claude` |
+| Codex | Embedded `agentclientprotocol/codex-acp` spawning installed `codex` |
+| Grok | `grok --permission-mode auto agent stdio` (model `grok-4.7`, effort `reasoning_effort`) |
+| Antigravity | Embedded `__internal-agy-acp` translator spawning installed `agy` (`stream-json`) |
 
 ACP gives Petrina what it needs without per-tool code:
 
@@ -162,9 +162,9 @@ Things to verify per tool before relying on them: model and effort selection thr
 
 ### Google Antigravity
 
-Antigravity uses Google's native ACP distribution, pinned at 1.4.1 with its sibling harness. `petrina antigravity install` installs it explicitly; ordinary tool checks never download software. `petrina antigravity login` opens Google's personal-account sign-in. The connector keeps its own login, separately from the terminal CLI. Ready requires opening a session, without an AI prompt or browser sign-in during ordinary checks.
+Antigravity uses the coordinator's installed `agy` CLI (`--input-format stream-json --output-format stream-json`) through Petrina's embedded `__internal-agy-acp` stdio ACP translator, sharing `~/.gemini/antigravity-cli` login and conversations. Running `agy` in a terminal opens Google's sign-in when needed; ordinary tool checks never download software and verify readiness by opening and discarding an empty conversation without an AI prompt or browser sign-in.
 
-Profiles offer Gemini 4 Argon and Gemini 3.8 Flash at medium or high thinking. The session must confirm both `model` and `thinking_level` before receiving work. New and resumed sessions use the server's native `yolo` mode, as requested by the coordinator, so tool calls proceed without per-command approval. This approves all tools; it is not the terminal CLI's selective Auto classifier, which the ACP server does not expose. Petrina's workflow gates and read-only cleanup still apply. Native session resume preserves each participant's conversation. Terminal takeover stays unavailable because the CLI cannot open ACP session identifiers.
+Profiles offer Gemini 4 Argon and Gemini 3.8 Flash at medium or high thinking. The session must confirm both `model` and `thinking_level` before receiving work. New and resumed sessions select `yolo` mode (`--dangerously-skip-permissions`), as requested by the coordinator, so tool calls proceed without per-command approval. Petrina's workflow gates and read-only cleanup still apply. Native `--conversation <id>` resume preserves each participant's conversation and allows terminal takeover (`agy --conversation <id> --model <model> --effort <effort>`).
 
 The built-in `/usage` command is local, not an AI turn. It supplies quota groups and UTC reset times; Argon's separate quota applies to Argon, and Gemini's shared quota covers Flash (and Argon when no separate Argon bucket is reported). Limits for unavailable third-party models do not block these profiles. Idle and Analytics reads share a throttled reader; live sessions report their own before/after readings without starting another probe. Failed reads retain the last report and its age.
 

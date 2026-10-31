@@ -72,18 +72,22 @@ describe("Antigravity agent sessions", () => {
     try { expect((await flash.prompt(work)).report?.main?.total).toBe(110); }
     finally { await flash.stop(); }
   });
-  it("removes only its disposable probe database after the harness exits", async () => {
+  it("removes only its disposable probe brain directory after the harness exits", async () => {
     const home = folder(), cwd = folder(); const fakes = antigravitySession(cwd);
     const run = await AgentRun.start({ profile, cwd, env: { ...process.env, GEMINI_HOME: home }, command: fakes.command, signal: new AbortController().signal, probe: true, callbacks });
-    const dir = join(home, "antigravity-acp", "conversations");
-    mkdirSync(dir, { recursive: true });
-    const files = [".db", ".db-wal", ".db-shm", ".meta"].map(suffix => join(dir, `${run.sessionId}${suffix}`));
-    for (const file of files) writeFileSync(file, "probe");
-    const kept = join(dir, "another-conversation.db"); writeFileSync(kept, "keep");
-    try { expect(files.every(existsSync)).toBe(true); }
+    const brainRoot = join(home, "antigravity-cli", "brain");
+    const probeDir = join(brainRoot, run.sessionId);
+    const probeMarker = join(probeDir, ".system_generated", "logs", "meta.json");
+    mkdirSync(join(probeDir, ".system_generated", "logs"), { recursive: true });
+    writeFileSync(probeMarker, "{}");
+    const realDir = join(brainRoot, "another-conversation", ".system_generated", "logs");
+    mkdirSync(realDir, { recursive: true });
+    const realTranscript = join(realDir, "transcript.jsonl");
+    writeFileSync(realTranscript, "{\"step_index\":0}\n");
+    try { expect(existsSync(probeMarker)).toBe(true); }
     finally { await run.stop(); }
-    expect(files.some(existsSync)).toBe(false);
-    expect(readFileSync(kept, "utf8")).toBe("keep");
+    expect(existsSync(probeDir)).toBe(false);
+    expect(readFileSync(realTranscript, "utf8")).toContain("step_index");
   });
   it("confirms model and thinking, keeps account commands out of messages, and counts only each new turn after resume", async () => {
     const dir = folder(); const fakes = antigravitySession(dir, { resume: true, turns: [0, 1, 1, 2] });

@@ -4,7 +4,9 @@ The CLI and MCP server operate the same local engine as the desktop app. They co
 
 ## Install and discover
 
-From a source checkout, install its locked dependencies with `bun install --frozen-lockfile`. Use `bun run petrina` in that checkout. To install the terminal command for your user, run `bun link` in `packages/engine`, then use `petrina` from your terminal. Bun must be on your PATH. The desktop package's engine is not a separately installed CLI yet.
+On macOS and Linux, launching the installed Petrina desktop app links `~/.local/bin/petrina` automatically (when `~/.local/bin/petrina` does not already point to an independent installation), so `petrina` and `petrina mcp` work directly without Bun or Node.js. Standalone `petrina` CLI binaries published with each release can also be installed anywhere on `PATH` and kept current with `petrina update`.
+
+From a source checkout, install its locked dependencies with `bun install --frozen-lockfile` and use `bun run petrina` in that checkout.
 
 ```sh
 bun run petrina --help
@@ -38,18 +40,20 @@ Both interfaces discover the existing connection in `~/.petrina`. Set `PETRINA_H
 
 ## Connect an MCP client
 
-Configure a local **stdio** server. Replace the example paths with your checkout and Bun executable; the client can launch it from any folder.
+Configure a local **stdio** server. With `petrina` on `PATH` (from the installed desktop app or standalone CLI release), point the client straight at `petrina`:
 
 ```json
 {
   "mcpServers": {
     "petrina": {
-      "command": "/absolute/path/to/bun",
-      "args": ["/absolute/path/to/petrina/packages/engine/src/cli.ts", "mcp"]
+      "command": "petrina",
+      "args": ["mcp"]
     }
   }
 }
 ```
+
+From a source checkout without an installed `petrina` binary, invoke `packages/engine/src/cli.ts` with `bun` (`"command": "/absolute/path/to/bun", "args": ["/absolute/path/to/petrina/packages/engine/src/cli.ts", "mcp"]`).
 
 The server uses the MCP [stdio transport](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports) and [named tools](https://modelcontextprotocol.io/specification/2025-06-18/server/tools). Discover them with `tools/list`: for example `petrina_task_add`, `petrina_task_inspect`, `petrina_inbox_approve`, `petrina_learning_accept` and `petrina_engine_pause`. Arguments have explicit types and choices. Results include a structured `outcome` plus the requested compact data or an evidence page. Connecting MCP never constructs or launches an engine. An explicit `petrina_engine_start` or `petrina_engine_restart` request may use the existing launcher.
 

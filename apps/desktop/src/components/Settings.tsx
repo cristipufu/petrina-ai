@@ -5,6 +5,15 @@ import { BrowserNotices, platform, shell, useBrowserPermission, type BrowserPerm
 import { sendTest, setNotificationsOn, useNotifySettings } from "../notify/settings";
 import { turnOnInBrowser } from "../notify/useNotices";
 import type { Theme } from "../theme";
+import {
+  checkForUpdates,
+  installUpdate,
+  restartToUpdate,
+  setAutoCheck,
+  updatesSupported,
+  useAutoCheck,
+  useUpdate,
+} from "../updates";
 import { ThemeChoices } from "./ThemeMenu";
 
 /** macOS shows no banner for the app in front, so the Mac test waits for the person to switch away. */
@@ -87,8 +96,100 @@ export function SettingsPage({ onShortcuts, theme, onTheme }: { onShortcuts: () 
         <ThemeChoices theme={theme} onTheme={onTheme} framed label="Appearance" idPrefix="theme-settings" />
       </section>
       <NotificationSettings />
+      <UpdateSettings />
       <KeyboardSettings onShortcuts={onShortcuts} />
     </div>
+  );
+}
+
+function UpdateSettings() {
+  const supported = updatesSupported();
+  const autoCheck = useAutoCheck();
+  const update = useUpdate();
+  const [notice, setNotice] = useState<string>();
+
+  if (!supported) {
+    return (
+      <section className="settings-section" aria-labelledby="settings-updates">
+        <h2 className="section-title" id="settings-updates">
+          Updates
+        </h2>
+        <p className="permission-line">
+          Signed app updates run inside the Petrina desktop app. This browser tab loads Petrina from your running local engine.
+        </p>
+      </section>
+    );
+  }
+
+  const statusLine =
+    update.status === "available"
+      ? `Petrina ${update.info.version} is available (you have ${update.info.current}).${update.info.notes ? ` ${update.info.notes}` : ""}`
+      : update.status === "downloading"
+        ? update.progress == null
+          ? `Downloading Petrina ${update.info.version}…`
+          : `Downloading Petrina ${update.info.version}… ${Math.round(update.progress * 100)}%`
+        : update.status === "ready"
+          ? `Petrina ${update.info.version} is installed. Restart whenever you are ready to switch.`
+          : update.status === "failed"
+            ? `Couldn't install Petrina ${update.info.version}: ${update.error}`
+            : notice;
+
+  return (
+    <section className="settings-section" aria-labelledby="settings-updates">
+      <h2 className="section-title" id="settings-updates">
+        Updates
+      </h2>
+      <div className="setting">
+        <div className="setting-text">
+          <div className="setting-name" id="updates-auto-name">
+            Check for updates once a day
+          </div>
+          <p className="setting-hint" id="updates-auto-hint">
+            When a newer signed release is published, a quiet Update button appears at the bottom of the left rail. Petrina downloads it only when you click and restarts only when you choose.
+          </p>
+        </div>
+        <Switch
+          on={autoCheck}
+          onToggle={() => setAutoCheck(!autoCheck)}
+          labelledBy="updates-auto-name"
+          describedBy="updates-auto-hint"
+        />
+      </div>
+      <div className="setting-actions">
+        {(update.status === "idle" || update.status === "checking") && (
+          <button
+            className="btn"
+            disabled={update.status === "checking"}
+            onClick={() => {
+              setNotice(undefined);
+              void checkForUpdates(true, (title, detail) => setNotice(detail ? `${title}. ${detail}` : title));
+            }}
+          >
+            {update.status === "checking" ? "Checking for updates…" : "Check for updates"}
+          </button>
+        )}
+        {(update.status === "available" || update.status === "failed") && (
+          <button className="btn" onClick={() => void installUpdate()}>
+            {update.status === "failed" ? `Retry update to ${update.info.version}` : `Update to Petrina ${update.info.version}`}
+          </button>
+        )}
+        {update.status === "downloading" && (
+          <button className="btn" disabled>
+            {update.progress == null ? "Downloading update…" : `Downloading… ${Math.round(update.progress * 100)}%`}
+          </button>
+        )}
+        {update.status === "ready" && (
+          <button className="btn" onClick={() => void restartToUpdate()}>
+            Restart to update
+          </button>
+        )}
+        {statusLine && (
+          <span className="setting-result" role="status">
+            {statusLine}
+          </span>
+        )}
+      </div>
+    </section>
   );
 }
 

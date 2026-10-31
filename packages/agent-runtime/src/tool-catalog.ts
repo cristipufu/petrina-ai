@@ -2,14 +2,19 @@ import { join } from "node:path";
 import { compiledExecutableDir, isCompiledBinary } from "@petrina/platform/compiled-runtime";
 import type { ToolAdapter } from "./tool-adapter.js";
 import { grokToolMetadata, grokTurnReport } from "./grok-report.js";
-import { claudeTerminalArguments, codexTerminalArguments, grokTerminalArguments } from "./terminal-arguments.js";
+import {
+  antigravityTerminalArguments,
+  claudeTerminalArguments,
+  codexTerminalArguments,
+  grokTerminalArguments,
+} from "./terminal-arguments.js";
 import { claudeBackground } from "./claude-background.js";
 import { BACKGROUND_FEATURES } from "./codex-background.js";
 import { claudeReports } from "./claude-usage-report.js";
 import { claudeLimit, codexLimit, grokLimit } from "./provider-limits.js";
 import { claudeInterruptions, codexInterruptions, grokInterruptions } from "./native-provider-interruptions.js";
 import { antigravityReading, antigravityTurnReport } from "./antigravity-report.js";
-import { antigravityCommand, antigravityInstalled, forgetAntigravityProbe } from "./antigravity-runtime.js";
+import { forgetAntigravityProbe } from "./antigravity-runtime.js";
 import { interjection, steering } from "./live-input.js";
 import { CLAUDE_AGENT_ENTRY, CODEX_AGENT_ENTRY, GROK_AGENT_COMMAND } from "./tool-entry.js";
 
@@ -115,17 +120,21 @@ export const ADAPTERS: Record<string, ToolAdapter> = {
   },
   antigravity: {
     verifySessionSettings: (profile, settings) => {
-      if (settings.model !== profile.modelId || settings.effort !== profile.effort) throw new Error(`Antigravity did not confirm ${profile.model} with ${profile.effort} thinking. Check the models available to your Google account.`);
+      if (settings.model !== profile.modelId || settings.effort !== profile.effort) {
+        throw new Error(
+          `Antigravity did not confirm ${profile.model} with ${profile.effort} thinking. Check the models available to your Google account.`,
+        );
+      }
     },
     accountUsage: { command: "/usage", parse: antigravityReading, turnReport: antigravityTurnReport },
+    terminalArgs: antigravityTerminalArguments,
     id: "antigravity",
     name: "Antigravity",
+    internalSubcommand: "__internal-agy-acp",
     cli: "agy",
-    get command() { return antigravityCommand(); },
-    installed: antigravityInstalled,
     forgetProbe: forgetAntigravityProbe,
     options: { model: "model", effort: "thinking_level", mode: "mode" },
-    // The coordinator wants unattended tool use. Google's ACP server has no selective CLI Auto mode.
+    // Headless stream-json runs unattended; terminal take-over opens `agy` in its normal interactive mode.
     mode: "yolo",
     login: "open",
     models: ["Gemini 4 Argon", "Gemini 3.8 Flash"],

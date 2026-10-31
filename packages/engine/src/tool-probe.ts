@@ -17,7 +17,7 @@ export class NativeToolProbe implements ToolProbe {
     if (id === "git") return which(id) === null;
     if (id === "gh") return !this.k.options.gh && which("gh") === null;
     if (this.k.options.requireAgentCommand && !this.k.options.agentCommand) return true;
-    return !this.k.options.agentCommand && (which(ADAPTERS[id]!.cli) === null || !(ADAPTERS[id]!.installed?.() ?? true));
+    return !this.k.options.agentCommand && which(ADAPTERS[id]!.cli) === null;
   }
 
   async run(id: CheckId, request: ToolProbeRequest): Promise<ToolProbeResult> {

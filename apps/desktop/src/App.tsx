@@ -34,6 +34,7 @@ import { routeHref, useAppRoute } from "./routes";
 import { taskCommands } from "./taskCommands";
 import { initialTheme, type Theme } from "./theme";
 import { useToasts } from "./toasts";
+import { startUpdateChecks } from "./updates";
 import { useWorkspaceFocus } from "./useWorkspaceFocus";
 import { useWorkspaceSheetState } from "./useWorkspaceSheetState";
 import { WorkspaceMain, WorkspaceOverlays } from "./WorkspaceViews";
@@ -55,6 +56,7 @@ const DOCKED_INBOX = 1200;
 export function App() {
   const state = useSim();
   const status = useEngineStatus();
+  useEffect(() => startUpdateChecks(), []);
   const failed = mode === "engine" && status.link === "failed" && <CouldNotStart problem={status.problem} />;
   if (mode === "engine" && !status.synced) {
     return (

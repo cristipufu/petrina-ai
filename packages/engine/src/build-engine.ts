@@ -213,7 +213,24 @@ async function verifyEmbeddedAcpTranslators(binaryPath: string, tempRoot: string
     USERPROFILE: tempRoot,
   };
 
-  for (const subcommand of ["__internal-claude-acp", "__internal-codex-acp"] as const) {
+  const cliVersionRun = Bun.spawn([binaryPath, "--version"], {
+    cwd: tempRoot,
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+    windowsHide: true,
+    env: isolatedEnv,
+  });
+  const [cliCode, cliStdout, cliStderr] = await Promise.all([
+    cliVersionRun.exited,
+    new Response(cliVersionRun.stdout).text(),
+    new Response(cliVersionRun.stderr).text(),
+  ]);
+  if (cliCode !== 0 || !cliStdout.trim().startsWith("petrina ")) {
+    throw new Error(`Compiled petrina --version failed (exit ${cliCode}): ${cliStderr || cliStdout}`);
+  }
+
+  for (const subcommand of ["__internal-claude-acp", "__internal-codex-acp", "__internal-agy-acp"] as const) {
     const versionRun = Bun.spawn([binaryPath, subcommand, "--version"], {
       cwd: tempRoot,
       stdin: "ignore",
@@ -235,6 +252,7 @@ async function verifyEmbeddedAcpTranslators(binaryPath: string, tempRoot: string
   for (const [subcommand, cliName] of [
     ["__internal-claude-acp", "claude"],
     ["__internal-codex-acp", "codex"],
+    ["__internal-agy-acp", "agy"],
   ] as const) {
     const missingCliRun = Bun.spawn([binaryPath, subcommand], {
       cwd: tempRoot,
@@ -369,7 +387,7 @@ export async function runBuildEngineCli(args: readonly string[] = process.argv.s
   if (verify) {
     await verifyCompiledEngine(built.outDir);
     console.log(
-      "Verified standalone engine binary boot, embedded Claude/Codex ACP translators, /api/health, ReleaseStore staging, and cooperative shutdown.",
+      "Verified standalone engine binary boot, embedded Claude/Codex/Antigravity ACP translators, /api/health, ReleaseStore staging, and cooperative shutdown.",
     );
   }
   if (releaseDir) {

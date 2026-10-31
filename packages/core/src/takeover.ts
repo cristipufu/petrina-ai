@@ -5,7 +5,12 @@ import type { Role, State, Task } from "./model.js";
 import { roleForTask } from "./roles.js";
 
 /** The tools whose own app Petrina can open on an agent's conversation. */
-export const TAKE_OVER_TOOLS: Readonly<Record<string, string>> = { "claude-code": "Claude Code", codex: "Codex", grok: "Grok" };
+export const TAKE_OVER_TOOLS: Readonly<Record<string, string>> = {
+  "claude-code": "Claude Code",
+  codex: "Codex",
+  grok: "Grok",
+  antigravity: "Antigravity",
+};
 
 export const TAKE_OVER_WORDS = {
   noAgent: "No agent is working on this right now",
@@ -76,7 +81,6 @@ export function takeOverBlock(task: Task, state: Pick<State, "profiles" | "tools
   if (delivery) return TAKE_OVER_WORDS.releaseManager;
   if (task.helpers?.length) return TAKE_OVER_WORDS.several;
   const toolId = state.profiles.find((profile) => profile.id === agent.profileId)?.toolId;
-  if (toolId === "antigravity") return "Antigravity's terminal cannot open this agent's conversation";
   if (!toolId || !TAKE_OVER_TOOLS[toolId]) return TAKE_OVER_WORDS.unsupported;
   if (state.tools.find((tool) => tool.id === toolId)?.status !== "ready") return TAKE_OVER_WORDS.missing(toolName(toolId));
   const conversation = task.conversation;

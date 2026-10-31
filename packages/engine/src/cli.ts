@@ -12,18 +12,18 @@ import { readConnection } from "./instance.js";
 import { launch } from "./launch.js";
 import { browserCommand } from "./setup.js";
 import { coordinationCli } from "./coordination-cli.js";
+import { updateStandaloneCli } from "./cli-update.js";
 import { runMcp } from "./mcp.js";
-import { installAntigravity } from "@petrina/agent-runtime/antigravity-runtime";
+import { runAgyAcp } from "@petrina/agent-runtime/agy-acp";
 import { runBrowserServer } from "@petrina/agent-runtime/browser-server";
 import { runClaudeAcp } from "@petrina/agent-runtime/claude-acp";
 import { runCodexAcp } from "@petrina/agent-runtime/codex-acp";
 import { runCodexBackground } from "@petrina/agent-runtime/codex-background";
-import { checkAgentTool } from "@petrina/agent-runtime/probe";
-import { ADAPTERS, ENGINE_PROFILES, findProgram } from "@petrina/agent-runtime/tools";
 import { compiledExecutableDir, isCompiledBinary } from "@petrina/platform/compiled-runtime";
-import { agentEnv } from "@petrina/platform/process-environment";
-import { mkdir } from "node:fs/promises";
+import pkg from "../package.json" with { type: "json" };
 import type { EngineClient } from "./engine-client.js";
+
+export const PETRINA_CLI_VERSION: string = pkg.version;
 
 export function resolveDefaultUiDir(execPath: string = process.execPath, metaDir: string = import.meta.dir): string {
   if (isCompiledBinary(metaDir)) {
@@ -105,6 +105,23 @@ export async function runCli(args: readonly string[] = process.argv.slice(2), st
     await runCodexAcp(rest);
     return;
   }
+  if (command === "__internal-agy-acp") {
+    await runAgyAcp(rest);
+    return;
+  }
+  if (command === "--version" || command === "-v") {
+    console.log(`petrina ${PETRINA_CLI_VERSION}`);
+    return;
+  }
+  if (command === "update") {
+    try {
+      await updateStandaloneCli();
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : String(error));
+      process.exitCode = 1;
+    }
+    return;
+  }
   const newKey = rest.includes("--new-key");
   const debugSql = rest.includes("--debug-sql") || process.env.PETRINA_DEBUG_SQL === "1";
   if (command === "serve") await startEngine({
@@ -119,31 +136,6 @@ export async function runCli(args: readonly string[] = process.argv.slice(2), st
   else if (command === "open") await open(rest.includes("--dev"));
   else if (command === "state") console.log(JSON.stringify(await call("/api/state"), null, 2));
   else if (command === "do") console.log(JSON.stringify(await call("/api/action", { method: "POST", body: rest.join(" ") }), null, 2));
-  else if (command === "antigravity") {
-    if (rest[0] === "install") {
-      await installAntigravity();
-      console.log("Google's Antigravity connector is installed. Sign in with: bun run petrina antigravity login");
-    } else if (rest[0] === "login") {
-      if (process.env.PETRINA_AGENT) throw new Error("Antigravity sign-in is for the coordinator.");
-      const cwd = join(home, "checks");
-      await mkdir(cwd, { recursive: true, mode: 0o700 });
-      console.log("Opening Google's sign-in. Finish in your browser, then use Check again in Agents.");
-      let gone: Promise<void> | undefined;
-      const result = await checkAgentTool({
-        adapter: ADAPTERS.antigravity!,
-        profile: ENGINE_PROFILES.find(profile => profile.toolId === "antigravity")!,
-        cwd,
-        env: agentEnv(process.env),
-        which: findProgram,
-        authenticate: "oauth-personal",
-        timeoutMs: 180_000,
-        onGone: job => { gone = job; }
-      });
-      await gone;
-      console.log(result.status === "ready" ? "Antigravity is signed in." : result.detail ?? `Antigravity is ${result.status}.`);
-      if (result.status !== "ready") process.exitCode = 1;
-    } else console.log("petrina antigravity install — install Google's official ACP connector\npetrina antigravity login — open Google sign-in for that connector");
-  }
   else if (command === "mcp") {
     if (rest.includes("--help")) console.log("petrina mcp — connect a coding agent over MCP stdio. Discover named tools with tools/list. Uses the existing local connection; connecting never starts an engine. See docs/coordination.md for client configuration and docs/coordinator.md for project coordination.");
     else await runMcp(client);

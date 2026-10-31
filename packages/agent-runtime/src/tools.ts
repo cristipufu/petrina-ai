@@ -5,7 +5,6 @@ import { CLAUDE_USAGE_COMMAND, ClaudeUsage } from "./claude-usage.js";
 import { CODEX_USAGE_COMMAND, CodexUsage } from "./codex-usage.js";
 import { GrokUsage } from "./grok-usage.js";
 import { AntigravityUsage } from "./antigravity-usage.js";
-import { antigravityCommand } from "./antigravity-runtime.js";
 import { ADAPTERS as CATALOG_ADAPTERS } from "./tool-catalog.js";
 import { adapterLaunchCommand, GROK_AGENT_COMMAND } from "./tool-entry.js";
 export { adapterEntry, adapterLaunchCommand } from "./tool-entry.js";
@@ -24,7 +23,7 @@ CATALOG_ADAPTERS.grok!.usageReader ??= {
   create: options => new GrokUsage(options),
 };
 CATALOG_ADAPTERS.antigravity!.usageReader ??= {
-  command: antigravityCommand,
+  command: () => adapterLaunchCommand(CATALOG_ADAPTERS.antigravity!),
   create: options => new AntigravityUsage(options),
   liveSession: true,
 };
@@ -70,7 +69,7 @@ export function detectTools(available?: (toolId: string) => boolean): Tool[] {
     const resolved = launchCommand !== undefined;
     const installed = available
       ? available(adapter.id)
-      : resolved && findProgram(adapter.cli) !== null && (adapter.installed?.() ?? true);
+      : resolved && findProgram(adapter.cli) !== null;
     return {
       id: adapter.id,
       name: adapter.name,

@@ -90,6 +90,10 @@ describe("standalone compiled engine runtime contracts", () => {
       "/usr/bin/bun",
       join("/repo/packages/agent-runtime/src", "codex-acp.ts"),
     ]);
+    expect(adapterLaunchCommand(ADAPTERS.antigravity!, "/usr/bin/bun", "/repo/packages/agent-runtime/src")).toEqual([
+      "/usr/bin/bun",
+      join("/repo/packages/agent-runtime/src", "agy-acp.ts"),
+    ]);
     expect(adapterLaunchCommand(ADAPTERS["claude-code"]!, realBinaryExec, "/$bunfs/root")).toEqual([
       realBinaryExec,
       "__internal-claude-acp",
@@ -97,6 +101,10 @@ describe("standalone compiled engine runtime contracts", () => {
     expect(adapterLaunchCommand(ADAPTERS.codex!, realBinaryExec, "B:\\~BUN\\root")).toEqual([
       realBinaryExec,
       "__internal-codex-acp",
+    ]);
+    expect(adapterLaunchCommand(ADAPTERS.antigravity!, realBinaryExec, "/$bunfs/root")).toEqual([
+      realBinaryExec,
+      "__internal-agy-acp",
     ]);
     expect(adapterLaunchCommand(ADAPTERS.grok!, realBinaryExec, "/$bunfs/root")).toEqual([...GROK_AGENT_COMMAND]);
 

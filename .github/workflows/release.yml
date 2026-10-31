@@ -1,16 +1,32 @@
 name: Release
 
+# Push a tag that matches the app's version (apps/desktop/src-tauri/tauri.conf.json), e.g. `git tag v0.1.0 && git push origin v0.1.0`,
+# to build every platform, sign and notarize the macOS app and CLI, and open a DRAFT release with stable asset names.
+# Publish the draft from the Releases page when it looks right.
+# "Run workflow" from the Actions tab builds the same files as artifacts without releasing anything.
+#
+# macOS signing turns itself on once these repository (or `release` environment) secrets exist; without them the
+# macOS build is ad-hoc signed and the run warns not to ship it:
+#   MACOS_CERT_P12        base64 of the "Developer ID Application" certificate + private key, exported as .p12
+#   MACOS_CERT_PASSWORD   the .p12's export password
+#   MACOS_API_KEY_P8      base64 of an App Store Connect API key (AuthKey_XXXX.p8), used to notarize
+#   MACOS_API_KEY_ID      that key's ID
+#   MACOS_API_ISSUER_ID   the team's issuer ID
+#   MACOS_TEAM_ID         the Apple team ID
+#
+# Each platform's update package is signed for the desktop app's updater with these, and the release gets a
+# latest.json listing them; without them the release still builds, but installed apps aren't offered it:
+#   TAURI_SIGNING_PRIVATE_KEY           the update-signing private key (`tauri signer generate`); its public key is in
+#                                       apps/desktop/src-tauri/tauri.conf.json
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  that key's password
+#
+# The release notes are the version's section in CHANGELOG.md; a version without one isn't drafted.
 on:
   push:
-    tags:
-      - 'v*'
+    tags: ["v*"]
   workflow_dispatch:
-    inputs:
-      version:
-        description: 'Version label for manual dry-run packaging (e.g. 0.1.0-rc.1)'
-        required: false
-        default: '0.1.0'
 
+# Least privilege: builds only read the repo. Only the publish job can write, and only to create the draft release.
 permissions:
   contents: read
 
@@ -18,24 +34,209 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
-  package:
-    name: Package (${{ matrix.label }})
+  macos:
+    name: macOS (${{ matrix.arch }}, signed and notarized)
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: macos-latest
-            label: macos-arm64
-            bundles: app,dmg
-          - os: ubuntu-latest
-            label: linux-x64
-            bundles: deb,appimage
-          - os: windows-latest
-            label: windows-x64
-            bundles: msi,nsis
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+          - runner: macos-14
+            target: aarch64-apple-darwin
+            arch: arm64
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+            arch: x64
+    runs-on: ${{ matrix.runner }}
+    # Signing secrets can live in this environment, so required reviewers can gate who may sign a build.
+    environment: release
+    timeout-minutes: 90
+    env:
+      HAS_APPLE_SIGNING: ${{ secrets.MACOS_CERT_P12 != '' }}
+      HAS_UPDATER_SIGNING: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.2
+      - name: Bun package cache
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-${{ matrix.arch }}-
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: apps/desktop/src-tauri
+      - run: bun install --frozen-lockfile
+
+      - name: Import the Developer ID certificate into a temporary keychain
+        if: env.HAS_APPLE_SIGNING == 'true'
+        env:
+          CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KC="$RUNNER_TEMP/signing.keychain-db"
+          KC_PASS="$(uuidgen)"
+          security create-keychain -p "$KC_PASS" "$KC"
+          security set-keychain-settings -lut 21600 "$KC"
+          security unlock-keychain -p "$KC_PASS" "$KC"
+          printf '%s' "$CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KC" -P "$CERT_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          rm -f "$RUNNER_TEMP/cert.p12"
+          # Without this, codesign waits for a keychain prompt nobody can answer.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KC_PASS" "$KC" >/dev/null
+          security list-keychain -d user -s "$KC" login.keychain-db
+          IDENTITY=$(security find-identity -v -p codesigning "$KC" | awk -F'"' '/Developer ID Application/{print $2; exit}')
+          [ -n "$IDENTITY" ] || { echo "::error::no Developer ID Application identity in MACOS_CERT_P12"; exit 1; }
+          echo "signing identity: $IDENTITY"
+          echo "SIGN_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+
+      - name: Build the app, engine archive and standalone CLI
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ env.SIGN_IDENTITY || '-' }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          VERSION=$(jq -r .version apps/desktop/src-tauri/tauri.conf.json)
+          mkdir -p dist out
+          bun run build
+          bun run build:engine --verify --package-release out --version "$VERSION"
+          rm -f out/SHA256SUMS.txt
+          bun run --cwd apps/desktop tauri build --ci --target "$TARGET" \
+            --config '{"build":{"beforeBuildCommand":""}}' --bundles app
+
+          ditto "apps/desktop/src-tauri/target/$TARGET/release/bundle/macos/Petrina.app" dist/Petrina.app
+          cp apps/desktop/src-tauri/resources/engine/petrina-engine dist/petrina
+          chmod +x dist/petrina
+
+          ENTITLEMENTS="apps/desktop/src-tauri/entitlements.engine.plist"
+          if [ "$APPLE_SIGNING_IDENTITY" = "-" ]; then
+            codesign --force --options runtime --entitlements "$ENTITLEMENTS" --sign - \
+              dist/Petrina.app/Contents/Resources/engine/petrina-engine
+            codesign --force --options runtime --sign - dist/Petrina.app
+            codesign --force --options runtime --entitlements "$ENTITLEMENTS" --sign - dist/petrina
+          else
+            codesign --force --timestamp --options runtime --entitlements "$ENTITLEMENTS" \
+              --sign "$APPLE_SIGNING_IDENTITY" dist/Petrina.app/Contents/Resources/engine/petrina-engine
+            codesign --force --timestamp --options runtime --sign "$APPLE_SIGNING_IDENTITY" dist/Petrina.app
+            codesign --force --timestamp --options runtime --entitlements "$ENTITLEMENTS" \
+              --sign "$APPLE_SIGNING_IDENTITY" dist/petrina
+          fi
+
+      - name: Notarize and staple
+        if: env.HAS_APPLE_SIGNING == 'true'
+        env:
+          API_KEY_P8: ${{ secrets.MACOS_API_KEY_P8 }}
+          API_KEY_ID: ${{ secrets.MACOS_API_KEY_ID }}
+          API_ISSUER_ID: ${{ secrets.MACOS_API_ISSUER_ID }}
+          TEAM_ID: ${{ secrets.MACOS_TEAM_ID }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          cd dist
+          APP="Petrina.app"
+          DMG="Petrina-macOS-${ARCH}.dmg"
+          printf '%s' "$API_KEY_P8" | base64 --decode > "$RUNNER_TEMP/api.p8"
+          notarize() {
+            xcrun notarytool submit "$1" --key "$RUNNER_TEMP/api.p8" --key-id "$API_KEY_ID" \
+              --issuer "$API_ISSUER_ID" --team-id "$TEAM_ID" --wait --timeout 30m
+          }
+          codesign --verify --strict --deep --verbose=2 "$APP"
+
+          # The app: notarize a ditto zip of it, then staple the ticket so it opens offline on first launch.
+          ditto -c -k --keepParent "$APP" app.zip
+          notarize app.zip
+          rm app.zip
+          xcrun stapler staple "$APP"
+
+          # The standalone CLI: notarizing records the ticket with Apple for Gatekeeper.
+          ditto -c -k petrina cli.zip
+          notarize cli.zip
+          rm cli.zip
+
+          # The disk image: the app plus an Applications shortcut, signed, notarized and stapled too.
+          mkdir dmg && ditto "$APP" "dmg/$APP" && ln -s /Applications dmg/Applications
+          hdiutil create -volname "Petrina" -srcfolder dmg -ov -format UDZO "$DMG"
+          rm -rf dmg
+          codesign --force --timestamp --sign "$SIGN_IDENTITY" "$DMG"
+          notarize "$DMG"
+          xcrun stapler staple "$DMG"
+          rm -f "$RUNNER_TEMP/api.p8"
+
+          xcrun stapler validate "$APP"
+          xcrun stapler validate "$DMG"
+          spctl --assess --type execute -vv "$APP"
+          spctl --assess --type open --context context:primary-signature -vv "$DMG"
+
+      - name: Package an unsigned disk image
+        if: env.HAS_APPLE_SIGNING != 'true'
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          echo "::warning::MACOS_CERT_P12 isn't set: this macOS build is ad-hoc signed and Gatekeeper refuses it on other Macs. Don't ship it."
+          cd dist
+          DMG="Petrina-macOS-${ARCH}.dmg"
+          mkdir dmg && ditto Petrina.app dmg/Petrina.app && ln -s /Applications dmg/Applications
+          hdiutil create -volname "Petrina" -srcfolder dmg -ov -format UDZO "$DMG"
+          rm -rf dmg
+
+      - name: Package the CLI and disk image
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          cd dist
+          tar -czf "petrina-cli-macos-${ARCH}.tar.gz" petrina
+          cp petrina "petrina-cli-macos-${ARCH}"
+          mv "Petrina-macOS-${ARCH}.dmg" "petrina-cli-macos-${ARCH}.tar.gz" "petrina-cli-macos-${ARCH}" ../out/
+
+      - name: Package and sign the update
+        # Only a notarized app may reach installed copies: an ad-hoc signed one would stop opening.
+        # Release tags only: a manual run, from any branch, never signs an update.
+        if: startsWith(github.ref, 'refs/tags/v') && env.HAS_APPLE_SIGNING == 'true' && env.HAS_UPDATER_SIGNING == 'true'
+        env:
+          ARCH: ${{ matrix.arch }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          PKG="out/Petrina-macOS-${ARCH}.app.tar.gz"
+          COPYFILE_DISABLE=1 tar -C dist -czf "$PKG" Petrina.app
+          VERSION=$(jq -r .version apps/desktop/src-tauri/tauri.conf.json)
+          bun run --cwd apps/desktop tauri signer sign --app-version "$VERSION" "../../$PKG"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-macos-${{ matrix.arch }}
+          path: out/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Remove the temporary keychain
+        if: always() && env.HAS_APPLE_SIGNING == 'true'
+        run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true
+
+  windows:
+    name: Windows (x64)
+    runs-on: windows-latest
+    # The update-signing secrets can live in this environment, limited to release tags.
+    environment: release
+    timeout-minutes: 60
+    env:
+      HAS_UPDATER_SIGNING: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -51,85 +252,176 @@ jobs:
           restore-keys: |
             bun-${{ runner.os }}-
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: apps/desktop/src-tauri
-      - name: Linux webview and AppImage libraries
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf file xdg-utils
       - run: bun install --frozen-lockfile
-      - run: bun run build
-      - name: Compile, verify, and archive standalone engine release
+      - name: Build the installer, engine archive and standalone CLI
         shell: bash
-        env:
-          RELEASE_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || inputs.version || '0.1.0' }}
-        run: bun run build:engine --verify --package-release dist-release --version "$RELEASE_VERSION"
-      - name: Build Tauri desktop installers
-        shell: bash
-        env:
-          APPIMAGE_EXTRACT_AND_RUN: '1'
-        run: >-
-          bun run --cwd apps/desktop tauri build --ci --no-sign
-          --config '{"build":{"beforeBuildCommand":""}}'
-          --bundles ${{ matrix.bundles }}
-      - name: Collect desktop installers and generate SHA-256 checksums
-        shell: bash
-        env:
-          RELEASE_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || inputs.version || '0.1.0' }}
-          MATRIX_LABEL: ${{ matrix.label }}
         run: |
-          clean_ver="${RELEASE_VERSION#v}"
-          bundle_root="apps/desktop/src-tauri/target/release/bundle"
-          if [ "$RUNNER_OS" = "macOS" ]; then
-            test -x "$bundle_root/macos/Petrina.app/Contents/Resources/engine/petrina-engine"
-            cp "$bundle_root"/dmg/*.dmg dist-release/
-            tar -czf "dist-release/Petrina-${clean_ver}-${MATRIX_LABEL}.app.tar.gz" -C "$bundle_root/macos" Petrina.app
-          elif [ "$RUNNER_OS" = "Linux" ]; then
-            cp "$bundle_root"/deb/*.deb dist-release/
-            cp "$bundle_root"/appimage/*.AppImage dist-release/
-          else
-            cp "$bundle_root"/msi/*.msi dist-release/
-            cp "$bundle_root"/nsis/*-setup.exe dist-release/
-          fi
-          bun packages/engine/src/build-engine.ts --checksums-only dist-release
-      - name: Upload platform release assets
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+          set -euo pipefail
+          VERSION=$(jq -r .version apps/desktop/src-tauri/tauri.conf.json)
+          mkdir -p dist out
+          bun run build
+          bun run build:engine --verify --package-release out --version "$VERSION"
+          rm -f out/SHA256SUMS.txt
+          bun run --cwd apps/desktop tauri build --ci \
+            --config '{"build":{"beforeBuildCommand":""}}' --bundles nsis
+          cp apps/desktop/src-tauri/target/release/bundle/nsis/*-setup.exe out/Petrina-Windows-x64-setup.exe
+          cp apps/desktop/src-tauri/resources/engine/petrina-engine.exe dist/petrina.exe
+          (cd dist && 7z a -tzip ../out/petrina-cli-windows-x64.zip petrina.exe >/dev/null)
+          cp dist/petrina.exe out/petrina-cli-windows-x64.exe
+      - name: Sign the update
+        if: startsWith(github.ref, 'refs/tags/v') && env.HAS_UPDATER_SIGNING == 'true'
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          VERSION=$(jq -r .version apps/desktop/src-tauri/tauri.conf.json)
+          bun run --cwd apps/desktop tauri signer sign --app-version "$VERSION" \
+            ../../out/Petrina-Windows-x64-setup.exe
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: petrina-release-${{ matrix.label }}
-          path: dist-release/*
+          name: release-windows
+          path: out/
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 7
 
-  publish:
-    name: Publish GitHub Release
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: package
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: write
-      actions: read
+  linux:
+    name: Linux (x86_64)
+    # The oldest supported runner, so the AppImage and CLI run on older glibc too.
+    runs-on: ubuntu-22.04
+    # The update-signing secrets can live in this environment, limited to release tags.
+    environment: release
+    timeout-minutes: 60
+    env:
+      HAS_UPDATER_SIGNING: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Linux libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev \
+            librsvg2-dev libayatana-appindicator3-dev libssl-dev libxdo-dev patchelf file xdg-utils
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.4.2
-      - name: Download platform artifacts and publish unified SHA256SUMS.txt
+      - name: Bun package cache
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: apps/desktop/src-tauri
+      - run: bun install --frozen-lockfile
+      - name: Build the AppImage, Debian package, engine archive and standalone CLI
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ github.ref_name }}
+          APPIMAGE_EXTRACT_AND_RUN: "1"
         run: |
-          mkdir -p collected release-assets
-          gh run download "${{ github.run_id }}" --dir collected --pattern "petrina-release-*"
-          find collected -type f ! -name "SHA256SUMS.txt" -exec cp {} release-assets/ \;
-          bun packages/engine/src/build-engine.ts --checksums-only release-assets
-          ls -lh release-assets/
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" release-assets/* --clobber
-          else
-            gh release create "$RELEASE_TAG" release-assets/* --title "Petrina $RELEASE_TAG" --generate-notes
-          fi
+          set -euo pipefail
+          VERSION=$(jq -r .version apps/desktop/src-tauri/tauri.conf.json)
+          mkdir -p dist out
+          bun run build
+          bun run build:engine --verify --package-release out --version "$VERSION"
+          rm -f out/SHA256SUMS.txt
+          bun run --cwd apps/desktop tauri build --ci \
+            --config '{"build":{"beforeBuildCommand":""}}' --bundles appimage,deb
+          cp apps/desktop/src-tauri/target/release/bundle/appimage/*.AppImage out/Petrina-Linux-x86_64.AppImage
+          cp apps/desktop/src-tauri/target/release/bundle/deb/*.deb out/Petrina-Linux-amd64.deb
+          cp apps/desktop/src-tauri/resources/engine/petrina-engine dist/petrina
+          chmod +x dist/petrina
+          tar -C dist -czf out/petrina-cli-linux-x86_64.tar.gz petrina
+          cp dist/petrina out/petrina-cli-linux-x86_64
+      - name: Sign the updates
+        # Each kind of install updates from its own package: the AppImage replaces itself, the .deb reinstalls.
+        if: startsWith(github.ref, 'refs/tags/v') && env.HAS_UPDATER_SIGNING == 'true'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          VERSION=$(jq -r .version apps/desktop/src-tauri/tauri.conf.json)
+          bun run --cwd apps/desktop tauri signer sign --app-version "$VERSION" \
+            ../../out/Petrina-Linux-x86_64.AppImage
+          bun run --cwd apps/desktop tauri signer sign --app-version "$VERSION" \
+            ../../out/Petrina-Linux-amd64.deb
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-linux
+          path: out/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Draft the GitHub release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [macos, windows, linux]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: release-*
+          path: out
+          merge-multiple: true
+      - name: Check the tag matches the app and CLI versions
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          TAURI_VERSION=$(jq -r .version apps/desktop/src-tauri/tauri.conf.json)
+          DESKTOP_VERSION=$(jq -r .version apps/desktop/package.json)
+          ENGINE_VERSION=$(jq -r .version packages/engine/package.json)
+          CARGO_VERSION=$(awk -F'"' '/^version = / {print $2; exit}' apps/desktop/src-tauri/Cargo.toml)
+          for pair in \
+            "tauri.conf.json:$TAURI_VERSION" \
+            "apps/desktop/package.json:$DESKTOP_VERSION" \
+            "packages/engine/package.json:$ENGINE_VERSION" \
+            "Cargo.toml:$CARGO_VERSION"; do
+            NAME="${pair%%:*}"
+            VER="${pair#*:}"
+            [ "$TAG" = "v$VER" ] || { echo "::error::tag $TAG doesn't match $NAME version $VER"; exit 1; }
+          done
+      - name: Take the release notes from CHANGELOG.md
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          # The version's section: from its heading to the next one, without leading blank lines.
+          awk -v v="$VERSION" '$0 == "## " v {on=1; next} /^## / && on {exit} on' CHANGELOG.md | sed -e '/./,$!d' > "$RUNNER_TEMP/notes.md"
+          [ -s "$RUNNER_TEMP/notes.md" ] || { echo "::error::CHANGELOG.md has no section for $VERSION: write the release notes there"; exit 1; }
+          cat "$RUNNER_TEMP/notes.md"
+      - name: Write the update manifest
+        env:
+          TAG: ${{ github.ref_name }}
+        run: python3 .github/scripts/updater_manifest.py out "$TAG" "$GITHUB_REPOSITORY" "$RUNNER_TEMP/notes.md"
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          cd out
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          # The notes first, then GitHub's list of changes since the previous release.
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --verify-tag \
+            --title "Petrina ${TAG#v}" --notes-file "$RUNNER_TEMP/notes.md" --generate-notes ./*

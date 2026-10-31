@@ -98,7 +98,7 @@ const GUIDES: Record<CheckId, { install: string; login?: string }> = {
   "claude-code": { install: "https://code.claude.com/docs/en/setup", login: "https://code.claude.com/docs/en/setup#authentication" },
   codex: { install: "https://developers.openai.com/codex/cli", login: "https://developers.openai.com/codex/auth" },
   grok: { install: "https://docs.x.ai/build/overview", login: "https://docs.x.ai/build/cli/reference" },
-  antigravity: { install: "https://antigravity.google/docs/cli/install/", login: "https://antigravity.google/docs/ide/extensions/zed" },
+  antigravity: { install: "https://antigravity.google/docs/cli/install/", login: "https://antigravity.google/docs/cli/reference" },
   gh: { install: "https://github.com/cli/cli#installation", login: "https://cli.github.com/manual/gh_auth_login" },
   git: { install: "https://git-scm.com/downloads" },
 };
@@ -107,7 +107,11 @@ const INSTALL: Record<CheckId, PerPlatform> = {
   "claude-code": "npm install -g @anthropic-ai/claude-code",
   codex: "npm install -g @openai/codex",
   grok: "npm install -g @xai-official/grok",
-  antigravity: "bun run petrina antigravity install",
+  antigravity: {
+    darwin: "curl -fsSL https://antigravity.google/cli/install.sh | bash",
+    linux: "curl -fsSL https://antigravity.google/cli/install.sh | bash",
+    win32: "irm https://antigravity.google/cli/install.ps1 | iex",
+  },
   gh: { darwin: "brew install gh", win32: "winget install --id GitHub.cli", linux: "sudo apt install gh" },
   git: { darwin: "xcode-select --install", win32: "winget install --id Git.Git -e", linux: "sudo apt install git" },
 };
@@ -116,7 +120,7 @@ const LOGIN: Partial<Record<CheckId, string>> = {
   "claude-code": "claude auth login",
   codex: "codex login",
   grok: "grok login",
-  antigravity: "bun run petrina antigravity login",
+  antigravity: "agy",
   gh: "gh auth login",
 };
 
@@ -144,7 +148,9 @@ export function fixFor(id: CheckId, status: CheckStatus, platform: Platform): Fi
       return undefined;
     case "not-installed":
       return {
-        sentence: id === "antigravity" ? `Install Antigravity CLI from the official guide, then run this in Petrina's folder to install Google's connector.` : NEEDED_FOR[id] ? `${NEEDED_FOR[id]}, so install it by running this in ${terminal}, then come back to Petrina.` : `Install ${name} by running this in ${terminal}, then come back to Petrina.`,
+        sentence: NEEDED_FOR[id]
+          ? `${NEEDED_FOR[id]}, so install it by running this in ${terminal}, then come back to Petrina.`
+          : `Install ${name} by running this in ${terminal}, then come back to Petrina.`,
         command: pick(INSTALL[id], platform),
         guide: guides.install,
       };

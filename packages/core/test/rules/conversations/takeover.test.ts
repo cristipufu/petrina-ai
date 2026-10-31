@@ -15,6 +15,7 @@ const state: Pick<State, "profiles" | "tools"> = {
     { id: "codex", name: "Codex", command: [], status: "not-installed", models: [] },
     { id: "gemini", name: "Gemini CLI", command: [], status: "ready", models: [] },
     { id: "grok", name: "Grok", command: [], status: "ready", models: [] },
+    { id: "antigravity", name: "Antigravity", command: [], status: "ready", models: [] },
   ],
 };
 
@@ -30,7 +31,7 @@ function task(change: Partial<Task> = {}): Task {
 }
 
 describe("whether the coordinator can take over", () => {
-  it("can while an agent other than the Release Manager works or waits on them, on Claude Code, Codex or Grok, with its instructions", () => {
+  it("can while an agent other than the Release Manager works or waits on them, on Claude Code, Codex, Grok or Antigravity, with its instructions", () => {
     expect(takeOverBlock(task(), state)).toBeUndefined();
     expect(takeOverBlock(task({ state: "needs-you" }), state)).toBeUndefined();
     expect(
@@ -42,10 +43,31 @@ describe("whether the coordinator can take over", () => {
         state,
       ),
     ).toBeUndefined();
+    expect(
+      takeOverBlock(
+        task({
+          agent: { roleId: "builder", profileId: "flash-medium", since: 0, step: 0 },
+          conversation: { ...task().conversation!, profileId: "flash-medium", toolId: "antigravity", model: "gemini-3.8-flash" },
+        }),
+        state,
+      ),
+    ).toBeUndefined();
   });
 
   it("says why not, in one line", () => {
-    expect(takeOverBlock(task({ agent: { roleId: "builder", profileId: "flash-medium", since: 0, step: 0 } }), state)).toBe("Antigravity's terminal cannot open this agent's conversation");
+    const missingAntigravity = {
+      ...state,
+      tools: state.tools.map((tool) => (tool.id === "antigravity" ? { ...tool, status: "not-installed" as const } : tool)),
+    };
+    expect(
+      takeOverBlock(
+        task({
+          agent: { roleId: "builder", profileId: "flash-medium", since: 0, step: 0 },
+          conversation: { ...task().conversation!, profileId: "flash-medium", toolId: "antigravity", model: "gemini-3.8-flash" },
+        }),
+        missingAntigravity,
+      ),
+    ).toBe("Antigravity isn't installed on this machine");
     expect(takeOverBlock(task({ agent: undefined }), state)).toBe(TAKE_OVER_WORDS.noAgent);
     expect(takeOverBlock(task({ state: "waiting", holdsSlot: false }), state)).toBe(TAKE_OVER_WORDS.noAgent);
     expect(takeOverBlock(task({ state: "needs-you", holdsSlot: false }), state)).toBe(TAKE_OVER_WORDS.noAgent);

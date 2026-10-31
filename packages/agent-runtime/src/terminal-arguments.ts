@@ -36,4 +36,19 @@ export const codexTerminalArguments: TerminalArgumentFormatter = ({
   "approvals_reviewer=user",
   "--no-daemon"
 ];
-export const grokTerminalArguments: TerminalArgumentFormatter = ({ session, model, effort }) => ["--resume", session, "--model", model, "--effort", effort];
+export const grokTerminalArguments: TerminalArgumentFormatter = ({ session, model, effort }) => [
+  "--resume",
+  session,
+  "--model",
+  model,
+  "--effort",
+  effort,
+];
+export const antigravityTerminalArguments: TerminalArgumentFormatter = ({ session, model, effort }) => [
+  "--conversation",
+  session,
+  "--model",
+  model,
+  "--effort",
+  effort,
+];

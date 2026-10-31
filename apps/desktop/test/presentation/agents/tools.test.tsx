@@ -58,6 +58,8 @@ describe("Tools readiness checks", () => {
     await act(async () => host!.querySelector<HTMLButtonElement>("button")!.click());
     expect(host!.textContent).toContain("Antigravity did not answer within 8 seconds.");
     await act(async () => root!.render(<ToolList platform="darwin" checks={[{ id: "antigravity", status: "logged-out" }]} />));
-    expect(host!.textContent).toContain("bun run petrina antigravity login");
+    expect(host!.querySelector(".command")?.textContent).toContain("agy");
+    await act(async () => root!.render(<ToolList platform="darwin" checks={[{ id: "antigravity", status: "not-installed" }]} />));
+    expect(host!.querySelector(".command")?.textContent).toContain("https://antigravity.google/cli/install.sh");
   });
 });

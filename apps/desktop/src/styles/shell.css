@@ -230,6 +230,26 @@ input.select { cursor: text; }
 .rail a:hover { color: var(--text); background: var(--hover); }
 .rail a.on { color: var(--text); background: var(--selected); }
 .rail a.on svg { color: var(--accent-text); }
+.rail .rail-update {
+  width: calc(100% - 8px);
+  border: 0;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  padding: 8px 0;
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  color: var(--accent-text);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-meta);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.rail button.rail-update:hover { background: var(--hover); color: var(--text); }
+.rail .rail-update.ready { color: var(--green-text); }
+.rail .rail-update.failed { color: var(--red-text); }
+.rail .rail-update.busy { color: var(--text-2); cursor: default; }
 .rail .badge {
   position: absolute;
   top: 4px;

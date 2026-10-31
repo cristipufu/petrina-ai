@@ -7,6 +7,7 @@ import { AgentRun } from "@petrina/agent-runtime/acp-run";
 import { readProcessList } from "@petrina/platform/process-tree";
 import { resolveInstalledClaudeCli } from "@petrina/agent-runtime/claude-acp";
 import { resolveInstalledCodexCli } from "@petrina/agent-runtime/codex-acp";
+import { resolveInstalledAgyCli } from "@petrina/agent-runtime/agy-acp-protocol";
 import { backgroundCommand } from "@petrina/agent-runtime/codex-background";
 import { removeDir, tempDir } from "@petrina/test-support/fixtures";
 import { SLOW } from "@petrina/test-support/slow";
@@ -71,7 +72,8 @@ it("refuses a self-referencing Codex command and resolves installed agent CLIs s
   const ext = process.platform === "win32" ? ".cmd" : "";
   const fakeCodex = join(binDir, `codex${ext}`);
   const fakeClaude = join(binDir, `claude${ext}`);
-  for (const bin of [fakeCodex, fakeClaude]) {
+  const fakeAgy = join(binDir, `agy${ext}`);
+  for (const bin of [fakeCodex, fakeClaude, fakeAgy]) {
     writeFileSync(bin, process.platform === "win32" ? "@echo off\r\n" : "#!/bin/sh\n", "utf8");
     if (process.platform !== "win32") chmodSync(bin, 0o755);
   }
@@ -85,6 +87,10 @@ it("refuses a self-referencing Codex command and resolves installed agent CLIs s
   expect(resolveInstalledClaudeCli({ PATH: binDir })).toBe(fakeClaude);
   expect(resolveInstalledClaudeCli({ PATH: emptyBinDir, CLAUDE_CODE_EXECUTABLE: fakeClaude })).toBe(fakeClaude);
   expect(() => resolveInstalledClaudeCli({ PATH: emptyBinDir })).toThrow("no `claude` on PATH");
+
+  expect(resolveInstalledAgyCli({ PATH: binDir })).toBe(fakeAgy);
+  expect(resolveInstalledAgyCli({ PATH: emptyBinDir, AGY_EXECUTABLE: fakeAgy })).toBe(fakeAgy);
+  expect(() => resolveInstalledAgyCli({ PATH: emptyBinDir })).toThrow("no `agy` on PATH");
 });
 
 for (const toolId of ["claude-code", "codex", "grok", "antigravity"]) it(`${toolId}: the actual connector receives an independent environment`, async () => {

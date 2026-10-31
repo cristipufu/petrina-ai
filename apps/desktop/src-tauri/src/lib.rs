@@ -18,6 +18,7 @@ use tauri::{Emitter, Manager, RunEvent};
 use tauri_plugin_notification::NotificationExt;
 
 mod badge;
+mod cli_link;
 mod engine_connection;
 mod engine_process;
 mod engine_release;
@@ -25,6 +26,7 @@ mod engine_stop;
 mod notifications;
 #[cfg(test)]
 mod test_process;
+mod updater;
 mod window_placement;
 
 #[derive(Default)]
@@ -189,13 +191,19 @@ pub fn run() {
             let _ = app.emit_to("main", "relaunched", ());
         }))
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Shell::default())
+        .manage(updater::PendingUpdate::default())
         .invoke_handler(tauri::generate_handler![
             engine_details,
             notifications::notify,
-            badge::set_badge
+            badge::set_badge,
+            updater::check_update,
+            updater::install_update,
+            updater::restart_app
         ])
         .setup(|app| {
+            cli_link::install_default_cli_link(app.handle());
             // Clicks on Petrina's notifications, as far as the system reports them: on macOS, on
             // screen and from Notification Center; on Windows, only while the toast is on screen.
             let handle = app.handle().clone();

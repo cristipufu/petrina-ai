@@ -8,6 +8,17 @@ import { TEST_NOTICE, type Notice, type Target } from "./words";
 
 export type Platform = "mac" | "windows" | "linux";
 
+export interface UpdateInfo {
+  readonly version: string;
+  readonly current: string;
+  readonly notes: string | null;
+}
+
+export interface UpdateProgress {
+  readonly downloaded: number;
+  readonly total: number | null;
+}
+
 export function platform(): Platform {
   const agent = navigator.userAgent;
   if (/Windows/i.test(agent)) return "windows";
@@ -40,6 +51,18 @@ export const shell = {
   /** Petrina was opened again (by hand, or by the system for a notification) and came forward. */
   onRelaunch(handler: () => void): Promise<() => void> {
     return listen("relaunched", () => handler());
+  },
+  checkUpdate(): Promise<UpdateInfo | null> {
+    return invoke<UpdateInfo | null>("check_update");
+  },
+  installUpdate(): Promise<void> {
+    return invoke<void>("install_update");
+  },
+  onUpdateProgress(handler: (progress: UpdateProgress) => void): Promise<() => void> {
+    return listen<UpdateProgress>("update-progress", (event) => handler(event.payload));
+  },
+  restartApp(): Promise<void> {
+    return invoke<void>("restart_app");
   },
 };
 

@@ -62,13 +62,11 @@ export interface ToolAdapter {
   /** The adapter's entry point, resolved from node_modules. Unset when `command` is the agent itself. */
   entry?: string;
   /** Embedded ACP protocol translator subcommand inside `petrina-engine` (or its source module under Bun). */
-  internalSubcommand?: "__internal-claude-acp" | "__internal-codex-acp";
+  internalSubcommand?: "__internal-claude-acp" | "__internal-codex-acp" | "__internal-agy-acp";
   /** The program to spawn when the agent is the ACP server. Otherwise Petrina launches the ACP connector. */
   command?: readonly string[];
   /** The CLI the tool needs on PATH, for detection and for taking over in a terminal. */
   cli: string;
-  /** Additional native runtime needed alongside the terminal CLI. */
-  installed?: () => boolean;
   /** Forget a disposable identity/account probe, only after its process has stopped. */
   forgetProbe?: (sessionId: string, env: NodeJS.ProcessEnv) => Promise<void>;
   /** Session config option ids the adapter exposes. `mode` is unset when the mode is session metadata instead. */

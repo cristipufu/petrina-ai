@@ -165,8 +165,8 @@ export interface LaunchInput {
   /** The take-over folder: the launcher, its lock, records and status file live here. */
   dir: string;
   worktree: string;
-  /** `mode`: Claude Code's ask-before-acting mode, by the name the installed copy lists. Grok has none: it opens in its usual prompts. */
-  tool: { id: "claude-code" | "codex" | "grok"; name: string; path: string; mode?: AskMode };
+  /** `mode`: Claude Code's ask-before-acting mode, by the name the installed copy lists. Grok and Antigravity open with their usual prompts. */
+  tool: { id: "claude-code" | "codex" | "grok" | "antigravity"; name: string; path: string; mode?: AskMode };
   sessionId: string;
   model: string;
   effort: string;

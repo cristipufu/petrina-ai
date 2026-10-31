@@ -8,8 +8,30 @@ import { mod, setSingleKeys } from "./keyboard";
 import type { Theme } from "./theme";
 import { themes } from "./themes";
 import { canMessage, canTogglePause } from "./taskCommands";
+import type { UpdateState } from "./updates";
 
-export function appActions({ state, singleKeys, newTask, openInbox, go, showShortcuts, sendAction, theme, onTheme }: {
+export interface PaletteUpdateControl {
+  readonly supported: boolean;
+  readonly update: UpdateState;
+  readonly autoCheck: boolean;
+  readonly onCheck: () => void;
+  readonly onInstall: () => void;
+  readonly onRestart: () => void;
+  readonly onToggleAuto: () => void;
+}
+
+export function appActions({
+  state,
+  singleKeys,
+  newTask,
+  openInbox,
+  go,
+  showShortcuts,
+  sendAction,
+  theme,
+  onTheme,
+  updates,
+}: {
   state: State;
   singleKeys: boolean;
   newTask: () => void;
@@ -18,8 +40,40 @@ export function appActions({ state, singleKeys, newTask, openInbox, go, showShor
   showShortcuts: () => void;
   sendAction: (action: () => unknown, title: string, detail?: string) => Promise<boolean>;
   theme: Theme;
-  onTheme: (theme: Theme) => void
+  onTheme: (theme: Theme) => void;
+  updates?: PaletteUpdateControl;
 }): PaletteAction[] {
+  const updateActions: PaletteAction[] = updates?.supported
+    ? [
+        updates.update.status === "available" || updates.update.status === "failed"
+          ? {
+              id: "update-install",
+              label: `Update to Petrina ${updates.update.info.version}`,
+              detail: `Current version ${updates.update.info.current} · Restart when you choose`,
+              shortcut: "↵",
+              run: updates.onInstall,
+            }
+          : updates.update.status === "ready"
+            ? {
+                id: "update-restart",
+                label: `Restart to finish updating to ${updates.update.info.version}`,
+                shortcut: "↵",
+                run: updates.onRestart,
+              }
+            : {
+                id: "update-check",
+                label: "Check for updates",
+                shortcut: "↵",
+                run: updates.onCheck,
+              },
+        {
+          id: "update-auto",
+          label: `Turn daily update checks ${updates.autoCheck ? "off" : "on"}`,
+          shortcut: "↵",
+          run: updates.onToggleAuto,
+        },
+      ]
+    : [];
   return [
     { id: "new", label: "New task", shortcut: `${mod}N`, run: () => newTask() },
     {
@@ -60,6 +114,7 @@ export function appActions({ state, singleKeys, newTask, openInbox, go, showShor
     })),
     { id: "shortcuts", label: "Keyboard shortcuts", shortcut: "?", run: showShortcuts },
     { id: "toggle-keys", label: `Turn single-key shortcuts ${singleKeys ? "off" : "on"}`, shortcut: "↵", run: () => setSingleKeys(!singleKeys) },
+    ...updateActions,
     ...themes.map((entry) => ({
       id: `theme-${entry.id}`,
       label: `Use the ${entry.name} theme`,

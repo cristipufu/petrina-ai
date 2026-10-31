@@ -46,3 +46,32 @@ import { quota } from "../../fixtures/antigravity-quota.js";
     expect(antigravityTurnReport(undefined, first)).toBeUndefined();
     expect(antigravityReading(quota.replace("26,682", "999" )).tokens).toBeUndefined();
   });
+
+  it("reads agy --print /usage TSV quota rows alongside session usage totals", () => {
+    const tsv = [
+      "Model\tQuota\tRemaining\tResets",
+      "Gemini Models\tWeekly Limit Remaining\t30%\t2026-11-03T12:56:49Z",
+      "Gemini Models\t5-Hour Limit Remaining\t80%\t2026-10-31T13:56:49Z",
+      "Gemini 4 Argon\tWeekly Limit Remaining\t2%\t2026-11-03T17:33:00Z",
+      "Claude Opus\tWeekly Limit Remaining\t0%\t2026-11-03T12:00:00Z",
+      "",
+      "- **Session total:** 203,958 tokens (prompt: 203,808, completion: 15, thinking: 135, cached: 200,660)",
+    ].join("\n");
+    const zero = antigravityReading("- **Session total:** data not available yet");
+    const reading = antigravityReading(tsv);
+    expect(reading.tokens).toEqual({
+      total: 203958,
+      input: 203808,
+      cached: 200660,
+      output: 150,
+      reasoning: 135,
+    });
+    expect(antigravityTurnReport(zero, reading)).toEqual({
+      main: { total: 203958, input: 3148, cacheRead: 200660, output: 150, reasoning: 135 },
+    });
+    expect(reading.reports).toEqual([
+      { toolId: "antigravity", model: "flash", name: "Gemini Models", kind: "seven_day", utilization: 0.7, status: "allowed", resetsAt: Date.parse("2026-11-03T12:56:49Z") },
+      { toolId: "antigravity", model: "flash", name: "Gemini Models", kind: "five_hour", utilization: 0.2, status: "allowed", resetsAt: Date.parse("2026-10-31T13:56:49Z") },
+      { toolId: "antigravity", model: "argon", name: "Gemini 4 Argon", kind: "seven_day", utilization: 0.98, status: "allowed_warning", resetsAt: Date.parse("2026-11-03T17:33:00Z") },
+    ]);
+  });

@@ -16,9 +16,10 @@ export const GROK_AGENT_COMMAND = ["grok", "--permission-mode", "auto", "agent",
 const INTERNAL_SUBCOMMAND_SOURCE: Record<NonNullable<ToolAdapter["internalSubcommand"]>, string> = {
   "__internal-claude-acp": "claude-acp.ts",
   "__internal-codex-acp": "codex-acp.ts",
+  "__internal-agy-acp": "agy-acp.ts",
 };
 
-const INTERNAL_SUBCOMMAND_ENTRY: Record<NonNullable<ToolAdapter["internalSubcommand"]>, string> = {
+const INTERNAL_SUBCOMMAND_ENTRY: Partial<Record<NonNullable<ToolAdapter["internalSubcommand"]>, string>> = {
   "__internal-claude-acp": CLAUDE_AGENT_ENTRY,
   "__internal-codex-acp": CODEX_AGENT_ENTRY,
 };
@@ -61,7 +62,8 @@ export function adapterLaunchCommand(
     if (isCompiledBinary(metaDir)) {
       return [execPath, adapter.internalSubcommand];
     }
-    resolveAdapterEntry(adapter.entry ?? INTERNAL_SUBCOMMAND_ENTRY[adapter.internalSubcommand], execPath, metaDir);
+    const entry = adapter.entry ?? INTERNAL_SUBCOMMAND_ENTRY[adapter.internalSubcommand];
+    if (entry) resolveAdapterEntry(entry, execPath, metaDir);
     return [findBunRuntime(execPath, metaDir), join(metaDir, INTERNAL_SUBCOMMAND_SOURCE[adapter.internalSubcommand])];
   }
   return [findJsRuntime(execPath, metaDir), resolveAdapterEntry(adapter.entry ?? "", execPath, metaDir)];

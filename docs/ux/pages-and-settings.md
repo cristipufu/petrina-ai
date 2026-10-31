@@ -45,7 +45,7 @@ The installed-tools list uses locally bundled brand icons at a consistent size, 
 
 ### Your terminal
 
-Choose where Take over in terminal opens, using the machine’s usual terminal by default. If no terminal is available, the same launcher can be copied. Antigravity explains that its terminal cannot open the agent’s ACP conversation.
+Choose where Take over in terminal opens, using the machine’s usual terminal by default. If no terminal is available, the same launcher can be copied.
 
 ## Analytics
 
