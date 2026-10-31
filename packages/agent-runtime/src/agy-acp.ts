@@ -3,7 +3,6 @@
 // directly to the coordinator's installed `agy` CLI (`--input-format stream-json
 // --output-format stream-json`), sharing `~/.gemini/antigravity-cli` login and sessions.
 
-import { spawn } from "node:child_process";
 import { rm } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import { Readable, Writable } from "node:stream";
@@ -18,6 +17,7 @@ import {
   optionValue,
   recordTurnTokens,
   resolveInstalledAgyCli,
+  spawnAgy,
   stageMcpPluginDir,
   stopChild,
   type ActiveWorker,
@@ -41,7 +41,7 @@ async function probeConversationInit(
     "--output-format",
     "stream-json",
   ];
-  const child = spawn(executable, args, {
+  const child = spawnAgy(executable, args, {
     cwd,
     stdio: ["pipe", "pipe", "pipe"],
     env: agyEnv(),
@@ -104,7 +104,7 @@ async function probeConversationInit(
 }
 
 async function runUsageCommand(executable: string, session: AgySessionState): Promise<string> {
-  const child = spawn(executable, ["--print", "/usage"], {
+  const child = spawnAgy(executable, ["--print", "/usage"], {
     cwd: session.cwd,
     stdio: ["ignore", "pipe", "pipe"],
     env: agyEnv(),
@@ -192,7 +192,7 @@ async function ensureWorker(
     ...(mode === "yolo" ? ["--dangerously-skip-permissions"] : []),
     ...(session.mcpDir ? ["--add-dir", session.mcpDir] : []),
   ];
-  const child = spawn(executable, args, {
+  const child = spawnAgy(executable, args, {
     cwd: session.cwd,
     stdio: ["pipe", "pipe", "pipe"],
     env: agyEnv(),

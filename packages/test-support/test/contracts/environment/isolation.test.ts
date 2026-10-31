@@ -32,6 +32,8 @@ it("starts workers with private settings and no inherited accounts, Git override
   expect(readFileSync(own.GIT_CONFIG_SYSTEM!, "utf8")).toBe("");
   // The resulting Git process sees only the fixture identity, even outside a repository.
   expect(await gitWith({ cwd: folder, env: { ...own, SystemRoot: process.env.SystemRoot } }, "config", "--global", "user.name")).toBe(TEST_GIT_IDENTITY.name);
+  expect(await gitWith({ cwd: folder, env: { ...own, SystemRoot: process.env.SystemRoot } }, "config", "--global", "gc.auto")).toBe("0");
+  expect(await gitWith({ cwd: folder, env: { ...own, SystemRoot: process.env.SystemRoot } }, "config", "--global", "maintenance.auto")).toBe("false");
 });
 
 it("shares only provisioned browser binaries while nested homes and settings remain private", () => {

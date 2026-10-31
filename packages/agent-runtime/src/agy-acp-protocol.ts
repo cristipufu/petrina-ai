@@ -1,10 +1,11 @@
 // Antigravity (`agy`) NDJSON stream-json frame normalization, MCP plugin staging, and ACP session state helpers.
 
-import type { ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, win32 } from "node:path";
 import * as acp from "@agentclientprotocol/sdk";
+import { processHost } from "@petrina/platform/process-host";
 
 export const AGY_ACP_VERSION = "0.1.0";
 
@@ -156,6 +157,40 @@ export function isAuthErrorText(text: string): boolean {
   return /Authentication required\b/i.test(text);
 }
 
+const WIN_CMD_META_CHARS = /([()\][%!^"`<>&|;, *?])/g;
+
+export function agySpawnPlan(
+  executable: string,
+  args: readonly string[],
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): { command: string; args: string[]; windowsVerbatimArguments?: boolean } {
+  if (platform !== "win32" || /\.(?:exe|com)$/i.test(executable)) {
+    return { command: executable, args: [...args] };
+  }
+  const doubleEscape = /[\\/]node_modules[\\/]\.bin[\\/][^\\/]+\.cmd$/i.test(executable);
+  const escapedCommand = win32.normalize(executable).replace(WIN_CMD_META_CHARS, "^$1");
+  const escapedArgs = args.map((arg) => {
+    let quoted = `"${arg.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\*)$/, "$1$1")}"`;
+    quoted = quoted.replace(WIN_CMD_META_CHARS, "^$1");
+    return doubleEscape ? quoted.replace(WIN_CMD_META_CHARS, "^$1") : quoted;
+  });
+  const shellCommand = [escapedCommand, ...escapedArgs].join(" ");
+  return {
+    command: env.ComSpec || env.COMSPEC || "cmd.exe",
+    args: ["/d", "/s", "/c", `"${shellCommand}"`],
+    windowsVerbatimArguments: true,
+  };
+}
+
+export function spawnAgy(executable: string, args: readonly string[], options: SpawnOptions): ChildProcess {
+  const plan = agySpawnPlan(executable, args, options.env ?? process.env);
+  return spawn(plan.command, plan.args, {
+    ...options,
+    ...(plan.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
+  });
+}
+
 export async function stopChild(child: ChildProcess | undefined): Promise<void> {
   if (!child || child.exitCode !== null || child.signalCode !== null) return;
   const exited = new Promise<void>((resolve) => {
@@ -167,10 +202,19 @@ export async function stopChild(child: ChildProcess | undefined): Promise<void> 
   } catch {
     // Ignore closed stdin.
   }
-  try {
-    child.kill("SIGTERM");
-  } catch {
-    return;
+  if (processHost.stopTree && child.pid) {
+    const cleanExit = await Promise.race([
+      exited.then(() => true),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 150)),
+    ]);
+    if (cleanExit) return;
+    await processHost.stopTree(child.pid, 4_000);
+  } else {
+    try {
+      child.kill("SIGTERM");
+    } catch {
+      return;
+    }
   }
   const timer = setTimeout(() => {
     if (child.exitCode === null && child.signalCode === null) {

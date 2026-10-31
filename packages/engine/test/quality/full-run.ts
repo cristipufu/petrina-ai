@@ -113,7 +113,7 @@ try {
   writeFileSync(join(folder, "files.json"), JSON.stringify(expectedFiles, null, 2));
 
   const revision = (await readGit(ROOT, ["rev-parse", "HEAD", "HEAD^{tree}"])).trim();
-  const [head, tree] = revision.split("\n");
+  const [head, tree] = revision.split(/\r?\n/);
   const clean = !(await readGit(ROOT, ["status", "--porcelain=v1", "--untracked-files=normal"])).trim();
   const source = { head, tree, fingerprint: plan.fingerprint, clean };
   const environment = { platform: process.platform, arch: process.arch, bun: Bun.version };

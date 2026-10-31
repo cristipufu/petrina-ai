@@ -53,7 +53,8 @@ export function formatPass(
   source: string,
   filename: string,
 ): { output: string; changed: boolean; violations: FormattingViolation[] } {
-  const lines = source.split("\n");
+  const eol = source.includes("\r\n") ? "\r\n" : "\n";
+  const lines = source.split(/\r?\n/);
   const ast = parse(source, {
     sourceType: "unambiguous",
     sourceFilename: filename,
@@ -99,7 +100,7 @@ export function formatPass(
     const openGap = source.slice(openEnd, first.start);
     const closeGap = source.slice(last.end, closeStart);
     if (!/^[ \t]*$/.test(openGap) || !/^[ \t,;]*$/.test(closeGap)) return false;
-    const batch: Edit[] = [{ start: openEnd, end: first.start, text: `\n${innerIndent}` }];
+    const batch: Edit[] = [{ start: openEnd, end: first.start, text: `${eol}${innerIndent}` }];
     for (let i = 1; i < items.length; i++) {
       const prev = items[i - 1]!;
       const curr = items[i]!;
@@ -107,7 +108,7 @@ export function formatPass(
       if (!/^[ \t,;]*$/.test(gap)) return false;
       const alreadyTerminated = /[;,]$/.test(source.slice(prev.start, prev.end));
       const sep = alreadyTerminated ? "" : gap.includes(";") ? ";" : separator;
-      batch.push({ start: prev.end, end: curr.start, text: `${sep}\n${innerIndent}` });
+      batch.push({ start: prev.end, end: curr.start, text: `${sep}${eol}${innerIndent}` });
     }
     const lastAlreadyTerminated = /[;,]$/.test(source.slice(last.start, last.end));
     const trailing = lastAlreadyTerminated
@@ -117,7 +118,7 @@ export function formatPass(
         : closeGap.includes(",")
           ? ","
           : "";
-    batch.push({ start: last.end, end: closeStart, text: `${trailing}\n${baseIndent}` });
+    batch.push({ start: last.end, end: closeStart, text: `${trailing}${eol}${baseIndent}` });
     if (!tryAddAll(batch)) return false;
     recordViolation(
       line1Based,
@@ -153,7 +154,7 @@ export function formatPass(
             const gap = source.slice(prev.end, curr.start);
             if (/^[ \t;]*$/.test(gap)) {
               const semi = gap.includes(";") ? ";" : "";
-              if (tryAddAll([{ start: prev.end, end: curr.start, text: `${semi}\n${childIndent}` }])) {
+              if (tryAddAll([{ start: prev.end, end: curr.start, text: `${semi}${eol}${childIndent}` }])) {
                 hadPacked = true;
                 recordViolation(curr.loc.start.line, "keep one statement or member per line; run 'bun run format'");
               }
@@ -165,12 +166,12 @@ export function formatPass(
           const last = list[list.length - 1]!;
           const openGap = source.slice(node.start + 1, first.start);
           if (/^[ \t]*$/.test(openGap)) {
-            tryAddAll([{ start: node.start + 1, end: first.start, text: `\n${childIndent}` }]);
+            tryAddAll([{ start: node.start + 1, end: first.start, text: `${eol}${childIndent}` }]);
           }
           const closeGap = source.slice(last.end, node.end - 1);
           if (/^[ \t;]*$/.test(closeGap)) {
             const semi = closeGap.includes(";") ? ";" : "";
-            tryAddAll([{ start: last.end, end: node.end - 1, text: `${semi}\n${baseIndent}` }]);
+            tryAddAll([{ start: last.end, end: node.end - 1, text: `${semi}${eol}${baseIndent}` }]);
           }
         }
       }
@@ -185,7 +186,7 @@ export function formatPass(
           const semi = match[1]!.includes(";") ? ";" : "";
           if (
             tryAddAll([
-              { start: node.consequent.end, end: node.alternate.start, text: `${semi}\n${indent}else ` },
+              { start: node.consequent.end, end: node.alternate.start, text: `${semi}${eol}${indent}else ` },
             ])
           ) {
             recordViolation(node.alternate.loc.start.line, "place 'else' on its own line; run 'bun run format'");
@@ -210,7 +211,7 @@ export function formatPass(
         if (prev.loc.end.line === curr.loc.start.line) {
           const gap = source.slice(prev.end, curr.start);
           if (/^[ \t]*,[ \t]*$/.test(gap)) {
-            if (tryAddAll([{ start: prev.end, end: curr.start, text: `;\n${indent}${prefix} ` }])) {
+            if (tryAddAll([{ start: prev.end, end: curr.start, text: `;${eol}${indent}${prefix} ` }])) {
               recordViolation(curr.loc.start.line, "keep one variable declaration per line; run 'bun run format'");
             }
           }
@@ -286,7 +287,7 @@ export function formatPass(
           const openGap = source.slice(headerEnd, attrs[0]!.start);
           const closeGap = source.slice(attrs[attrs.length - 1]!.end, closeTokenStart);
           if (/^[ \t]+$/.test(openGap) && /^[ \t]*$/.test(closeGap)) {
-            const batch: Edit[] = [{ start: headerEnd, end: attrs[0]!.start, text: `\n${attrIndent}` }];
+            const batch: Edit[] = [{ start: headerEnd, end: attrs[0]!.start, text: `${eol}${attrIndent}` }];
             let ok = true;
             for (let i = 1; i < attrs.length; i++) {
               const gap = source.slice(attrs[i - 1]!.end, attrs[i]!.start);
@@ -294,10 +295,10 @@ export function formatPass(
                 ok = false;
                 break;
               }
-              batch.push({ start: attrs[i - 1]!.end, end: attrs[i]!.start, text: `\n${attrIndent}` });
+              batch.push({ start: attrs[i - 1]!.end, end: attrs[i]!.start, text: `${eol}${attrIndent}` });
             }
             if (ok) {
-              batch.push({ start: attrs[attrs.length - 1]!.end, end: closeTokenStart, text: `\n${baseIndent}` });
+              batch.push({ start: attrs[attrs.length - 1]!.end, end: closeTokenStart, text: `${eol}${baseIndent}` });
               if (tryAddAll(batch)) {
                 recordViolation(
                   startLine,

@@ -19,8 +19,14 @@ pub(crate) struct Started {
 
 pub(crate) struct StartupFailure {
     pub(crate) message: String,
-    pub(crate) remaining: Option<ChildOwner>,
+    pub(crate) remaining: Option<Box<ChildOwner>>,
 }
+
+const _: () = assert!(
+    std::mem::size_of::<ChildOwner>() < 128
+        && std::mem::size_of::<Started>() < 128
+        && std::mem::size_of::<StartupFailure>() < 128
+);
 
 enum FirstLine {
     Line(String),
@@ -41,11 +47,11 @@ fn failed(mut owner: ChildOwner, mut message: String) -> StartupFailure {
         },
         StopResult::Handoff => StartupFailure {
             message: format!("{message} Its engine is finishing an accepted handoff."),
-            remaining: Some(owner),
+            remaining: Some(Box::new(owner)),
         },
         StopResult::Uncertain(issue) => StartupFailure {
             message: format!("{message} {issue}"),
-            remaining: Some(owner),
+            remaining: Some(Box::new(owner)),
         },
     }
 }
@@ -293,7 +299,7 @@ mod tests {
         let old = stop_for_recovery_with_grace(started, Duration::from_secs(1))
             .expect_err("accepted handoff must preserve child");
         assert!(old.owner.handoff.load(Ordering::Acquire));
-        let mut child = OwnedOuter(old.owner.child);
+        let mut child = OwnedOuter(*old.owner.child);
         assert!(child.0.try_wait().unwrap().is_none());
         control.ping();
         control.quit();

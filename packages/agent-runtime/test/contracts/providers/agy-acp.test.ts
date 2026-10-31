@@ -4,7 +4,7 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { removeDir, tempDir } from "@petrina/test-support/fixtures";
 import { SLOW } from "@petrina/test-support/slow";
 import { AgentRun } from "../../../src/acp-run.js";
-import { stageMcpPluginDir } from "../../../src/agy-acp-protocol.js";
+import { agySpawnPlan, stageMcpPluginDir } from "../../../src/agy-acp-protocol.js";
 import { checkAgentTool } from "../../../src/probe.js";
 import { ADAPTERS, ENGINE_PROFILES } from "../../../src/tools.js";
 
@@ -124,6 +124,7 @@ rl.on("line", (line) => {
     },
   }) + "\\n");
 });
+rl.on("close", () => process.exit(0));
 `,
   "utf8",
 );
@@ -144,6 +145,27 @@ const profile = ENGINE_PROFILES.find((p) => p.id === "flash-medium")!;
 const callbacks = { onActivity() {}, onPlanStep() {}, onPermission: async () => "deny" as const };
 
 describe("embedded __internal-agy-acp translator", () => {
+  it("launches native executables directly and wraps Windows .cmd shims through ComSpec", () => {
+    expect(agySpawnPlan("/usr/local/bin/agy", ["--print", "/usage"], {}, "darwin")).toEqual({
+      command: "/usr/local/bin/agy",
+      args: ["--print", "/usage"],
+    });
+    expect(agySpawnPlan("C:\\Program Files\\Antigravity\\agy.exe", ["--print", "/usage"], {}, "win32")).toEqual({
+      command: "C:\\Program Files\\Antigravity\\agy.exe",
+      args: ["--print", "/usage"],
+    });
+    const cmdPlan = agySpawnPlan(
+      "C:\\Users\\Runner\\AppData\\Roaming\\npm\\agy.cmd",
+      ["--input-format", "stream-json"],
+      { ComSpec: "C:\\Windows\\System32\\cmd.exe" },
+      "win32",
+    );
+    expect(cmdPlan.command).toBe("C:\\Windows\\System32\\cmd.exe");
+    expect(cmdPlan.args.slice(0, 3)).toEqual(["/d", "/s", "/c"]);
+    expect(cmdPlan.args[3]).toContain("agy.cmd");
+    expect(cmdPlan.windowsVerbatimArguments).toBe(true);
+  });
+
   it("stages Streamable HTTP and stdio MCP servers into an isolated .agents/plugins directory", async () => {
     const dir = await stageMcpPluginDir([
       {

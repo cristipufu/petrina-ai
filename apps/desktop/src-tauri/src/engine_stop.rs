@@ -126,7 +126,7 @@ impl Readers {
 }
 
 pub(crate) struct ChildOwner {
-    pub(crate) child: Child,
+    pub(crate) child: Box<Child>,
     pub(crate) line: Option<ChildStdin>,
     pub(crate) handoff: Arc<AtomicBool>,
     pub(crate) readers: Readers,
@@ -156,7 +156,7 @@ impl StopProcess for ChildOwner {
 impl ChildOwner {
     pub(crate) fn new(child: Child) -> Self {
         Self {
-            child,
+            child: Box::new(child),
             line: None,
             handoff: Arc::new(AtomicBool::new(false)),
             readers: Readers::default(),
@@ -208,7 +208,7 @@ impl ChildOwner {
         handoff: Arc<AtomicBool>,
     ) -> Self {
         Self {
-            child,
+            child: Box::new(child),
             line,
             handoff,
             readers: Readers::default(),

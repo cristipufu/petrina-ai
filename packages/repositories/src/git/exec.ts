@@ -95,7 +95,13 @@ function gitEnv(credentials: boolean, options: { local?: boolean; ownHooks?: boo
   const transport = credentials ? [...SAFE_TRANSPORT, ...(options.local ? ([["protocol.file.allow", "always"]] as const) : [])] : [];
   // `ownHooks` only for finding the repository's own hooks: never with credentials, never running a git step.
   const hooks = options.ownHooks && !credentials ? [] : [["core.hooksPath", emptyDir("hooks")] as const];
-  const settings = [...hooks, ["core.fsmonitor", "false"] as const, ...transport];
+  const settings = [
+    ...hooks,
+    ["core.fsmonitor", "false"] as const,
+    ["gc.auto", "0"] as const,
+    ["maintenance.auto", "false"] as const,
+    ...transport,
+  ];
   // Replace objects could make a commit Petrina pinned show different content, and a grafts file (info/grafts,
   // read in place of one that never exists) different parents, hiding commits from history Petrina checks.
   return {

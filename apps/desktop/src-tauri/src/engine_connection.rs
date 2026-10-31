@@ -90,7 +90,7 @@ fn evaluate_attempt(
         Err(failure) => {
             if let Some(owner) = failure.remaining {
                 *slot = Some(OwnedEngine::CleanupPending {
-                    owner,
+                    owner: *owner,
                     reason: failure.message.clone(),
                 });
                 return AttemptOutcome::Failed(failure.message);

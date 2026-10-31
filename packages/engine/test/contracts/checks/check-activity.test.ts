@@ -12,6 +12,7 @@ import {
 } from "@petrina/core";
 import { executionFor, repositoryView } from "@petrina/orchestrator";
 import * as gitOps from "@petrina/repositories/git";
+import { writeGitProgram } from "@petrina/test-support/git-program";
 import { Coordination } from "../../../src/coordination.js";
 import { stepKey } from "../../../src/kernel.js";
 import { WaitingForUsage } from "../../../src/usage.js";
@@ -761,7 +762,7 @@ describe("why a fresh check run is needed", () => {
           expect(read.checkReasons).toEqual([{ ...latest().reason, words: checkReasonWords(latest().reason) }]);
 
           scope.work.branch = "main";
-          writeFileSync(join(worktree, ".git", "hooks", "pre-commit"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+          writeGitProgram(join(worktree, ".git", "hooks", "pre-commit"), "exit 0");
           expect((await engine["checks"].failing(scope, signal, undefined, "acceptance")).kind).toBe("passed");
           expect(latest().reason.changed).toEqual(["definitions"]);
           expect((await engine["checks"].failing(scope, signal, undefined, "delivery-check")).kind).toBe("passed");

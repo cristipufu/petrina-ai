@@ -187,9 +187,14 @@ jobs:
             test -x apps/desktop/src-tauri/target/release/bundle/macos/Petrina.app/Contents/Resources/engine/petrina-engine
             test -x apps/desktop/src-tauri/target/release/bundle/macos/Petrina.app/Contents/Resources/engine/codex-background
           elif [ "$RUNNER_OS" = "Linux" ]; then
-            deb="$(ls apps/desktop/src-tauri/target/release/bundle/deb/*.deb | head -n 1)"
+            deb=""
+            for candidate in apps/desktop/src-tauri/target/release/bundle/deb/*.deb; do
+              deb="$candidate"
+              break
+            done
             test -f "$deb"
-            dpkg-deb -c "$deb" | grep -q "engine/petrina-engine"
+            dpkg-deb -c "$deb" > "$RUNNER_TEMP/deb-contents.txt"
+            grep -q "engine/petrina-engine" "$RUNNER_TEMP/deb-contents.txt"
           else
             ls apps/desktop/src-tauri/target/release/bundle/nsis/*-setup.exe
           fi

@@ -21,7 +21,7 @@ export function writeTestGitConfig(folder: string): string {
   const file = join(folder, "gitconfig");
   writeFileSync(
     file,
-    `[user]\n\tname = ${TEST_GIT_IDENTITY.name}\n\temail = ${TEST_GIT_IDENTITY.email}\n[init]\n\tdefaultBranch = main\n[core]\n\tautocrlf = false\n\teol = lf\n[commit]\n\tgpgSign = false\n[tag]\n\tgpgSign = false\n`,
+    `[user]\n\tname = ${TEST_GIT_IDENTITY.name}\n\temail = ${TEST_GIT_IDENTITY.email}\n[init]\n\tdefaultBranch = main\n[core]\n\tautocrlf = false\n\teol = lf\n[commit]\n\tgpgSign = false\n[tag]\n\tgpgSign = false\n[gc]\n\tauto = 0\n[maintenance]\n\tauto = false\n`,
     { mode: 0o600 }
   );
   return file;

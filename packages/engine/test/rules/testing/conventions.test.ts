@@ -383,6 +383,12 @@ it("enforces vertical statement density and 160-character structured line wrappi
     expect(formatProductionSource(formatted, "packages/core/src/example.ts")).toBe(formatted);
     expect(found(formatted, "packages/core/src/example.ts")).toEqual([]);
   }
+  const exact160Body = `export const exact = { alpha: "${"a".repeat(55)}", beta: "${"b".repeat(60)}" };`;
+  expect(exact160Body.length).toBe(160);
+  expect(found(`${exact160Body}\r\nexport const next = 1;\r\n`, "packages/core/src/example.ts")).toEqual([]);
+  const crlfFormatted = formatProductionSource(wideObject.replace(/\n/g, "\r\n"), "packages/core/src/example.ts");
+  expect(crlfFormatted).toContain("\r\n");
+  expect(found(crlfFormatted, "packages/core/src/example.ts")).toEqual([]);
 });
 
 it("enforces the 650-line and 160-character ceilings on production Rust modules while exempting Rust test fixtures", () => {

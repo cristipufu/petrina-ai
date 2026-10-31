@@ -36,7 +36,7 @@ const requested = [...plan.selected];
 plan = { ...plan, selected: feedbackFiles(requested, expectedFiles) };
 const executionPlan = feedbackPlan(plan.selected, expectedFiles);
 const revision = (await readGit(ROOT, ["rev-parse", "HEAD", "HEAD^{tree}"])).trim();
-const [head, tree] = revision.split("\n");
+const [head, tree] = revision.split(/\r?\n/);
 const source = { head, tree, fingerprint: plan.fingerprint };
 const folder = join(ROOT, ".test-results", "feedback", `${new Date().toISOString().replace(/[:.]/g, "-")}-${crypto.randomUUID().slice(0, 8)}`);
 mkdirSync(folder, { recursive: true });
