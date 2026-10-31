@@ -52,7 +52,7 @@ export class ProcessObservations {
   }
 }
 
-function pausedOrGone(stdout: string, pids: readonly number[]): boolean {
+export function pausedOrGone(stdout: string, pids: readonly number[]): boolean {
   for (const line of stdout.split("\n")) {
     const [pid, , state] = line.trim().split(/\s+/);
     if (pids.includes(Number(pid)) && !state?.startsWith("T") && !state?.startsWith("Z")) return false;

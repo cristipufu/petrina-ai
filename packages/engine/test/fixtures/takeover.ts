@@ -135,7 +135,7 @@ try {
       const task = () => engine!.getState().tasks.find(entry => entry.id === taskId)!;
       const cli = (script: CliScript) => writeFixtureJson(join(fakes.dir, "cli.json"), script);
       const finished = () => waitFor(() => task().state === "done" ? task() : task().state === "failed" ? Promise.reject(new Error(task().error)) : undefined, "the task to finish", 90_000);
-      const working = (roleId: string) => waitFor(() => task().agent?.roleId === roleId && task().conversation?.briefed && task().conversation?.roleId === roleId && task(), `the ${roleId} to be at work`);
+      const working = (roleId: string) => waitFor(() => task().state === "failed" ? Promise.reject(new Error(task().error)) : task().agent?.roleId === roleId && task().conversation?.briefed && task().conversation?.roleId === roleId && task(), `the ${roleId} to be at work`);
       const restart = async () => { check(); engine = fastTakeoverEngine(await owner.restart(engine!, data, options)); return engine; };
       const launched = (): { args: string[]; cwd: string; env: string[] }[] => {
         const file = join(fakes.dir, "cli.jsonl");

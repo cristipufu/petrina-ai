@@ -15,7 +15,15 @@ const nativeIndexes: VerificationContextStorage = {
     const temporary = join(folder, `${digest}.${randomUUID()}.tmp`);
     try {
       await writeFile(temporary, body, { flag: "wx", mode: 0o600 });
-      await rename(temporary, file);
+      try {
+        await rename(temporary, file);
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code !== "EEXIST" && code !== "EPERM" && code !== "EACCES") throw error;
+        const saved = await readFile(file, "utf8").catch(() => undefined);
+        if (saved === undefined) throw error;
+        if (saved !== body) throw new Error("The saved verification evidence changed. Try this step again.");
+      }
     } finally { await rm(temporary, { force: true }); }
   }
     return file;

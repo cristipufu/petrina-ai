@@ -80,9 +80,14 @@ export function observeHarnessGitHub(program: string, registrationGate?: string)
       ...(registrationGate ? { [GH_REGISTRATION_GATE]: registrationGate } : {}) };
     let child: ReturnType<typeof Bun.spawn>;
     try {
+      const spawnSettings = {
+        ...settings,
+        env,
+        ...(process.platform === "win32" ? { detached: true, windowsHide: true } : {}),
+      };
       const forwarded = [...given];
-      if (array) forwarded[1] = { ...settings, env };
-      else forwarded[0] = { ...settings, env };
+      if (array) forwarded[1] = spawnSettings;
+      else forwarded[0] = spawnSettings;
       child = Reflect.apply(original, Bun, forwarded);
     } catch (error) { publish({ id, state: "start-unknown" }); throw error; }
     // The exact returned handle is observed before recording/returning it can fail.

@@ -62,7 +62,7 @@ for (const outcome of ["pass", "fail"] as const) {
           expect(reviewerRuns).toBe(0);
           expect(task.findings.some((finding) => finding.raisedBy === "petrina" && finding.text.startsWith("Check failed: Tests") && finding.evidence)).toBe(true);
           const fixing = fakes.received("builder").find((entry) => entry.text.includes("Saved failed-check output"));
-          expect(fixing?.text).toContain(join(dir, "data", "checks", taskId));
+          expect(fixing?.text).toContain(JSON.stringify(join(dir, "data", "checks", taskId)).slice(1, -1));
           expect(fixing?.text).toContain("do not rerun just to recover the error");
           expect(task.timeline.some((entry) => entry.text.startsWith("Sent back to the builder"))).toBe(true);
           expect(engine.getState().inbox.find((item) => item.taskId === taskId)!.body).toContain("Automated checks: 1 of 1 failed (Tests)");

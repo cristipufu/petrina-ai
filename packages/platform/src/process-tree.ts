@@ -48,7 +48,9 @@ export function processList(args: readonly string[], timeout: number, maxBuffer?
 }
 
 const WINDOWS_COMMAND_LIST =
-  "$ErrorActionPreference='Stop'; Get-CimInstance Win32_Process | ForEach-Object { \"$($_.ProcessId) $($_.ParentProcessId) R $($_.CommandLine -replace '[\\r\\n]+',' ')\" }";
+  "$ErrorActionPreference='Stop'; " +
+  "foreach ($p in @(Get-CimInstance -ClassName Win32_Process -Property ProcessId,ParentProcessId,CommandLine)) { " +
+  "\"$($p.ProcessId) $($p.ParentProcessId) R $($p.CommandLine -replace '[\\r\\n]+',' ')\" }";
 
 /** Every running process on Windows with its command line, formatted for folder-scoped snapshots. */
 export function windowsCommandList(timeout = 10_000, maxBuffer = 32 * 1024 * 1024): Promise<string | undefined> {
@@ -57,13 +59,14 @@ export function windowsCommandList(timeout = 10_000, maxBuffer = 32 * 1024 * 102
     let timer: ReturnType<typeof setTimeout> | undefined;
     const child = execFile(
       "powershell.exe",
-      ["-NoProfile", "-NonInteractive", "-Command", WINDOWS_COMMAND_LIST],
+      ["-NoProfile", "-NonInteractive", "-InputFormat", "None", "-Command", WINDOWS_COMMAND_LIST],
       { timeout: budget, maxBuffer, windowsHide: true },
       (error, stdout) => {
         resolve(error || child.stdout?.readableEnded === false ? undefined : stdout);
         clearTimeout(timer);
       },
     );
+    try { child.stdin?.end(); } catch { /* Stand-in handle without an open input pipe. */ }
     timer = setTimeout(() => {
       try { child.kill("SIGKILL"); } catch { /* Already gone. */ }
       resolve(undefined);

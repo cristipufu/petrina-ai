@@ -234,9 +234,11 @@ function lockGitHub(path: string, onWait?: () => void): () => void {
   for (;;) {
     try {
       mkdirSync(lock);
-      return () => rmSync(lock, { recursive: true, force: true });
+      return () => rmSync(lock, { recursive: true, force: true, maxRetries: 5, retryDelay: 10 });
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST" || Date.now() >= deadline) throw error;
+      const code = (error as NodeJS.ErrnoException).code;
+      const contended = code === "EEXIST" || (process.platform === "win32" && (code === "EACCES" || code === "EPERM"));
+      if (!contended || Date.now() >= deadline) throw error;
       if (!reportedWait) { onWait?.(); reportedWait = true; }
       Bun.sleepSync(10);
     }
@@ -549,6 +551,15 @@ export function fakeGitHubRequest(statePath: string, remote: string, args: reado
 /** Native transport contracts retain the complete request lock and real stdin/stdout/process exit. */
 export async function runFakeGitHub(input: readonly string[], onLockWait?: () => void): Promise<void> {
   const [statePath, remote, ...args] = input;
+  const ignoreClosedPipe = (error: NodeJS.ErrnoException) => {
+    if (error.code !== "EPIPE" && error.code !== "EOF") throw error;
+  };
+  process.stdout.on("error", ignoreClosedPipe);
+  process.stderr.on("error", ignoreClosedPipe);
+  const writeLine = (stream: NodeJS.WriteStream, text: string) => {
+    try { stream.write(`${text}\n`); }
+    catch (error) { ignoreClosedPipe(error as NodeJS.ErrnoException); }
+  };
   let unlock = lockGitHub(statePath!, onLockWait);
   let state = readGitHub(statePath!);
   const release = () => { unlock(); unlock = () => {}; };
@@ -560,10 +571,15 @@ export async function runFakeGitHub(input: readonly string[], onLockWait?: () =>
       input: () => readFileSync(0, "utf8"), cwd: process.cwd(), release,
       acquire: () => { unlock = lockGitHub(statePath!); state = readGitHub(statePath!); },
     });
-    if (result.stdout) process.stdout.write(`${result.stdout}\n`);
-    if (result.stderr) process.stderr.write(`${result.stderr}\n`);
+    if (result.stdout) writeLine(process.stdout, result.stdout);
+    if (result.stderr) writeLine(process.stderr, result.stderr);
     process.exit(result.code);
-  } finally { release(); process.off("exit", release); }
+  } finally {
+    release();
+    process.off("exit", release);
+    process.stdout.off("error", ignoreClosedPipe);
+    process.stderr.off("error", ignoreClosedPipe);
+  }
 }
 
 // A failed Git lookup fails the call with Git's own words, never as a confirmed "not found".

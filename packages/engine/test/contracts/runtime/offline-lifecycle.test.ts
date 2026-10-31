@@ -12,7 +12,8 @@ import { EngineClient } from "../../client.js";
 
 import { LifecycleStore } from "@petrina/storage/lifecycle-store";
 import { FolderLock, writeConnection } from "../../../src/instance.js";
-import { Fakes, removeDir, tempDir, SLOW } from "../../support.js";
+import { Fakes, removeDir, tempDir, waitFor, SLOW } from "../../support.js";
+import { childState } from "@petrina/platform/process-tree";
 import { describe } from "bun:test";
 
 import { readConnection } from "../../../src/instance.js";
@@ -134,13 +135,18 @@ it("keeps the connection key on restart even when its original launch requested 
     const client = new EngineClient(home);
     const before = readConnection(home)!;
 
-  cleanup = async () => {
+    let replacementPid: number | undefined;
+    cleanup = async () => {
       await lifetime.prepare(() => client.call("engine.stop", { requestId: "stop-fresh-key-test", wait: true, timeoutMs: 30000 * SLOW }));
       await original.exited(10000 * SLOW);
-
-  };
+      if (replacementPid !== undefined) {
+        const pid = replacementPid;
+        await waitFor(async () => (await childState(pid)) === "ended", "the restarted engine process to exit", 10_000);
+      }
+    };
       expect((await client.call("engine.restart", { requestId: "preserve-fresh-key", wait: true, timeoutMs: 30000 * SLOW })).outcome).toBe("completed");
       const after = readConnection(home)!;
+      replacementPid = after.pid;
       expect(after.pid).not.toBe(before.pid);
       expect(after.token === before.token).toBe(true);
       expect(after.api).toBe(before.api);

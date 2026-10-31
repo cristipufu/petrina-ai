@@ -59,7 +59,7 @@ it(${JSON.stringify(name)}, () => { appendFileSync(${JSON.stringify(log)}, ${JSO
   writeFixtureJson(f.output, { version: 1, files: { [join("test", "fast.test.ts")]: 1, [join("test", "slow.test.ts")]: 1000 } });
   // This tiny boundary probe uses one worker to observe dispatch order deterministically.
   // The repository's required run keeps Bun's normal worker count.
-  const run = await runCommand([process.execPath, TEST_RUNNER, "test/fast.test.ts", "test/slow.test.ts", "--parallel=1", `--timings=${f.output}`, "--update-timings", "--reporter=junit", `--reporter-outfile=${report}`], { cwd: f.folder });
+  const run = await runCommand([process.execPath, TEST_RUNNER, "./test", "--parallel=1", `--timings=${f.output}`, "--update-timings", "--reporter=junit", `--reporter-outfile=${report}`], { cwd: f.folder });
   expect(run.code, run.stderr).toBe(0);
   expect(readFileSync(log, "utf8").trim().split("\n")).toEqual(["slow", "fast"]);
   const parsed = testResults(readFileSync(report, "utf8"), f.workspace, "bun", f.root);

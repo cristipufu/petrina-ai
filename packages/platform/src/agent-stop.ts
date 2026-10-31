@@ -1,4 +1,4 @@
-import { ProcessObservations, readObservation, type ProcessListRead } from "./process-observations.js";
+import { pausedOrGone, ProcessObservations, readObservation, type ProcessListRead } from "./process-observations.js";
 import { parseDescendants, stoppedProcessStates, type ObservedProcess } from "./process-snapshots.js";
 
 export type AgentStopSignal = "SIGSTOP" | "SIGCONT" | "SIGTERM" | "SIGKILL";
@@ -33,7 +33,7 @@ const POLL_INTERVAL_MS = 50;
 const FORCE_STOP_DEADLINE_MS = 6_000;
 const RESCAN_BUDGET_MS = 3_200;
 const INITIAL_COLLECT_BUDGET_MS = 4_800;
-const COLLECT_READ_TIMEOUTS_MS = [4_000, 4_000] as const;
+const COLLECT_READ_TIMEOUTS_MS = [4_000, 4_000, 4_000, 4_000, 4_000, 4_000, 4_000, 4_000] as const;
 const MIN_GRACE_LEFT_MS = 500;
 const FINAL_CONFIRMATION_MS = 1_000;
 
@@ -70,6 +70,7 @@ export async function stopAgentPrograms(target: AgentStopTarget, graceMs: number
   const collect = async (budget: number) => {
     const owners: number[] = [];
     const workers = await observations.descendantsKnown(owners, budget, async timeout => {
+      const attemptStarted = effects.now();
       paused = true;
       owners.splice(0, owners.length, ...pids.filter(target => effects.alive(target)));
       send([-pid, ...pids], "SIGSTOP");
@@ -78,6 +79,9 @@ export async function stopAgentPrograms(target: AgentStopTarget, graceMs: number
         const found = parseDescendants(stdout, owners);
         send(found, "SIGSTOP");
         pids = [...new Set([...pids, ...found])];
+      }
+      if ((stdout === undefined || !pausedOrGone(stdout, owners)) && effects.now() - attemptStarted < POLL_INTERVAL_MS) {
+        await effects.sleep(POLL_INTERVAL_MS);
       }
       return stdout;
     }, COLLECT_READ_TIMEOUTS_MS, true);

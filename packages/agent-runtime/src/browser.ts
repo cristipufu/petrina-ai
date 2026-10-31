@@ -173,7 +173,7 @@ export class AgentBrowser {
         }, { graceMs: 1_000, forceMs: 1_000 }, arm);
         if (stopped !== "confirmed" || !await within(closed, 1_000)) throw new BrowserStartupCleanupError(error);
       }
-      await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      await rm(directory, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
       if (registration) await rm(registration, { force: true });
       throw error;
     }
@@ -187,7 +187,7 @@ export class AgentBrowser {
         // Its session folder still identifies the browser after the controller exits.
         // The folder and its registration stay until this confirms every browser process stopped.
         await stopBrowser(this.child, this.directory, this.lifecycle, this.processes);
-        await rm(this.directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+        await rm(this.directory, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
         if (this.registration) await rm(this.registration, { force: true });
       } catch (error) {
         // Do not discard the remaining ownership marker or turn a failed cleanup into
@@ -243,10 +243,12 @@ async function stopBrowser(child: ChildProcess, directory: string, lifecycle: {
       if (child.exitCode !== 0 || child.signalCode !== null) throw new Error("The headless browser did not stop.");
     } else {
       const stopped = await processes.stopTree(pid, 3_000);
-      if (!await within(exited, 1_000)) child.kill("SIGKILL");
+      const clean = await within(exited, 1_000) && child.exitCode === 0 && child.signalCode === null;
+      if (!clean && child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
       await exited;
-      if (!stopped) throw new Error("The headless browser did not stop.");
+      if (!stopped && !clean) throw new Error("The headless browser did not stop.");
     }
+    if (lifecycle.used) await reapBrowser(directory, [], attempt, processes, cleanupClock);
     return;
   }
   // Listed while the controller is alive. Asking it to stop does not wait on that list:
@@ -350,9 +352,9 @@ export async function recoverBrowserTemps(registry: string, root = browserTempRo
           ...error.reasons.map((reason) => UNCONFIRMED[reason])
         ].join(" "));
       }
-      await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      await rm(directory, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
     }
     await rm(registration, { force: true });
   }
-  await rm(registry, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  await rm(registry, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
 }

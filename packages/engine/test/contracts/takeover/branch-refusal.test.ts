@@ -16,7 +16,10 @@ describe.skipIf(!posix)("take over, copy the command, and restart Petrina", () =
   return fixtures.use(async caseOwner => {
     const run = await start(caseOwner, { planner: "short", builder: "work", reopen: "resume" });
     try {
-      await waitFor(() => run.fakes.marked("builder-working"), "the builder to draft");
+      await waitFor(
+        () => run.task().state === "failed" ? Promise.reject(new Error(run.task().error)) : run.fakes.marked("builder-working"),
+        "the builder to draft",
+      );
       await run.working("builder");
       run.cli({});
       const engine = run.engine();
