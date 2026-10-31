@@ -7,7 +7,8 @@ import { ago, profileText, type Lookup } from "../lib";
 import { RoleAvatar } from "./bits";
 import { UnsentMessage } from "./EngineState";
 import { Ask } from "./Inbox";
-import { ImagePreview, MessageBody } from "./MessageBody";
+import { ImagePreview } from "./MessageBody";
+import { PublicMessageBody } from "./PublicMessageBody";
 import type { SheetTab } from "./TaskCard";
 import type { TaskDrafts } from "../drafts";
 
@@ -126,11 +127,13 @@ export function StepConversation({ lines, find, now, live = false, taskId, repos
           )}</time>{group.coordinatorMessageId && <DeliveryStatus
             message={find.task(taskId)?.queued.find(message => message.id === group.coordinatorMessageId)}
             taskId={taskId}
-          />}</div><div className="bubble"><MessageBody
-            text={group.text}
+          />}</div><div className="bubble"><PublicMessageBody
+            line={group}
             taskId={taskId}
-            productId={group.productId}
             finished={finished}
+            onRead={() => {
+              pinned.current = false;
+            }}
           /></div>{group.images?.map((image) => <ReportPicture
             key={image.id}
             taskId={taskId}
@@ -253,11 +256,14 @@ function Log({ task, state, find, scroller, onTab, step, onStepDone, active = tr
             <time className="num">{when(line.at, state.now)}</time>
             {line.coordinatorMessageId && <DeliveryStatus message={task.queued.find(message => message.id === line.coordinatorMessageId)} taskId={task.id} />}
           </div>
-          <div className="bubble"><MessageBody
-            text={line.text}
+          <div className="bubble"><PublicMessageBody
+            line={line}
             taskId={task.id}
-            productId={line.productId}
             finished={task.state === "done" || task.state === "cancelled"}
+            active={active}
+            onRead={() => {
+              pinned.current = false;
+            }}
           /></div>
           {line.images?.map((image) => <ReportPicture
             key={image.id}

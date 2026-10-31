@@ -123,23 +123,41 @@ export class ParticipantInputs {
     };
   }
 
-  stream(scope: RepositoryContext, roleId: Id, profileId: Id, reviewerKey: string | undefined, signal: AbortSignal, main = false): (message: AgentMessage) => void {
+  stream(
+    scope: RepositoryContext,
+    roleId: Id,
+    profileId: Id,
+    reviewerKey: string | undefined,
+    signal?: AbortSignal,
+    main = false,
+  ): (message: AgentMessage) => boolean {
     const { task } = scope;
     let last: { key: number; line: Id } | undefined;
-    return message => {
-      if (!this.host.current(scope) || this.host.stopped() || signal.aborted) return;
+    return (message) => {
+      if (!this.host.current(scope) || this.host.stopped() || (signal?.aborted && !message.interrupted)) return false;
       if (main) this.host.briefed(scope);
       const saved = last;
-      const line = saved?.key === message.id ? task.session.find(entry => entry.id === saved.line) : undefined;
+      let line = saved?.key === message.id ? task.session.find((entry) => entry.id === saved.line) : undefined;
       if (line) {
-        if (line.text === message.text) return;
+        const unchanged =
+          line.text === message.text
+          && !message.delta
+          && (message.originalLength === undefined || message.originalLength === line.recording?.originalLength)
+          && !message.ended
+          && !message.interrupted
+          && !message.limited;
+        if (unchanged) return true;
         line.text = message.text;
-        this.host.noteStream(scope);
       } else {
-        this.host.say(scope, message.text, roleId, profileId, reviewerKey);
-        last = { key: message.id, line: task.session.at(-1)!.id };
-        this.host.commit(scope);
+        this.host.say(scope, message.text, roleId, profileId, reviewerKey, false);
+        line = task.session.at(-1)!;
+        last = { key: message.id, line: line.id };
       }
+      const savedText = this.host.recordPublicText?.(task.id, line, message);
+      if (savedText) line.recording = savedText.recording;
+      if (saved?.key === message.id) this.host.noteStream(scope);
+      else this.host.commit(scope);
+      return savedText?.accepting ?? true;
     };
   }
 }

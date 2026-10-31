@@ -106,6 +106,7 @@ describe("the engine records each task's journey", () => {
       const task = engine.task(id)!, step = task.journey!.at(-1)!;
       const spoken = task.session.filter(line => line.step === step.id && line.from === "agent");
       expect(spoken.length).toBeGreaterThan(1);
+      expect(spoken.every(line => line.recording?.complete === true && line.recording.state === "finished" && !line.recording.reason)).toBe(true);
       // The streamed words and the question name the same recorded start, so the agent is one current message.
       expect(new Set(spoken.map(line => line.inputIndex))).toEqual(new Set([step.agentInputs!.length - 1]));
       const read = await new Coordination(engine).call("task.conversation", { taskId: id, nodeId: step.id });

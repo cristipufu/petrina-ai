@@ -70,16 +70,24 @@ export function simLog(d: Draft, task: DraftTask, tone: Task["timeline"][number]
 export function simSay(d: Draft, task: DraftTask, from: Task["session"][number]["from"], text: string, roleId?: Id, profileId?: Id): void {
   const step = stepTag(task);
   task.session.push({
-    id: simId(
-    d,
-    task.id
-  ),
+    id: simId(d, task.id),
     at: d.now,
     from,
     text,
+    ...(from === "agent"
+      ? {
+          recording: {
+            recordedLength: text.length,
+            originalLength: text.length,
+            complete: true,
+            state: "finished" as const,
+            revision: 1,
+          },
+        }
+      : {}),
     ...(roleId ? { roleId } : {}),
     ...(profileId ? { profileId } : {}),
-    ...(step ? { step } : {})
+    ...(step ? { step } : {}),
   });
 }
 

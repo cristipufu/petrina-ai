@@ -3,6 +3,8 @@ export { isGitObjectId } from "./git-object-id.js";
 export { shipsUnasked, type DeliveryPolicyContext, type DeliveryPolicyTask } from "./delivery-policy.js";
 export { applyAcceptanceVersions, hasAcceptanceVersionConsumers } from "./acceptance-versions.js";
 export * from "./message-delivery.js";
+export * from "./public-messages.js";
+export * from "./public-message-stream.js";
 export * from "./call.js";
 export * from "./journey.js";
 export * from "./acceptance.js";

@@ -55,7 +55,7 @@ for (const view of ['session', 'step']) {
     expect(host.querySelector('details summary')?.textContent).toBe('3 agent actions');
     await act(async () => { const details = host.querySelector('details')!; details.open = false; details.dispatchEvent(new Event('toggle')); });
     expect(host.querySelector('.activity li')).toBeNull();
-    expect(host.querySelector('.chat .bubble')?.textContent).toBe('I checked the page');
+    expect(host.querySelector('.chat .message-markdown')?.textContent).toBe('I checked the page');
   });
 
   it(`keeps the saved product name after product removal in the ${view} conversation`, async () => {

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { Task } from "@petrina/core";
+import { CONVERSATION_PAGE_LENGTH, previewRecord, type RecordedMessage, type Task } from "@petrina/core";
 import type { Result } from "./coordination.js";
 
 const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 24);
@@ -53,14 +53,18 @@ function participants(step: Step): { state: readonly Attempt[]; starts: (line: L
 }
 
 /** Read recent messages first. Stable message anchors survive appends and streaming elsewhere. */
-export function readConversation(task: Task, args: {
-  nodeId?: string;
-  messageId?: string;
-  limit?: number;
-  cursor?: string;
-  ifRevision?: string;
-  includeActivity?: boolean
-}): Result {
+export function readConversation(
+  task: Task,
+  args: {
+    nodeId?: string;
+    messageId?: string;
+    limit?: number;
+    cursor?: string;
+    ifRevision?: string;
+    includeActivity?: boolean;
+  },
+  recorded: (line: Line) => RecordedMessage = previewRecord,
+): Result {
   const steps = new Map(task.journey?.map((step) => [step.id, step]));
   if (args.nodeId && !steps.has(args.nodeId)) return { outcome: "unavailable", message: "That node has no recorded conversation." };
   const scope = hash([task.id, args.nodeId, args.messageId, !!args.includeActivity]);
@@ -92,61 +96,82 @@ export function readConversation(task: Task, args: {
     const by = line.from === "agent" ? written(line) : undefined;
     for (const index of by?.starts ?? []) if (by!.state[index] !== "ended") latest.set(`${line.step}:${index}`, position);
   });
-  const activeMessages = [...new Set(latest.values())].sort((
-    a,
-    b
-  ) => a - b).map((position) => selected[position]!).map((line) => ({
-    id: line.id,
-    roleId: line.roleId,
-    profileId: line.profileId,
-    revision: hash(line.text)
-  }));
+  const messageRevision = (line: Line, record?: RecordedMessage) =>
+    hash([line.text, record?.recording ?? previewRecord(line).recording]);
+  const activeMessages = [...new Set(latest.values())]
+    .sort((a, b) => a - b)
+    .map((position) => selected[position]!)
+    .map((line) => ({
+      id: line.id,
+      roleId: line.roleId,
+      profileId: line.profileId,
+      revision: messageRevision(line),
+    }));
   const lines = args.messageId ? selected.filter((line) => line.id === args.messageId) : selected;
-  if (args.messageId && !lines.length) return { outcome: "unavailable", message: "That message is not recorded in this conversation." };
+  if (args.messageId && !lines.length) {
+    return { outcome: "unavailable", message: "That message is not recorded in this conversation." };
+  }
   let index = lines.length - 1;
-  let end = lines[index]?.text.length ?? 0;
+  let end = lines[index] ? recorded(lines[index]!).text.length : 0;
   if (args.cursor) {
     try {
       const saved = JSON.parse(Buffer.from(args.cursor, "base64url").toString());
       index = lines.findIndex((line) => line.id === saved.id);
       const line = lines[index];
-      if (saved.scope !== scope || !line || !Number.isSafeInteger(saved.end) || saved.end < 0 || saved.end > line.text.length || hash(line.text.slice(
-        0,
-        saved.end
-      )) !== saved.prefix) throw new Error();
+      const text = line ? recorded(line).text : "";
+      if (
+        saved.scope !== scope
+        || !line
+        || !Number.isSafeInteger(saved.end)
+        || saved.end < 0
+        || saved.end > text.length
+        || hash(text.slice(0, saved.end)) !== saved.prefix
+      ) {
+        throw new Error();
+      }
       end = saved.end;
       if (!end) {
         index--;
-        end = lines[index]?.text.length ?? 0;
+        end = lines[index] ? recorded(lines[index]!).text.length : 0;
       }
     } catch {
-      return { outcome: "changed", message: "The anchored message changed or is no longer available. Read recent messages again." };
+      return {
+        outcome: "changed",
+        message: "The anchored message changed or is no longer available. Read recent messages again.",
+      };
     }
   }
   const items = [];
-  let remaining = args.limit ?? 8000;
+  let remaining = Math.max(1, Math.min(args.limit ?? 8000, CONVERSATION_PAGE_LENGTH));
   let anchor: { id: string; end: number; prefix: string } | undefined;
   while (index >= 0 && remaining > 0 && items.length < 100) {
     const line = lines[index]!;
+    const { text, recording } = recorded(line);
     let start = Math.max(0, end - remaining);
     // Keep a Unicode character together, including when the budget is one character.
-    if (start > 0 && /[\uD800-\uDBFF]/.test(line.text[start - 1]!) && /[\uDC00-\uDFFF]/.test(line.text[start]!)) start--;
+    if (start > 0 && /[\uD800-\uDBFF]/.test(text[start - 1]!) && /[\uDC00-\uDFFF]/.test(text[start]!)) {
+      if (remaining === 1 && items.length) {
+        anchor = { id: line.id, end, prefix: hash(text.slice(0, end)) };
+        break;
+      }
+      // Put the pair on the older page when moving left would exceed this page's budget.
+      if (remaining > 1) start++;
+      else start--;
+    }
     items.unshift({
       ...line,
-      text: line.text.slice(
-      start,
-      end
-    ),
+      text: text.slice(start, end),
+      recording,
       offset: start,
-      total: line.text.length,
-      revision: hash(line.text),
-      mayChange: mayChange(line)
+      total: text.length,
+      revision: messageRevision(line, { text, recording }),
+      mayChange: mayChange(line),
     });
-    anchor = { id: line.id, end: start, prefix: hash(line.text.slice(0, start)) };
+    anchor = { id: line.id, end: start, prefix: hash(text.slice(0, start)) };
     remaining -= end - start;
     if (start > 0) break;
     index--;
-    end = lines[index]?.text.length ?? 0;
+    end = lines[index] ? recorded(lines[index]!).text.length : 0;
   }
   const next = anchor && (anchor.end > 0 || index >= 0) ? Buffer.from(JSON.stringify({ scope, ...anchor })).toString("base64url") : undefined;
   const revision = hash([scope, args.cursor, items, activeMessages]);

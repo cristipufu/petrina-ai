@@ -154,6 +154,12 @@ const ARGS = {
   }).strict()]),
   taskDetails: z.tuple([TaskId]),
   taskDetailsDelta: z.tuple([TaskId, z.string().min(1).max(200)]),
+  publicMessage: z.tuple([
+    TaskId,
+    z.string().min(1).max(200),
+    z.number().int().min(0).optional(),
+    z.number().int().min(1).max(32000).optional(),
+  ]),
   previewImage: z.tuple([TaskId, z.string().min(1).max(4096), z.string().max(200).optional()]),
   saveRole: z.tuple([z.string(), RoleDraft]),
   addRole: z.tuple([RoleDraft]),

@@ -1,4 +1,14 @@
-import type { BuilderContext, ConversationNote, Id, InputManifestEntry, JourneyAgentInput, ReadinessRecheck } from "@petrina/core";
+import type {
+  AgentMessage,
+  BuilderContext,
+  ConversationNote,
+  Id,
+  InputManifestEntry,
+  JourneyAgentInput,
+  PublicRecording,
+  ReadinessRecheck,
+  SessionLine,
+} from "@petrina/core";
 import type { RepositoryContext } from "../repository-context.js";
 import type { SessionSettings } from "./agents.js";
 
@@ -35,7 +45,8 @@ export interface ParticipantInputHost {
   checkpoint(scope: RepositoryContext): void;
   commit(scope: RepositoryContext): void;
   noteStream(scope: RepositoryContext): void;
-  say(scope: RepositoryContext, text: string, roleId: Id, profileId: Id, reviewerKey?: string): void;
+  say(scope: RepositoryContext, text: string, roleId: Id, profileId: Id, reviewerKey?: string, record?: boolean): void;
+  recordPublicText?(taskId: Id, line: SessionLine, message: AgentMessage): { recording: PublicRecording; accepting: boolean };
   briefed(scope: RepositoryContext): void;
 }
 export interface ParticipantInputEffects {

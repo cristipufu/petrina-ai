@@ -99,7 +99,10 @@ export class StateProjection {
     const summaryHash = String(Bun.hash(JSON.stringify(summary)));
     let sessionParts = `${task.session.length}`;
     for (const line of task.session) {
-      sessionParts += `|${line.id}:${line.at}:${line.from}:${String(Bun.hash(line.text))}:${line.roleId ?? ""}:${line.profileId ?? ""}:${line.productId ?? ""}:${line.coordinatorMessageId ?? ""}:${line.step ?? ""}:${line.toolInvocationId ?? ""}:${line.inputIndex ?? ""}:${line.images ? JSON.stringify(line.images) : ""}`;
+      const recording = line.recording
+        ? `${line.recording.revision}:${line.recording.state}:${line.recording.recordedLength}:${line.recording.originalLength ?? ""}:${line.recording.reason ?? ""}:${line.recording.complete ?? ""}`
+        : "";
+      sessionParts += `|${line.id}:${line.at}:${line.from}:${String(Bun.hash(line.text))}:${recording}:${line.roleId ?? ""}:${line.profileId ?? ""}:${line.productId ?? ""}:${line.coordinatorMessageId ?? ""}:${line.step ?? ""}:${line.toolInvocationId ?? ""}:${line.inputIndex ?? ""}:${line.images ? JSON.stringify(line.images) : ""}`;
     }
     const sessionHash = String(Bun.hash(sessionParts));
     const omittedHash = String(

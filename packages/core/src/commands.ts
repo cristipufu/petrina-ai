@@ -57,6 +57,7 @@ export interface Commands {
   historyPage(query: HistoryQuery): HistoryPage;
   taskDetails(taskId: Id): Task | undefined;
   taskDetailsDelta(taskId: Id, sinceRevision: string): TaskDetailsUpdate | undefined;
+  publicMessage(taskId: Id, messageId: Id, offset?: number, limit?: number): import("./public-messages.js").MessagePage | undefined;
   previewImage(taskId: Id, path: string, productId?: Id): Promise<{ mime: string; data: string }>;
   saveRole(roleId: Id, draft: RoleDraft): void;
   addRole(draft: RoleDraft): Id;
@@ -151,7 +152,7 @@ export type CommandName = keyof Commands;
 export const COMMAND_NAMES = [
   "profileChoices", "saveProfile", "removeProfile",
   "saveRoutine", "setRoutineEnabled", "removeRoutine", "resolveMaintenanceSettings",
-  "historyPage", "taskDetails", "taskDetailsDelta", "previewImage",
+  "historyPage", "taskDetails", "taskDetailsDelta", "publicMessage", "previewImage",
   "saveRole", "addRole", "resetRole", "removeRole",
   "addProduct",
   "removeProduct",

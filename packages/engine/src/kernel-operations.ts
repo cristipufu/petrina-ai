@@ -3,11 +3,13 @@ import { join } from "node:path";
 import { detectTerminals, thisMachine, type FoundTerminal } from "@petrina/agent-runtime/terminal";
 import { ADAPTERS, detectTools, ENGINE_PROFILES } from "@petrina/agent-runtime/tools";
 import {
+  AgentMessages,
   bindParticipantSessionLine,
   BUILT_IN_ROLES,
   clearRunningTools,
   clearTaskStep,
   finishTaskStep,
+  immediateMessageClock,
   involvesProduct,
   isCheckId,
   libraryRoles,
@@ -397,13 +399,21 @@ export function appendSessionLine(
   roleId?: Id,
   profileId?: Id,
   toolInvocationId?: Id,
+  record = true,
 ): void {
   const scope = executionOf(target);
+  if (from === "agent" && record) {
+    recordPublicMessage(k, scope, text, (preview) => {
+      appendSessionLine(k, scope, from, preview, roleId, profileId, toolInvocationId, false);
+    });
+    return;
+  }
   const { task, work: repository } = scope;
   saySessionLine(task, repository.productId, from, text, roleId, profileId, toolInvocationId, {
     id: () => k.id(task.id),
     now: () => Date.now(),
     pendingReportIds: k.pendingReportIds,
+    onRemoved: (removed) => k.store.publicText.remove(task.id, removed.id),
   });
 }
 
@@ -416,10 +426,41 @@ export function appendParticipantLine(
   profileId: Id,
   reviewerKey: string | undefined,
   toolInvocationId?: Id,
+  record = true,
 ): void {
-  appendSessionLine(k, target, from, text, roleId, profileId, toolInvocationId);
+  if (from === "agent" && record) {
+    recordPublicMessage(k, target, text, (preview) => {
+      appendParticipantLine(k, target, from, preview, roleId, profileId, reviewerKey, toolInvocationId, false);
+    });
+    return;
+  }
+  appendSessionLine(k, target, from, text, roleId, profileId, toolInvocationId, false);
   const { task } = executionOf(target);
   bindParticipantSessionLine(task, from, roleId, profileId, reviewerKey);
+}
+
+/** Complete engine-created agent messages share capture limits, filtering and durable ownership with streams. */
+function recordPublicMessage(
+  k: Kernel,
+  target: RuntimeTask | RepositoryContext,
+  text: string,
+  create: (preview: string) => void,
+): void {
+  const { task } = executionOf(target);
+  let line: RuntimeTask["session"][number] | undefined;
+  const messages = new AgentMessages(immediateMessageClock, (message) => {
+    if (!line) {
+      create(message.text);
+      line = task.session.at(-1)!;
+    } else {
+      line.text = message.text;
+    }
+    const saved = k.store.publicText.append(task.id, line, message);
+    line.recording = saved.recording;
+    return saved.accepting;
+  });
+  messages.push(text);
+  messages.boundary();
 }
 
 export async function ensureEmptyGhConfig(dataDir: string): Promise<string> {

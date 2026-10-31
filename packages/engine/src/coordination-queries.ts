@@ -17,7 +17,7 @@ import {
   type HistoryFilterArgs,
 } from "./coordination-views.js";
 import type { Engine } from "./engine.js";
-import { paginate, readText } from "./evidence-read.js";
+import { paginate, readText, readTextParts } from "./evidence-read.js";
 import { readExactInput } from "./exact-input.js";
 import { ImmutableEvidenceChangedError } from "./immutable-file.js";
 import type { OperationInput, QueryOperationName } from "./operations.js";
@@ -192,17 +192,31 @@ export const TASK_QUERY_HANDLERS: { readonly [K in TaskScopedQueryName]: TaskQue
       evidence: node.toolActivity ? "recorded" : "unavailable",
     };
   },
-  "task.conversation": ({ task, args }) => readConversation(task, args),
-  "task.read": ({ name, task, args }) => {
+  "task.conversation": ({ engine, task, args }) =>
+    readConversation(task, args, (line) => engine.store.publicText.read(task.id, line)),
+  "task.read": ({ engine, name, task, args }) => {
     if (args.findingId && args.section !== "findings") {
       return { outcome: "invalid", message: "A finding ID selects the findings section only." };
     }
     if (args.findingId && !task.findings.some((finding) => finding.id === args.findingId)) {
       return { outcome: "missing", message: "That current finding does not exist." };
     }
+    if (args.section === "conversation") {
+      return readTextParts(
+        function* () {
+          yield "[\n";
+          for (const [index, line] of task.session.entries()) {
+            if (index) yield ",\n";
+            yield JSON.stringify({ ...line, ...engine.store.publicText.read(task.id, line) }, null, 2);
+          }
+          yield "\n]";
+        },
+        args,
+        [name, args.taskId, args.section],
+      );
+    }
     const sections = {
       request: { title: task.title, description: task.description },
-      conversation: task.session,
       timeline: taskTimeline(task),
       findings: args.findingId ? task.findings.find((finding) => finding.id === args.findingId) : task.findings,
       design:

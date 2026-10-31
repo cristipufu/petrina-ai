@@ -3,6 +3,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { copyNoLongerNeeded, displayTask, finishedTask, type ExtraValidation, type Id, type State, type Task, type TimelineEntry } from "@petrina/core";
 import { TaskHistory } from "./history-store.js";
+import { PublicText } from "./public-text.js";
 import {
   applySchemaMigrations,
   CORRUPT_STATE_QUARANTINE_KEY,
@@ -30,6 +31,7 @@ export function settledHistoryTask(task: Task): boolean {
 export class Store {
   private readonly db: Database;
   readonly history: TaskHistory;
+  readonly publicText: PublicText;
   private activeIds: Set<Id>;
 
   constructor(
@@ -52,12 +54,14 @@ export class Store {
         this.db.run("CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL)");
         this.db.run("CREATE TABLE IF NOT EXISTS active_tasks (id TEXT PRIMARY KEY, body TEXT NOT NULL)");
         const history = new TaskHistory(this.db);
+        const publicText = new PublicText(this.db);
         this.db.run("CREATE TABLE IF NOT EXISTS coordination_receipts (id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, result TEXT NOT NULL)");
         this.db.run("CREATE TABLE IF NOT EXISTS coordination_handled_items (id TEXT PRIMARY KEY)");
         applySchemaMigrations(this.db, plan.currentVersion, plan.targetVersion, migrations);
-        return { history, activeIds: this.readActiveIds() };
+        return { history, publicText, activeIds: this.readActiveIds() };
       }).immediate();
       this.history = initialized.history;
+      this.publicText = initialized.publicText;
       this.activeIds = initialized.activeIds;
     } catch (error) {
       this.db.close();
@@ -115,6 +119,7 @@ export class Store {
     const snapshot = this.readSnapshot();
     if (!snapshot) return undefined;
     const { state, split } = snapshot;
+    this.publicText.recover(state);
     normalize?.(state);
     // Old installs saved all completed bodies in this one value. Move them and the new current
     // snapshot in the same transaction: interruption never leaves a task in neither place.
@@ -135,6 +140,7 @@ export class Store {
       this.db.transaction(() => {
         this.history.put([...state.tasks.filter((task) => finishedTask(task) && (!dirty || dirty.has(task.id) || omit.has(task.id))), ...changedArchive]);
         for (const task of active) if (!dirty || dirty.has(task.id) || !this.activeIds.has(task.id)) {
+          this.publicText.retain(task);
           this.db.query("INSERT INTO active_tasks(id,body) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body WHERE body IS NOT excluded.body").run(
             task.id,
             JSON.stringify(task)
@@ -162,7 +168,10 @@ export class Store {
   /** Persist one edited archive without retiring or rewriting any live task. */
   saveArchivedTask(task: Task): void {
     try {
-      this.db.transaction(() => this.history.put([task])).immediate();
+      this.db.transaction(() => {
+        this.publicText.retain(task);
+        this.history.put([task]);
+      }).immediate();
     } catch (error) {
       this.history.reloadMetadata();
       throw error;

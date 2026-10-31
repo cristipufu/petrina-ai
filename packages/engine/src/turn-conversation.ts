@@ -55,6 +55,14 @@ export interface TurnConversationOptions<T> {
     openingSections: readonly Section[],
   ) => Promise<void>;
   markBriefed: (scope: RepositoryContext) => void;
+  recordProse: (
+    scope: RepositoryContext,
+    roleId: Id,
+    profileId: Id,
+    reviewerKey: string | undefined,
+    prose: string,
+    interrupted?: boolean,
+  ) => void;
   wait: WaitForCoordinatorFn;
 }
 
@@ -231,14 +239,7 @@ async function executeConversationLoop<T>(
     if (!current) throw new Aborted();
     const prose = proseOf(reply.text);
     if (prose && !reply.streamed) {
-      k.participantSay(
-        scope,
-        "agent",
-        prose.length > 2400 ? `${prose.slice(0, 2400)}…` : prose,
-        role.id,
-        profileId,
-        options.reviewerKey,
-      );
+      options.recordProse(scope, role.id, profileId, options.reviewerKey, prose, reply.stopReason === "cancelled");
     }
     // A streamed reply is already in the conversation. Pictures stay on that report, not on later activity,
     // nor on a peer's words on the same role and profile, which name another start.

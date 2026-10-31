@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import type * as acp from "@agentclientprotocol/sdk";
 import { ADAPTERS, ModelAtCapacity, limitFromFailure, limitFromReport, reportOf, reroutedTo, settingsOf, type UsageInfo } from "@petrina/agent-runtime";
 import { commandOf, describeTool, fileOf, isPlumbing, kindOf } from "@petrina/agent-runtime/native-tool-activity";
-import { AgentMessages } from "@petrina/agent-runtime/agent-messages";
+import { AgentMessages, TurnText } from "@petrina/agent-runtime/agent-messages";
 import { messageClock } from "@petrina/agent-runtime/message-clock";
 import { CODEX_MODEL_CAPACITY, type SessionNotice } from "@petrina/agent-runtime/provider-interruptions";
 import { ToolInvocations } from "@petrina/agent-runtime/tool-invocations";
@@ -381,6 +381,7 @@ class InProcessFakeSession implements AgentSession {
   private pending?: Promise<TurnResult>;
   private notes?: TurnNotes;
   private currentSettings: SessionSettings;
+  private readonly messages: AgentMessages;
   private readonly onSignalAbort = () => this.close();
 
   get liveInput(): boolean {
@@ -402,6 +403,7 @@ class InProcessFakeSession implements AgentSession {
     private readonly h: Helpers,
   ) {
     this.currentSettings = initialSettings;
+    this.messages = new AgentMessages(messageClock, launch.callbacks.onMessage);
     launch.signal.addEventListener("abort", this.onSignalAbort, { once: true });
     if (launch.signal.aborted) this.close();
   }
@@ -425,9 +427,9 @@ class InProcessFakeSession implements AgentSession {
     }
     const adapter = ADAPTERS[this.launch.profile.toolId]!;
     const optionIds = { model: adapter.options.model, effort: adapter.options.effort };
-    const messages = new AgentMessages(messageClock, this.launch.callbacks.onMessage);
+    const messages = this.messages;
     messages.boundary();
-    let streamedText = "";
+    const turnText = new TurnText();
     let latestUsage: UsageInfo | undefined;
     let retrying: RetryCause | undefined;
     const turnChanged: { model?: string; effort?: string } = {};
@@ -498,8 +500,8 @@ class InProcessFakeSession implements AgentSession {
         case "agent_message_chunk":
           if (update.content.type === "text") {
             const source = "messageId" in update && typeof update.messageId === "string" ? update.messageId : undefined;
-            if (messages.push(update.content.text, source) && streamedText) streamedText += "\n\n";
-            streamedText += update.content.text;
+            const fresh = messages.push(update.content.text, source);
+            turnText.push(update.content.text, fresh);
           }
           break;
         case "agent_thought_chunk":
@@ -609,28 +611,28 @@ class InProcessFakeSession implements AgentSession {
     const rejected = (source: "report" | "refusal" = "report") => {
       const info = latestUsage;
       return info?.status === "rejected" && !info.overage && (info.resetsAt === undefined || info.resetsAt > Date.now())
-        ? Object.assign(limitFromReport(this.launch.profile, info, Date.now(), source), { said: streamedText })
+        ? Object.assign(limitFromReport(this.launch.profile, info, Date.now(), source), { said: turnText.text })
         : undefined;
     };
 
     const capacityOf = (source: unknown): ModelAtCapacity | undefined => {
       const read = adapter.interruptions?.capacity;
       if (!read || rejected()) return undefined;
-      const found = read(source, streamedText);
+      const found = read(source, turnText.ending);
       if (!found) return undefined;
       const out = new ModelAtCapacity(this.launch.profile.toolId, this.launch.profile.modelId ?? this.launch.profile.model, this.launch.profile.id, this.sessionId);
       if (found.retryAfterMs !== undefined) out.retryAfterMs = found.retryAfterMs;
-      if (streamedText) out.said = streamedText;
+      if (turnText.text) out.said = turnText.text;
       if (messages.streamed) out.streamed = true;
       return out;
     };
 
     const limitOf = (error: unknown, explicitOnly = false) => {
-      const failure = limitFromFailure(this.launch.profile, error, streamedText, Date.now());
+      const failure = limitFromFailure(this.launch.profile, error, turnText.ending, Date.now());
       if (explicitOnly && !failure) return undefined;
       const limited = failure?.independent ? failure : rejected(failure ? "refusal" : "report") ?? failure;
       if (limited) {
-        limited.said ??= streamedText;
+        limited.said ??= turnText.text;
         if (messages.streamed) limited.streamed = true;
       }
       return limited;
@@ -639,6 +641,7 @@ class InProcessFakeSession implements AgentSession {
     const work = (async (): Promise<TurnResult> => {
       this.session.history.push({ sessionUpdate: "user_message_chunk", content: { type: "text", text } });
       this.onPromptStarted?.();
+      let completed = false;
       try {
         const reply = await this.answer(text, sendUpdate, sendNotice, askPermission);
         if (this.stopped.signal.aborted) throw new Error("The agent stopped (exit signal)");
@@ -681,9 +684,10 @@ class InProcessFakeSession implements AgentSession {
         if (full) throw full;
         const failure = response.stopReason !== "cancelled" ? adapter.interruptions?.failure?.(response) : undefined;
         if (failure) throw limitOf(failure, true) ?? failure;
+        completed = response.stopReason !== "cancelled";
         return {
           stopReason: response.stopReason as TurnResult["stopReason"],
-          text: streamedText,
+          text: turnText.text,
           ...(messages.streamed ? { streamed: true } : {}),
           ...(report ? { report } : {}),
           ...buildNotes(),
@@ -693,7 +697,7 @@ class InProcessFakeSession implements AgentSession {
         throw capacityOf(error) ?? limitOf(error) ?? providerError(error);
       } finally {
         endTools();
-        messages.boundary();
+        messages.boundary(!completed);
         this.notes = buildNotes();
         if (retrying !== undefined) {
           retrying = undefined;
@@ -1565,7 +1569,12 @@ class InProcessFakeSession implements AgentSession {
     this.h.cancels.delete(this.sessionId);
   }
 
+  flushMessages(interrupted = true): void {
+    this.messages.boundary(interrupted);
+  }
+
   close(): void {
+    this.flushMessages();
     this.h.cancels.get(this.sessionId)?.();
     this.h.cancels.delete(this.sessionId);
     this.exitCode = 0;
@@ -1574,6 +1583,7 @@ class InProcessFakeSession implements AgentSession {
   }
 
   async stop(): Promise<boolean> {
+    this.flushMessages();
     this.close();
     this.launch.signal.removeEventListener("abort", this.onSignalAbort);
     await this.pending?.catch(() => undefined);

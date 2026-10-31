@@ -260,6 +260,9 @@ export class Engine extends Kernel implements Commands {
       }
     };
     // Stopped first: stopping agents still changes state, and nothing may save after the store closes.
+    for (const run of [...this.runs.values(), ...[...this.helperRuns.values()].flatMap((entries) => [...entries])]) {
+      request(() => run.flushMessages?.());
+    }
     this.stopped = true;
     request(() => this.stopRequested.abort());
     request(() => this.events.stop());

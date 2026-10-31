@@ -152,7 +152,7 @@ export function acpRejectedUsage(
     && !info.overage
     && (!info.model || inFamily(profile, info.model))
     && (info.resetsAt === undefined || info.resetsAt > Date.now())
-    ? Object.assign(limitFromReport(profile, info, Date.now(), source), { said: state.text })
+    ? Object.assign(limitFromReport(profile, info, Date.now(), source), { said: state.response.text })
     : undefined;
 }
 
@@ -165,11 +165,11 @@ export function acpCapacityOf(
 ): ModelAtCapacity | undefined {
   const read = ADAPTERS[profile.toolId]?.interruptions?.capacity;
   if (!read || acpRejectedUsage(profile, state, accountBefore)) return undefined;
-  const found = read(source, state.text);
+  const found = read(source, state.response.ending);
   if (!found) return undefined;
   const out = new ModelAtCapacity(profile.toolId, profile.modelId ?? profile.model, profile.id, sessionId);
   if (found.retryAfterMs !== undefined) out.retryAfterMs = found.retryAfterMs;
-  if (state.text) out.said = state.text;
+  if (state.response.text) out.said = state.response.text;
   if (state.messages.streamed) out.streamed = true;
   return out;
 }
@@ -181,13 +181,13 @@ export function acpLimitOf(
   error: unknown,
   explicitOnly = false,
 ): UsageLimited | undefined {
-  const failure = limitFromFailure(profile, error, state.text, Date.now());
+  const failure = limitFromFailure(profile, error, state.response.ending, Date.now());
   if (explicitOnly && !failure) return undefined;
   const limited = failure?.independent
     ? failure
     : (acpRejectedUsage(profile, state, accountBefore, failure ? "refusal" : "report") ?? failure);
   if (limited) {
-    limited.said ??= state.text;
+    limited.said ??= state.response.text;
     if (state.messages.streamed) limited.streamed = true;
   }
   return limited;

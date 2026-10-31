@@ -1,10 +1,9 @@
-import type { AgentProfile, AgentToolActivity, Role, ToolInvocation, TurnReport } from "@petrina/core";
+import type { AgentMessage, AgentProfile, AgentToolActivity, Role, ToolInvocation, TurnReport } from "@petrina/core";
 
 /** A conversation could not be continued. The controller decides whether a fresh start is allowed. */
 export class ReopenFailed extends Error {}
 
-/** Public progress, never private reasoning. Updates with the same id replace its text. */
-export interface AgentMessage { id: number; text: string }
+export type { AgentMessage };
 
 export interface PermissionInfo {
   title: string;
@@ -61,7 +60,7 @@ export interface TurnResult extends TurnNotes {
 }
 
 export interface AgentSessionCallbacks {
-  onMessage?(message: AgentMessage): void;
+  onMessage?(message: AgentMessage): unknown;
   onActivity(text: string): void;
   onToolActivity?(event: ToolActivityEvent): void;
   onPlanStep(text: string): void;
@@ -90,6 +89,8 @@ export interface AgentSession {
   guide(text: string, messageId: string): Promise<AgentInputReceipt>;
   /** Request cancellation; completion alone does not confirm native cleanup. */
   cancel(): Promise<void>;
+  /** Save the last bounded public batch before shutdown closes the store. */
+  flushMessages?(interrupted?: boolean): void;
   close(): void;
   /** True confirms cleanup; false must remain observable before releasing owned resources. */
   stop(graceMs?: number): Promise<boolean>;

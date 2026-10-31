@@ -76,6 +76,8 @@ export interface SessionLine {
   profileId?: Id;
   productId?: Id;
   text: string;
+  /** Bounded preview only. The task-owned public recording is fetched on demand. */
+  recording?: import("./public-messages.js").PublicRecording;
   /** Links coordinator delivery status without copying the conversation into board activity. */
   coordinatorMessageId?: Id;
   /** The journey step it belongs to. */

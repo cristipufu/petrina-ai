@@ -20,7 +20,13 @@ acp.agent({ name: "browser stand-in" })
   .onRequest("session/resume", async (ctx) => { if (process.env.FAKE_REOPEN === "fail") throw new Error("Reopen failed"); return open(ctx.params); })
   .onRequest("session/load", (ctx) => open(ctx.params))
   .onRequest("session/prompt", async (ctx) => {
-    await ctx.client.notify(acp.methods.client.session.update, { sessionId: ctx.params.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: JSON.stringify(details) } } });
+    await ctx.client.notify(acp.methods.client.session.update, {
+      sessionId: ctx.params.sessionId,
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: `\`\`\`petrina\n${JSON.stringify(details)}\n\`\`\`` },
+      },
+    });
     return { stopReason: "end_turn" };
   })
   .connect(acp.ndJsonStream(Writable.toWeb(process.stdout) as WritableStream<Uint8Array>, Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>));

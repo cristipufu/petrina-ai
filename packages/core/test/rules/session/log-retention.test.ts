@@ -49,3 +49,36 @@ it("retains a pending report even after newer words and permits pruning only whe
   appendSessionLine(lines, line("latest", "activity"), pending, 2);
   expect(lines.map(line => line.id)).toEqual(["replacement", "latest"]);
 });
+
+it("keeps an earlier active bubble while a parallel seat with the same role and profile speaks", () => {
+  const busy = session("parallel", false);
+  const removedIds: string[] = [];
+  appendSessionLine(busy, line("Earlier active public update", "agent", "code-reviewer", "opus-high"), new Set());
+  const active = busy.at(-1)!;
+  Object.assign(active, {
+    step: "parallel-step",
+    inputIndex: 0,
+    recording: {
+      recordedLength: active.text.length,
+      originalLength: active.text.length,
+      complete: true,
+      state: "streaming" as const,
+      revision: 1,
+    },
+  });
+  appendSessionLine(busy, line("A later peer's public update", "agent", "code-reviewer", "opus-high"), new Set());
+  Object.assign(busy.at(-1)!, { step: "parallel-step", inputIndex: 1 });
+  for (let index = 0; index < MAX_SESSION_LINES; index++) {
+    appendSessionLine(busy, line(`Working ${index}`, "activity"), new Set(), MAX_SESSION_LINES, (removed) => {
+      removedIds.push(removed.id);
+    });
+  }
+  expect(busy).toContain(active);
+  expect(busy).toHaveLength(MAX_SESSION_LINES);
+  active.recording!.state = "finished";
+  appendSessionLine(busy, line("The earlier message is finished", "activity"), new Set(), MAX_SESSION_LINES, (removed) => {
+    removedIds.push(removed.id);
+  });
+  expect(busy).not.toContain(active);
+  expect(removedIds).toContain(active.id);
+});

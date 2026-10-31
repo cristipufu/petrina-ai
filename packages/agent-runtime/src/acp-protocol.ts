@@ -8,7 +8,7 @@ import { genericTurnReport } from "./turn-report.js";
 import { ADAPTERS } from "./tool-catalog.js";
 import type { UsageInfo } from "./usage.js";
 import type { SessionNotice } from "./provider-interruptions.js";
-import { AgentMessages } from "./agent-messages.js";
+import { AgentMessages, TurnText } from "./agent-messages.js";
 import { browserTarget, commandOf, describeTool, fileOf, isPlumbing, kindOf, type ToolActivity } from "./native-tool-activity.js";
 import type { ToolAdapter } from "./tool-adapter.js";
 import { ToolInvocations } from "./tool-invocations.js";
@@ -92,7 +92,7 @@ export function providerError(error: unknown): unknown {
 }
 
 export interface RunState {
-  text: string;
+  response: TurnText;
   messages: AgentMessages;
   lastActivity: string;
   activeToolCall?: string;
@@ -245,8 +245,8 @@ export function createAcpConnection(params: {
             state.activeToolCall = undefined;
             if (update.content.type === "text") {
               const source = "messageId" in update && typeof update.messageId === "string" ? update.messageId : undefined;
-              if (state.messages.push(update.content.text, source) && state.text) state.text += "\n\n";
-              state.text += update.content.text;
+              const fresh = state.messages.push(update.content.text, source);
+              state.response.push(update.content.text, fresh);
             }
             break;
           case "agent_thought_chunk":

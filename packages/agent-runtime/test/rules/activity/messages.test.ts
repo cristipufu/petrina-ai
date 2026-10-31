@@ -33,8 +33,14 @@ it("never streams an unfinished structured result or code, and keeps long public
   messages.push("x".repeat(20_000), "long");
   messages.boundary();
   expect(seen[0]!.text).toBe("The checks pass.");
-  expect(seen).toHaveLength(2);
-  expect(seen[1]!.text.length).toBeLessThan(2500);
+  expect(new Set(seen.map((message) => message.id)).size).toBe(2);
+  expect(seen.every((message) => message.text.length <= 2400)).toBe(true);
+  expect(
+    seen
+      .filter((message) => message.id === 2)
+      .map((message) => message.delta)
+      .join(""),
+  ).toBe("x".repeat(20_000));
   expect(seen.some((message) => message.text.includes("verdict"))).toBe(false);
 });
 

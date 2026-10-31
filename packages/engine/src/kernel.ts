@@ -8,9 +8,10 @@ import { thisMachine, type FoundTerminal } from "@petrina/agent-runtime/terminal
 import type { ModelAtCapacity, UsageInfo, UsageLimited } from "@petrina/agent-runtime/usage";
 import * as library from "@petrina/core";
 import {
-  blockingDependencies, columnOf, runtimeWaitHolds, runtimeWaitView, runtimeWaitWords, stopTaskActivity, TAKE_OVER_WORDS,
-  type AgentProfile, type CheckId, type Column, type DeepMutable, type GateKind, type HistoryPage, type HistoryQuery,
-  type Id, type InboxItem, type InboxKind, type Role, type State, type StepNote, type Task,
+  blockingDependencies, columnOf, messagePage, runtimeWaitHolds, runtimeWaitView, runtimeWaitWords, stopTaskActivity,
+  TAKE_OVER_WORDS, type AgentProfile, type CheckId, type Column, type DeepMutable, type GateKind, type HistoryPage,
+  type HistoryQuery, type Id, type InboxItem, type InboxKind, type MessagePage, type Role, type State, type StepNote,
+  type Task,
 } from "@petrina/core";
 import {
   executionOf, pauseAgentStep, resumeAgentAfterReply, StepOwnership, waitForAgentUsage,
@@ -249,6 +250,10 @@ export abstract class Kernel {
   taskDetails = (id: Id): Task | undefined => this.projection.taskDetails(id);
   taskDetailsDelta = (id: Id, sinceRevision: string): import("@petrina/core").TaskDetailsUpdate | undefined =>
     this.projection.taskDetailsDelta(id, sinceRevision);
+  publicMessage = (taskId: Id, messageId: Id, offset?: number, limit?: number): MessagePage | undefined => {
+    const line = this.task(taskId)?.session.find((entry) => entry.id === messageId);
+    return line ? messagePage(this.store.publicText.read(taskId, line), offset, limit) : undefined;
+  };
 
   saveArchivedTask(task: RuntimeTask): void { this.projection.saveArchivedTask(task); }
   forgetProductHistory(productId: Id): void { this.projection.forgetProductHistory(productId); }
@@ -459,8 +464,9 @@ export abstract class Kernel {
     roleId?: Id,
     profileId?: Id,
     toolInvocationId?: Id,
+    record = true,
   ): void {
-    appendSessionLine(this, target, from, text, roleId, profileId, toolInvocationId);
+    appendSessionLine(this, target, from, text, roleId, profileId, toolInvocationId, record);
   }
 
   participantSay(
@@ -471,8 +477,9 @@ export abstract class Kernel {
     profileId: Id,
     reviewerKey: string | undefined,
     toolInvocationId?: Id,
+    record = true,
   ): void {
-    appendParticipantLine(this, target, from, text, roleId, profileId, reviewerKey, toolInvocationId);
+    appendParticipantLine(this, target, from, text, roleId, profileId, reviewerKey, toolInvocationId, record);
   }
 
   emptyGhConfig(): Promise<string> { return ensureEmptyGhConfig(this.dataDir); }

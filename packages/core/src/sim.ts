@@ -9,6 +9,7 @@ import type { DeepMutable } from "./flow.js";
 import { demoHistoryPage, historyPageUsage, type HistoryQuery } from "./history.js";
 import { AFTER_WORDS, settleAsk, syncWait } from "./journey.js";
 import { messageRemovable } from "./message-delivery.js";
+import { messagePage, previewRecord } from "./public-messages.js";
 import type { CheckPrerequisite, DeliveryMode, Id, InboxItem, Product, RoleChanges, ScreenMode, State, Task } from "./model.js";
 import { queueNeighbour, queuePlacement } from "./navigation.js";
 import { productHistory, validateProductSettings, type ProductSettings } from "./products.js";
@@ -126,6 +127,10 @@ export class Simulator {
   taskDetailsDelta(taskId: Id, _sinceRevision: string): import("./task-details-delta.js").TaskDetailsUpdate | undefined {
     const task = this.taskDetails(taskId);
     return task ? { kind: "full", task } : undefined;
+  }
+  publicMessage(taskId: Id, messageId: Id, offset?: number, limit?: number) {
+    const line = this.taskDetails(taskId)?.session.find((entry) => entry.id === messageId);
+    return line ? messagePage(previewRecord(line), offset, limit) : undefined;
   }
   async previewImage(_taskId: Id, _path: string): Promise<{ mime: string; data: string }> {
     throw new Error("This image is unavailable in the demo.");

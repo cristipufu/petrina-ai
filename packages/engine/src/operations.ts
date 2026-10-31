@@ -161,7 +161,7 @@ export const OPERATIONS = [
   ),
   op(
     "task.conversation",
-    "Read recent recorded messages, optionally for one Journey node or message. Activity is hidden by default. The character budget bounds message text; up to 100 messages. Items have stable IDs, text offsets, content revisions and mayChange (null if unknown). Poll with ifRevision to skip unchanged text; upsert by message ID and revision. activeMessages identifies each unfinished participant's latest bubble, even outside the page: read a changed one with messageId. Cursor reads older messages, survives appends, and rejects changes to unread text. Full original evidence remains available with task.read.",
+    "Read recent recorded public messages, optionally for one Journey node or message. Activity is hidden by default. The character budget bounds message text; up to 100 messages. Items have stable IDs, offsets, total available length, revisions, recording (recordedLength, observed originalLength or null, complete or null, state and missing-text reason), and mayChange (null if unknown). Poll with ifRevision to skip unchanged text; upsert by ID and revision. activeMessages identifies each unfinished participant's latest bubble even outside the page. Cursor reads older available text, survives appends, and rejects changes to unread text. Recording limits are 256 KiB per message and 16 MiB per task; missing endings are never another page. task.read uses the same recorded source.",
     {
       ...task,
       nodeId: id.optional(),

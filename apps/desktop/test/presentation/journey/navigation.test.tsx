@@ -70,7 +70,9 @@ describe('the journey in the task sheet', () => {
     const actions = host.querySelector<HTMLDetailsElement>('.session-activity')!;
     expect(actions.open).toBe(false);
     expect(actions.querySelector('summary')!.textContent).toBe('2 agent actions');
-    expect(host.querySelector('.chat .bubble')?.textContent).toBe('I found the case that needs a fix.');
+    const message = host.querySelector('.chat .bubble')!;
+    expect(message.querySelector('.message-markdown')?.textContent).toBe('I found the case that needs a fix.');
+    expect(message.querySelector('.message-recording-note')?.textContent).toBe('This older record does not establish whether the message is complete or its original length.');
     expect(host.querySelector('.session-head')?.textContent).not.toContain('Take over');
     expect(host.querySelector('.task-agent-footer')?.textContent).toContain('Take over in terminal');
   });

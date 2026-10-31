@@ -73,7 +73,7 @@ it('keeps reports without pictures as text and fetches nothing', async () => {
   await render([{ id: 'plain', at: 100, from: 'agent', roleId: 'builder', text: 'All checks passed' }]);
   expect(host.querySelector('.message-image')).toBeNull();
   expect(image).not.toHaveBeenCalled();
-  expect(host.querySelector('.bubble')?.textContent).toBe('All checks passed');
+  expect(host.querySelector('.message-markdown')?.textContent).toBe('All checks passed');
 });
 
 for (const view of ['session', 'step'])

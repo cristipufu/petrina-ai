@@ -10,7 +10,8 @@ type SessionTask = DeepMutable<Pick<Task, "session" | "journey" | "repositories"
 export function saySessionLine(task: SessionTask, productId: string, from: SessionLine["from"], text: string, roleId: string | undefined, profileId: string | undefined, toolInvocationId: string | undefined, effects: {
   id(): string;
   now(): number;
-  pendingReportIds: ReadonlySet<string>
+  pendingReportIds: ReadonlySet<string>;
+  onRemoved?: (removed: SessionLine) => void;
 }): void {
   const last = task.session.at(-1);
   if (from === "activity" && !toolInvocationId && last?.from === "activity" && last.text === text) return;
@@ -18,17 +19,19 @@ export function saySessionLine(task: SessionTask, productId: string, from: Sessi
   appendSessionLine(
     task.session,
     {
-    ...(task.repositories ? { productId } : {}),
-    id: effects.id(),
-    at: effects.now(),
-    from,
-    text,
-    ...(toolInvocationId ? { toolInvocationId } : {}),
-    ...(roleId ? { roleId } : {}),
-    ...(profileId ? { profileId } : {}),
-    ...(step ? { step } : {})
-  },
-    effects.pendingReportIds
+      ...(task.repositories ? { productId } : {}),
+      id: effects.id(),
+      at: effects.now(),
+      from,
+      text,
+      ...(toolInvocationId ? { toolInvocationId } : {}),
+      ...(roleId ? { roleId } : {}),
+      ...(profileId ? { profileId } : {}),
+      ...(step ? { step } : {}),
+    },
+    effects.pendingReportIds,
+    MAX_SESSION_LINES,
+    effects.onRemoved,
   );
 }
 
@@ -41,15 +44,34 @@ export function bindParticipantSessionLine(task: SessionTask, from: "agent" | "a
 }
 
 /** Preserve reports until their pictures arrive, and the latest words for every participant/product. */
-export function appendSessionLine(session: SessionLine[], line: SessionLine, pendingReportIds: ReadonlySet<string>, maximum = MAX_SESSION_LINES): void {
+export function appendSessionLine(
+  session: SessionLine[],
+  line: SessionLine,
+  pendingReportIds: ReadonlySet<string>,
+  maximum = MAX_SESSION_LINES,
+  onRemoved?: (removed: SessionLine) => void,
+): void {
   session.push(line);
   while (session.length > maximum) {
-    const index = session.findIndex((line, index) => index < session.length - 1 && !line.images?.length && !pendingReportIds.has(line.id)
-      && (line.from !== "agent" || session.some((
-        other,
-        later
-      ) => later > index && other.from === "agent" && other.roleId === line.roleId && other.profileId === line.profileId && other.productId === line.productId)));
+    const index = session.findIndex(
+      (line, index) =>
+        index < session.length - 1
+        && !line.images?.length
+        && !pendingReportIds.has(line.id)
+        && (line.from !== "agent"
+          || session.some(
+            (other, later) =>
+              later > index
+              && other.from === "agent"
+              && other.roleId === line.roleId
+              && other.profileId === line.profileId
+              && other.productId === line.productId
+              && (line.recording?.state !== "streaming"
+                || (other.step === line.step && other.inputIndex === line.inputIndex)),
+          )),
+    );
     if (index < 0) break;
-    session.splice(index, 1);
+    const [removed] = session.splice(index, 1);
+    if (removed) onRemoved?.(removed);
   }
 }

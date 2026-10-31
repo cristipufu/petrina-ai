@@ -42,7 +42,10 @@ for (const toolId of ["claude-code", "codex"]) {
       // New, reopened and replacement conversations all use the configured browser folder.
       expect(dirname(directory)).toBe(browsers);
       try {
-        const result = JSON.parse((await run.prompt("Describe supplied browser tools")).text);
+        const replyText = (await run.prompt("Describe supplied browser tools")).text;
+        const fenced = /```petrina\n([\s\S]*?)```/.exec(replyText);
+        expect(fenced).not.toBeNull();
+        const result = JSON.parse(fenced![1]!);
         expect(result.tools).toContain("browser_navigate");
         expect(result.tools).toContain("browser_take_screenshot");
         expect(result.tools).not.toContain("browser_run_code_unsafe");

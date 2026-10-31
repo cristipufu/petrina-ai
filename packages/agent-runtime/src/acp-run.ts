@@ -23,7 +23,7 @@ import { AgentBrowser } from "./browser.js";
 export { AGENT_CLEANUP_NOTE } from "./browser-cleanup.js";
 import { CLEANUP_INCOMPLETE } from "@petrina/platform/process-tree";
 import type { ModelAtCapacity, UsageLimited } from "./usage.js";
-import { AgentMessages } from "./agent-messages.js";
+import { AgentMessages, TurnText } from "./agent-messages.js";
 import { messageClock } from "./message-clock.js";
 import type { AccountReading } from "./tool-adapter.js";
 import { ownSession } from "@petrina/platform/process-environment";
@@ -200,10 +200,23 @@ export class AgentRun implements AgentSession {
       unconfirmedGone(error);
       throw error;
     }));
+    // A reopened conversation stays quiet until Petrina's first message: what load replays is history,
+    // already in the session view and timeline.
+    const state: RunState = {
+      response: new TurnText(),
+      messages: new AgentMessages(messageClock, callbacks.onMessage),
+      lastActivity: "",
+      quiet: options.reopen !== undefined,
+      settings: {},
+    };
     const finishAfterExit = () => { void stop().catch(() => undefined); };
     child.once("exit", finishAfterExit);
     child.once("error", finishAfterExit);
-    const abort = () => void stop();
+    const abort = () => {
+      state.messages.boundary(true);
+      state.quiet = true;
+      void stop();
+    };
     signal.addEventListener("abort", abort, { once: true });
     // Stopped while starting: give up at once, without waiting for a tool that ignores being stopped.
     let openingAborted!: () => void;
@@ -213,22 +226,9 @@ export class AgentRun implements AgentSession {
     });
     stopped.catch(() => undefined);
     if (signal.aborted) {
-      abort();
+      void stop();
       openingAborted();
     }
-
-    // A reopened conversation stays quiet until Petrina's first message: what load replays is history,
-    // already in the session view and timeline.
-    const state: RunState = {
-      text: "",
-      messages: new AgentMessages(
-      messageClock,
-      callbacks.onMessage
-    ),
-      lastActivity: "",
-      quiet: options.reopen !== undefined,
-      settings: {}
-    };
     // The session's options as the tool last sent them, while the model, effort and mode are set.
     let sessionOptions: ConfigOption[] = [];
     const optionIds = { model: adapter.options.model, effort: adapter.options.effort };
@@ -429,11 +429,11 @@ export class AgentRun implements AgentSession {
     }
   }
 
-  /** Send one turn and wait for it to end. Returns everything the agent said in it, and what it used. */
+  /** Send one turn and wait for its ending: bounded prose, complete structured result, and reported usage. */
   async prompt(text: string): Promise<TurnResult> {
     this.state.messages.boundary();
     this.state.quiet = false;
-    this.state.text = "";
+    this.state.response = new TurnText();
     delete this.state.latest;
     const turn: NonNullable<RunState["turn"]> = { changed: {}, rerouted: false, helpers: new Set() };
     this.state.turn = turn;
@@ -447,6 +447,7 @@ export class AgentRun implements AgentSession {
       helpers: turn.helpers.size,
       ...(turn.modelSeen ? { modelSeen: turn.modelSeen } : {})
     });
+    let completed = false;
     let toolsEnded = false;
     const endTools = () => { if (!toolsEnded) {
       toolsEnded = true;
@@ -485,9 +486,10 @@ export class AgentRun implements AgentSession {
       if (full) throw full;
       const failure = response.stopReason !== "cancelled" ? ADAPTERS[this.profile.toolId]?.interruptions?.failure?.(response) : undefined;
       if (failure) throw this.limitOf(failure, true) ?? failure;
+      completed = response.stopReason !== "cancelled";
       return {
         stopReason: response.stopReason,
-        text: this.state.text,
+        text: this.state.response.text,
         ...(this.state.messages.streamed ? { streamed: true } : {}),
         ...(report ? { report } : {}),
         ...notes()
@@ -495,7 +497,7 @@ export class AgentRun implements AgentSession {
     } finally {
       this.child.removeListener("exit", onExit);
       endTools();
-      this.state.messages.boundary();
+      this.state.messages.boundary(!completed);
       this.notes = notes();
       this.state.turn = undefined;
       delete this.state.promptId;
@@ -549,13 +551,22 @@ export class AgentRun implements AgentSession {
     await this.connection.cancel({ sessionId: this.sessionId }).catch(() => undefined);
   }
 
+  /** Save the last bounded public batch before shutdown closes the store. */
+  flushMessages(interrupted = true): void {
+    this.state.messages.boundary(interrupted);
+  }
+
   /** Start stopping the agent and the programs it started, without waiting. */
   close(): void {
+    this.flushMessages();
+    this.state.quiet = true;
     void this.stopper();
   }
 
   /** Stop the agent and every program it started, and wait until they have exited; forced after a few seconds. */
   stop(graceMs = FORCE_AFTER_MS): Promise<boolean> {
+    this.flushMessages();
+    this.state.quiet = true;
     return this.stopper(graceMs);
   }
 }

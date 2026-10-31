@@ -1,5 +1,7 @@
 import { ModelAtCapacity, UsageLimited } from "@petrina/agent-runtime/usage";
 import {
+  AgentMessages,
+  immediateMessageClock,
   slotWait,
   takeMessages,
   type ActiveAgent,
@@ -86,8 +88,9 @@ export class Turns implements TurnAttemptCollaborators {
         checkpoint: (scope) => k.commitNow(scope),
         commit: (scope) => k.commit(scope),
         noteStream: (scope) => k.noteStream(scope),
-        say: (scope, text, roleId, profileId, reviewerKey) =>
-          k.participantSay(scope, "agent", text, roleId, profileId, reviewerKey),
+        say: (scope, text, roleId, profileId, reviewerKey, record = true) =>
+          k.participantSay(scope, "agent", text, roleId, profileId, reviewerKey, undefined, record),
+        recordPublicText: (taskId, line, message) => k.store.publicText.append(taskId, line, message),
         briefed: (scope) => this.briefed(scope),
       },
       {
@@ -387,6 +390,8 @@ export class Turns implements TurnAttemptCollaborators {
         attachInput: (s, pending, text, additions, openingSections) =>
           this.attachInput(s, pending, text, additions, openingSections),
         markBriefed: (s) => this.briefed(s),
+        recordProse: (s, roleId, profileId, reviewerKey, prose, interrupted) =>
+          this.recordProse(s, roleId, profileId, reviewerKey, prose, interrupted),
         wait: (replyRequest) => this.wait(replyRequest),
       },
     });
@@ -487,16 +492,20 @@ export class Turns implements TurnAttemptCollaborators {
   ): void {
     if (error.streamed) return;
     const prose = error.said ? proseOf(error.said) : undefined;
-    if (prose) {
-      this.k.participantSay(
-        scope,
-        "agent",
-        prose.length > 2400 ? `${prose.slice(0, 2400)}…` : prose,
-        roleId,
-        profileId,
-        reviewerKey,
-      );
-    }
+    if (prose) this.recordProse(scope, roleId, profileId, reviewerKey, prose, true);
+  }
+
+  private recordProse(
+    scope: RepositoryContext,
+    roleId: Id,
+    profileId: Id,
+    reviewerKey: string | undefined,
+    prose: string,
+    interrupted = false,
+  ): void {
+    const messages = new AgentMessages(immediateMessageClock, this.messageStream(scope, roleId, profileId, reviewerKey));
+    messages.push(prose);
+    messages.boundary(interrupted);
   }
 
   private messageStream(
@@ -504,9 +513,9 @@ export class Turns implements TurnAttemptCollaborators {
     roleId: Id,
     profileId: Id,
     reviewerKey: string | undefined,
-    signal: AbortSignal,
+    signal?: AbortSignal,
     main = false,
-  ): (message: AgentMessage) => void {
+  ): (message: AgentMessage) => boolean {
     return this.inputs.stream(scope, roleId, profileId, reviewerKey, signal, main);
   }
 

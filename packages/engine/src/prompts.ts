@@ -60,7 +60,7 @@ export function parseResult<T>(text: string, schema: z.ZodType<T>): Parsed<T> {
 
 /** Text the coordinator sees: the agent's message without its result block. */
 export function proseOf(text: string): string {
-  return text.replace(/```(?:petrina|json)\s*\n[\s\S]*?```/g, "").trim();
+  return text.split("```", 1)[0]!.replace(/`{1,2}$/, "").trim();
 }
 
 export const PREPARED_REVIEW = "Prepared review material";
