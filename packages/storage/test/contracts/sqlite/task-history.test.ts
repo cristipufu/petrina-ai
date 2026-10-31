@@ -358,10 +358,20 @@ it("keeps review/verifier totals and recent timing records exact when a saved te
       expect(first.reviewsByProduct.one).toEqual(reviewStats(tasks.filter((entry) => entry.productId === "one")));
       expect(first.steps).toHaveLength(10);
       expect(first.steps.map((step) => step.at).sort((a, b) => a - b)).toEqual(Array.from({ length: 10 }, (_, index) => index + 6));
+      expect(db.history.info()).toBe(first);
       expect(db.history.usesRole("security-reviewer")).toBe(true);
-      const changed = { ...tasks[1]!, state: "cancelled" as const, clientId: "original-request", cleanup: { removedAt: 1, reviewCopiesRemovedAt: 1 } };
+      const changed = {
+        ...tasks[1]!,
+        state: "cancelled" as const,
+        clientId: "original-request",
+        cleanup: { removedAt: 1, reviewCopiesRemovedAt: 1 },
+        steps: [{ roleId: "builder", repeat: false, worked: 120_000, at: 100 }],
+      };
       tasks[1] = changed;
       db.save(state([changed]));
+      expect(db.history.info()).not.toBe(first);
+      expect(db.history.info().steps.map((step) => step.at).sort((a, b) => a - b)).toEqual([7, 8, 9, 10, 11, 12, 13, 14, 15, 100]);
+      expect(db.history.info().steps.find((step) => step.at === 100)).toEqual(changed.steps[0]);
       expect(db.history.info().total).toBe(16);
       expect(db.history.info().reviews).toEqual(reviewStats(tasks));
       expect(db.history.byClient("original-request")).toBe(changed.id);

@@ -10,6 +10,7 @@ import type {
 import {
   deliveryDecisionProblem,
   displayTask,
+  finishedTask,
   mainLine,
   nextSteps,
   originalCheck,
@@ -431,7 +432,17 @@ export function taskHealthView(engine: Engine, task: Task): Result {
     waiting: work.waiting ?? null,
     attempts: work.attempts,
   }));
-  const estimate = timeLeft({ tasks: state.tasks, now, history: state.history }, task);
+  // Finished live tasks still contribute until their deferred save reaches the archive.
+  // The indexed existence check avoids loading bodies or counting saved cleanup copies twice.
+  const history = engine.store.history;
+  const estimate = timeLeft(
+    {
+      tasks: state.tasks.filter((entry) => !finishedTask(entry) || !history.has(entry.id)),
+      now,
+      history: history.info(),
+    },
+    task,
+  );
   const lastObserved = Math.max(
     0,
     ...lines.map((line) => line.at),
