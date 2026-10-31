@@ -11,29 +11,37 @@ export interface ProcessMetric {
 }
 export interface ProcessMetricsPlan { argv: string[]; format: "ps" | "windows"; env?: NodeJS.ProcessEnv }
 
-const WINDOWS_PROCESS_METRICS_PROPERTIES =
-  "ProcessId,ParentProcessId,CreationDate,Name,WorkingSetSize,UserModeTime,KernelModeTime";
+const WINDOWS_PROCESS_METRICS_QUERY =
+  "SELECT ProcessId,ParentProcessId,CreationDate,Name,WorkingSetSize,UserModeTime,KernelModeTime FROM Win32_Process";
 
-const WINDOWS_PROCESS_METRICS_FIELDS = [
-  "pid=$p.ProcessId",
-  "ppid=$p.ParentProcessId",
-  "born=$(if ($p.CreationDate) {$p.CreationDate.ToUniversalTime().ToString('O')} else {''})",
-  "program=$p.Name",
-  "rssBytes=$p.WorkingSetSize",
-  "cpuMs=$(if ($null -ne $p.UserModeTime -and $null -ne $p.KernelModeTime) {([double]$p.UserModeTime+[double]$p.KernelModeTime)/10000} else {$null})",
+const WINDOWS_PROCESS_METRICS_BODY = [
+  "$pidVal=if ($null -ne $p.ProcessId) { ([uint32]$p.ProcessId).ToString($ic) } else { 'null' }",
+  "$ppidVal=if ($null -ne $p.ParentProcessId) { ([uint32]$p.ParentProcessId).ToString($ic) } else { 'null' }",
+  "$born=if ($p.CreationDate) "
+    + "{ [System.Management.ManagementDateTimeConverter]::ToDateTime([string]$p.CreationDate).ToUniversalTime().ToString('O') } else { '' }",
+  "$name=[regex]::Replace(([string]$p.Name).Replace($bs,$bs+$bs).Replace($q,$bs+$q),'[\\x00-\\x1f]',' ')",
+  "$rss=if ($null -ne $p.WorkingSetSize) { ([uint64]$p.WorkingSetSize).ToString($ic) } else { 'null' }",
+  "$cpu=if ($null -ne $p.UserModeTime -and $null -ne $p.KernelModeTime) "
+    + "{ (([double]$p.UserModeTime+[double]$p.KernelModeTime)/10000).ToString('0.####',$ic) } else { 'null' }",
+  "'{'+$q+'pid'+$q+':'+$pidVal+','+$q+'ppid'+$q+':'+$ppidVal+','+$q+'born'+$q+':'+$q+$born+$q+','"
+    + "+$q+'program'+$q+':'+$q+$name+$q+','+$q+'rssBytes'+$q+':'+$rss+','+$q+'cpuMs'+$q+':'+$cpu+'}'",
 ].join("; ");
 
 const WINDOWS_PROCESS_METRICS_SCRIPT = [
+  "$PSModuleAutoLoadingPreference='None'",
   "$ErrorActionPreference='Stop'",
-  `$list = @(Get-CimInstance -ClassName Win32_Process -Property ${WINDOWS_PROCESS_METRICS_PROPERTIES})`,
-  "@(foreach ($p in $list) { [pscustomobject]@{ " + WINDOWS_PROCESS_METRICS_FIELDS + " } }) | ConvertTo-Json -Compress",
+  "$ic=[System.Globalization.CultureInfo]::InvariantCulture",
+  "$q=[string][char]34",
+  "$bs=[string][char]92",
+  `$rows=@(foreach ($p in ([wmisearcher]'${WINDOWS_PROCESS_METRICS_QUERY}').Get()) { ${WINDOWS_PROCESS_METRICS_BODY} })`,
+  "'['+($rows -join ',')+']'",
 ].join("; ");
 
 export function processMetricsPlan(platform: NodeJS.Platform): ProcessMetricsPlan {
   if (platform === "win32") {
     return {
       format: "windows",
-      argv: ["powershell.exe", "-NoProfile", "-NonInteractive", "-InputFormat", "None", "-Command", WINDOWS_PROCESS_METRICS_SCRIPT],
+      argv: ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", WINDOWS_PROCESS_METRICS_SCRIPT],
     };
   }
   if (platform === "darwin" || platform === "linux") return { format: "ps", env: { LC_ALL: "C" }, argv: ["ps", "-axo", "pid=,ppid=,pcpu=,rss=,lstart=,comm="] };

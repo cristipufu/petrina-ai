@@ -8,6 +8,7 @@ import { readProcessList } from "@petrina/platform/process-tree";
 import { resolveInstalledClaudeCli } from "@petrina/agent-runtime/claude-acp";
 import { resolveInstalledCodexCli } from "@petrina/agent-runtime/codex-acp";
 import { resolveInstalledAgyCli } from "@petrina/agent-runtime/agy-acp-protocol";
+import { resolveInstalledPiCli } from "@petrina/agent-runtime/pi-acp-protocol";
 import { backgroundCommand } from "@petrina/agent-runtime/codex-background";
 import { removeDir, tempDir } from "@petrina/test-support/fixtures";
 import { SLOW } from "@petrina/test-support/slow";
@@ -38,7 +39,7 @@ it("respects the user's native plan-tool setting, including its disabled default
   }
 });
 
-for (const id of ["claude-code", "codex", "grok", "antigravity"]) {
+for (const id of ["claude-code", "codex", "grok", "antigravity", "opencode", "pi"]) {
   it(`${id}: restores inherited managed settings before a nested launch, including another clone`, () => {
     for (const target of [undefined, "/custom/codex"]) {
       const parent: NodeJS.ProcessEnv = {
@@ -73,7 +74,8 @@ it("refuses a self-referencing Codex command and resolves installed agent CLIs s
   const fakeCodex = join(binDir, `codex${ext}`);
   const fakeClaude = join(binDir, `claude${ext}`);
   const fakeAgy = join(binDir, `agy${ext}`);
-  for (const bin of [fakeCodex, fakeClaude, fakeAgy]) {
+  const fakePi = join(binDir, `pi${ext}`);
+  for (const bin of [fakeCodex, fakeClaude, fakeAgy, fakePi]) {
     writeFileSync(bin, process.platform === "win32" ? "@echo off\r\n" : "#!/bin/sh\n", "utf8");
     if (process.platform !== "win32") chmodSync(bin, 0o755);
   }
@@ -91,9 +93,13 @@ it("refuses a self-referencing Codex command and resolves installed agent CLIs s
   expect(resolveInstalledAgyCli({ PATH: binDir })).toBe(fakeAgy);
   expect(resolveInstalledAgyCli({ PATH: emptyBinDir, AGY_EXECUTABLE: fakeAgy })).toBe(fakeAgy);
   expect(() => resolveInstalledAgyCli({ PATH: emptyBinDir })).toThrow("no `agy` on PATH");
+
+  expect(resolveInstalledPiCli({ PATH: binDir })).toBe(fakePi);
+  expect(resolveInstalledPiCli({ PATH: emptyBinDir, PI_EXECUTABLE: fakePi })).toBe(fakePi);
+  expect(() => resolveInstalledPiCli({ PATH: emptyBinDir })).toThrow("no `pi` on PATH");
 });
 
-for (const toolId of ["claude-code", "codex", "grok", "antigravity"]) it(`${toolId}: the actual connector receives an independent environment`, async () => {
+for (const toolId of ["claude-code", "codex", "grok", "antigravity", "opencode", "pi"]) it(`${toolId}: the actual connector receives an independent environment`, async () => {
   const cwd = join(root, toolId);
   mkdirSync(cwd);
   const file = join(cwd, "received.json"), command = join(cwd, "capture.ts");
@@ -125,7 +131,7 @@ it.skipIf(process.platform === "win32")("retains the startup error and reports i
   process.env.PATH = join(root, "no-programs");
   try {
     expect(await readProcessList(100)).toBeUndefined();
-    for (const toolId of ["claude-code", "codex", "grok", "antigravity"]) {
+    for (const toolId of ["claude-code", "codex", "grok", "antigravity", "opencode", "pi"]) {
       let incomplete = 0;
       let failure: unknown;
       try {

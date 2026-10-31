@@ -39,7 +39,7 @@ it("hands a notes report's facts, sources and limits on exactly as returned, nev
     openings: (role: string) => agents.received().filter(prompt => prompt.roleId === role && prompt.turn === 1).map(prompt => prompt.text),
     prompts: (role: string) => agents.received().filter(prompt => prompt.roleId === role).map(prompt => prompt.text),
   };
-  const engine = caseOwner.open(join(root, "data"), { startAgentSession: agents.start, toolProbe: scriptedToolProbe({ "claude-code": { status: "ready" }, codex: { status: "ready" }, grok: { status: "ready" }, antigravity: { status: "not-installed" }, gh: { status: "not-installed" }, git: { status: "ready" } }) });
+  const engine = caseOwner.open(join(root, "data"), { startAgentSession: agents.start, toolProbe: scriptedToolProbe({ "claude-code": { status: "ready" }, codex: { status: "ready" }, grok: { status: "ready" }, antigravity: { status: "not-installed" }, opencode: { status: "not-installed" }, pi: { status: "not-installed" }, gh: { status: "not-installed" }, git: { status: "ready" } }) });
   try {
     engine.schedule = () => {};
     engine.s.setup!.checks = engine.s.tools.map(tool => ({ id: tool.id as CheckId, status: "ready" }));

@@ -22,7 +22,7 @@ type Observation = { product: string; title: string; sha: string; tree: string; 
 
 const READY_TOOLS = scriptedToolProbe({
   "claude-code": { status: "ready" }, codex: { status: "ready" }, grok: { status: "ready" },
-  antigravity: { status: "not-installed" }, gh: { status: "ready" }, git: { status: "ready" },
+  antigravity: { status: "not-installed" }, opencode: { status: "not-installed" }, pi: { status: "not-installed" }, gh: { status: "ready" }, git: { status: "ready" },
 });
 
 function readLooseObject(gitDir: string, sha: string): Buffer {

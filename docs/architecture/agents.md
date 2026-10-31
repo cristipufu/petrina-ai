@@ -132,7 +132,7 @@ Managed Grok sessions disable its persistent workspace memory through the native
 
 The Planner supplies a short public explanation for each role/profile seat. Plans retain the requested assignment and any readiness adjustment, even when review groups are joined. Coordinator edits replace the affected seat's explanation. At agent admission the engine records its selection reason separately, alongside requested and selected profiles and native settings confirmed at startup. Journey inputs retain that evidence per reviewer seat; missing historical explanations remain unknown rather than being reconstructed from current usage.
 
-Petrina talks to agents through the [Agent Client Protocol](https://agentclientprotocol.com) (ACP). Claude Code, Codex and Antigravity run through embedded ACP translators inside Petrina's engine that spawn the user's installed CLI; Grok exposes a native ACP server:
+Petrina talks to agents through the [Agent Client Protocol](https://agentclientprotocol.com) (ACP). Claude Code, Codex, Antigravity and Pi run through embedded ACP translators inside Petrina's engine that spawn the user's installed CLI; Grok and OpenCode expose native ACP servers:
 
 | Tool | ACP adapter |
 |---|---|
@@ -140,6 +140,8 @@ Petrina talks to agents through the [Agent Client Protocol](https://agentclientp
 | Codex | Embedded `agentclientprotocol/codex-acp` spawning installed `codex` |
 | Grok | `grok --permission-mode auto agent stdio` (model `grok-4.7`, effort `reasoning_effort`) |
 | Antigravity | Embedded `__internal-agy-acp` translator spawning installed `agy` (`stream-json`) |
+| OpenCode | `opencode acp` (native ACP server over stdio; terminal takeover `opencode -s <id> --model <provider/model>`) |
+| Pi | Embedded `__internal-pi-acp` translator spawning installed `pi --mode rpc` (live steering via `steer`; terminal takeover `pi --session <id> --model <provider/model> --thinking <effort>`) |
 
 ACP gives Petrina what it needs without per-tool code:
 

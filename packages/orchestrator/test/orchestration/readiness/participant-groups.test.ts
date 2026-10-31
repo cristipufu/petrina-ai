@@ -116,7 +116,7 @@ it("releases the group's last place when an inconclusive reply leaves no eligibl
   try {
     const drive = f.start(); f.releases.release("opus-high");
     await probe.entered(drive);
-    f.state.pool.limited = ["claude-code", "codex", "antigravity"].map(toolId => ({ toolId, until: f.clock.now() + 3_600_000, reason: "Supplied usage limit" }));
+    f.state.pool.limited = f.state.tools.filter(tool => tool.id !== "grok").map(tool => ({ toolId: tool.id, until: f.clock.now() + 3_600_000, reason: "Supplied usage limit" }));
     probe.answer("unknown"); await drive;
     expect(f.check("grok").status).toBe("unknown"); expect(f.current.statusLine).toMatch(/^Waiting for usage/);
     expect(f.current.holdsSlot).toBe(false); expect(f.current.agent).toBeUndefined(); expect(f.current.state).toBe("waiting");

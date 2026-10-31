@@ -45,7 +45,11 @@ it("does not re-adopt a PID after its birth changed or it disappeared from a com
 
 it("isolates native observation commands and rejects unsupported platforms", () => {
   expect(processMetricsPlan("linux")).toEqual(processMetricsPlan("darwin"));
-  expect(processMetricsPlan("win32").argv).toContain("-NonInteractive");
-  expect(processMetricsPlan("win32").format).toBe("windows");
+  const win = processMetricsPlan("win32");
+  expect(win.argv).toContain("-NonInteractive");
+  expect(win.argv.join(" ")).toContain("$PSModuleAutoLoadingPreference='None'");
+  expect(win.argv.join(" ")).not.toContain("Get-CimInstance");
+  expect(win.argv.join(" ")).not.toContain("ConvertTo-Json");
+  expect(win.format).toBe("windows");
   expect(() => processMetricsPlan("aix")).toThrow("not implemented");
 });

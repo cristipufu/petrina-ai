@@ -52,3 +52,17 @@ export const antigravityTerminalArguments: TerminalArgumentFormatter = ({ sessio
   "--effort",
   effort,
 ];
+export const opencodeTerminalArguments: TerminalArgumentFormatter = ({ session, model }) => [
+  "-s",
+  session,
+  "--model",
+  model,
+];
+export const piTerminalArguments: TerminalArgumentFormatter = ({ session, model, effort }) => [
+  "--session",
+  session,
+  "--model",
+  model,
+  "--thinking",
+  effort,
+];

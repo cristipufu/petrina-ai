@@ -261,13 +261,6 @@ export const KNOWN_TOOLS: readonly Tool[] = [
     status: "not-installed",
     models: [],
   },
-  {
-    id: "opencode",
-    name: "OpenCode",
-    command: ["opencode", "acp"],
-    status: "not-installed",
-    models: [],
-  },
 ];
 
 export { DEFAULT_PROFILES } from "./profiles.js";

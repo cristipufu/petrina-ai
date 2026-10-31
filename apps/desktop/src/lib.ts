@@ -142,7 +142,8 @@ export const TOOL_COLORS: Record<string, string> = {
   codex: "#10a37f",
   grok: "#5b6cff",
   gemini: "#4285f4",
-  opencode: "#6b7079",
+  opencode: "var(--tool-opencode)",
+  pi: "var(--tool-pi)",
 };
 
 /** Agents waiting on the coordinator while keeping their slot. A step the coordinator is driving is not waiting on them. */

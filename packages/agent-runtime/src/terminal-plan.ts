@@ -145,8 +145,8 @@ export class UnsafeValue extends Error {}
 /** Folders and programs: letters, digits, spaces and the punctuation paths use. No quotes, `$`, `;`, `&`, `|`, `%` or line breaks. */
 const PATH = /^[\p{L}\p{N} ._\-/\\:~+@()]{1,400}$/u;
 const ABSOLUTE = /^(\/|[A-Za-z]:\\)/;
-const SESSION = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const MODEL = /^[A-Za-z0-9._-]{1,64}$/;
+const SESSION = /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|(?:ses|pi)_[A-Za-z0-9_-]{4,96})$/i;
+const MODEL = /^(?!.*\.\.)[A-Za-z0-9._:-]{1,64}(?:\/[A-Za-z0-9._:-]{1,64}){0,2}$/;
 const EFFORT = /^(low|medium|high|xhigh)$/;
 
 function checked(value: string, pattern: RegExp, what: string): string {
@@ -165,8 +165,13 @@ export interface LaunchInput {
   /** The take-over folder: the launcher, its lock, records and status file live here. */
   dir: string;
   worktree: string;
-  /** `mode`: Claude Code's ask-before-acting mode, by the name the installed copy lists. Grok and Antigravity open with their usual prompts. */
-  tool: { id: "claude-code" | "codex" | "grok" | "antigravity"; name: string; path: string; mode?: AskMode };
+  /** `mode`: Claude Code's ask-before-acting mode, by the name the installed copy lists. Other tools open with their usual prompts. */
+  tool: {
+    id: "claude-code" | "codex" | "grok" | "antigravity" | "opencode" | "pi";
+    name: string;
+    path: string;
+    mode?: AskMode;
+  };
   sessionId: string;
   model: string;
   effort: string;

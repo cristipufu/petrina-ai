@@ -16,7 +16,9 @@ it("records explicit probe results through the real host and restart without res
   const root = caseOwner.root;
   const observations = {
     "claude-code": { status: "ready" }, codex: { status: "unknown", detail: "The fixture could not confirm the login" },
-    grok: { status: "logged-out" }, antigravity: { status: "not-installed" }, gh: { status: "ready", account: "fixture-account" },
+    grok: { status: "logged-out" }, antigravity: { status: "not-installed" },
+    opencode: { status: "not-installed" }, pi: { status: "not-installed" },
+    gh: { status: "ready", account: "fixture-account" },
     git: { status: "ready" },
   } as const satisfies Record<CheckId, ToolProbeResult>;
   const options = { toolProbe: scriptedToolProbe(observations), agentCommand: () => { throw new Error("Readiness must not open a native agent"); } };
@@ -26,7 +28,7 @@ it("records explicit probe results through the real host and restart without res
     const checking = engine;
     await caseOwner.run(checking, () => checking.checkTools());
     const checks = engine.getState().setup!.checks;
-    expect(checks).toHaveLength(6);
+    expect(checks).toHaveLength(8);
     for (const check of checks) {
       expect(check).toEqual({ id: check.id, ...observations[check.id], at: expect.any(Number) });
       expect(check.checking).toBeUndefined();

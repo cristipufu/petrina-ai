@@ -16,6 +16,15 @@ describe("which agent tools the squad uses", () => {
     expect(toolsGate(checks({ ...all, "claude-code": "not-installed", codex: "not-installed", antigravity: "ready" })).ok).toBe(true);
   });
 
+  it("uses installed OpenCode and Pi alone or alongside other tools, and excludes their logged-out or absent state", () => {
+    expect(usableAgentTools(checks({ "claude-code": "ready", codex: "ready", opencode: "ready", pi: "ready" }))).toEqual(["claude-code", "codex", "opencode", "pi"]);
+    expect(usableAgentTools(checks({ "claude-code": "not-installed", codex: "not-installed", opencode: "ready" }))).toEqual(["opencode"]);
+    expect(usableAgentTools(checks({ "claude-code": "not-installed", codex: "not-installed", pi: "ready" }))).toEqual(["pi"]);
+    expect(usableAgentTools(checks({ "claude-code": "ready", opencode: "logged-out", pi: "not-installed" }))).toEqual(["claude-code"]);
+    expect(toolsGate(checks({ ...all, "claude-code": "not-installed", codex: "not-installed", opencode: "ready" })).ok).toBe(true);
+    expect(toolsGate(checks({ ...all, "claude-code": "not-installed", codex: "not-installed", pi: "ready" })).ok).toBe(true);
+  });
+
   it("uses the Ready ones, and only if none is Ready, the ones Petrina couldn't check", () => {
     expect(usableAgentTools(checks({ "claude-code": "ready", codex: "ready" }))).toEqual(["claude-code", "codex"]);
     expect(usableAgentTools(checks({ "claude-code": "unknown", codex: "ready" }))).toEqual(["codex"]);
@@ -131,6 +140,8 @@ describe("fixes", () => {
       }
     }
     expect(fixFor("codex", "logged-out", "darwin")!.command).toBe("codex login");
+    expect(fixFor("opencode", "logged-out", "darwin")!.command).toBe("opencode auth login");
+    expect(fixFor("pi", "logged-out", "darwin")!.command).toBe("pi");
     expect(fixFor("git", "not-installed", "darwin")!.command).toBe("xcode-select --install");
     expect(fixFor("git", "not-installed", "win32")!.sentence).toContain("in a terminal");
     expect(isGuide("https://example.com/")).toBe(false);

@@ -33,7 +33,7 @@ async function fixture(owner: EngineCaseOwner, role: "code reviewer" | "verifier
   const repo = productRepo.path;
   owner.check();
   const data = join(root, "data");
-  const settings: EngineOptions = { toolProbe: scriptedToolProbe({ "claude-code": { status: "ready" }, codex: { status: "ready" }, grok: { status: "ready" }, antigravity: { status: "logged-out", detail: "The explicit screen fixture has no Antigravity login" }, gh: { status: "not-installed" }, git: { status: "ready" } }), agentCommand: profile => [process.execPath, join(ENGINE_TEST_ROOT, "fake-agent.ts"), fakes.dir, ...(profile.toolId === "antigravity" ? ["--logged-out"] : [])], startAgentSession: fakeAgentSessions(fakes), ...options };
+  const settings: EngineOptions = { toolProbe: scriptedToolProbe({ "claude-code": { status: "ready" }, codex: { status: "ready" }, grok: { status: "ready" }, antigravity: { status: "logged-out", detail: "The explicit screen fixture has no Antigravity login" }, opencode: { status: "not-installed" }, pi: { status: "not-installed" }, gh: { status: "not-installed" }, git: { status: "ready" } }), agentCommand: profile => [process.execPath, join(ENGINE_TEST_ROOT, "fake-agent.ts"), fakes.dir, ...(profile.toolId === "antigravity" ? ["--logged-out"] : [])], startAgentSession: fakeAgentSessions(fakes), ...options };
   const joinCopies = async (current: Engine) => {
     await completeAll([...current.settling.values(), ...current.copyCleanups.values()]);
   };

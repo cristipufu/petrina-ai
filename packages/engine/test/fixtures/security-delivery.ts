@@ -50,7 +50,7 @@ export async function credentialedDeliveryChild(input: SecurityDeliveryCase): Pr
   });
   const engine = owners.open(world.data, {
     startAgentSession: agents.start,
-    toolProbe: scriptedToolProbe({ "claude-code": { status: "ready" }, codex: { status: "ready" }, grok: { status: "ready" }, antigravity: { status: "ready" }, gh: { status: "ready" }, git: { status: "ready" } }),
+    toolProbe: scriptedToolProbe({ "claude-code": { status: "ready" }, codex: { status: "ready" }, grok: { status: "ready" }, antigravity: { status: "ready" }, opencode: { status: "not-installed" }, pi: { status: "not-installed" }, gh: { status: "ready" }, git: { status: "ready" } }),
     gh: [process.execPath, FAKE_GH, join(world.dir, "github.json"), world.remote],
     ...(input.kind === "redirect" ? { remote: world.remote } : {}),
     awakeObserver: () => {},

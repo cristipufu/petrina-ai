@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync
 import { join, resolve } from "node:path";
 import { defaultBrowserServerLaunch } from "@petrina/agent-runtime/browser";
 import { ADAPTERS, codexWrapperPath } from "@petrina/agent-runtime/tool-catalog";
-import { adapterLaunchCommand, GROK_AGENT_COMMAND, resolveAdapterEntry } from "@petrina/agent-runtime/tool-entry";
+import { adapterLaunchCommand, GROK_AGENT_COMMAND, OPENCODE_AGENT_COMMAND, resolveAdapterEntry } from "@petrina/agent-runtime/tool-entry";
 import {
   compiledExecutableDir,
   findBunRuntime,
@@ -94,6 +94,10 @@ describe("standalone compiled engine runtime contracts", () => {
       "/usr/bin/bun",
       join("/repo/packages/agent-runtime/src", "agy-acp.ts"),
     ]);
+    expect(adapterLaunchCommand(ADAPTERS.pi!, "/usr/bin/bun", "/repo/packages/agent-runtime/src")).toEqual([
+      "/usr/bin/bun",
+      join("/repo/packages/agent-runtime/src", "pi-acp.ts"),
+    ]);
     expect(adapterLaunchCommand(ADAPTERS["claude-code"]!, realBinaryExec, "/$bunfs/root")).toEqual([
       realBinaryExec,
       "__internal-claude-acp",
@@ -106,7 +110,12 @@ describe("standalone compiled engine runtime contracts", () => {
       realBinaryExec,
       "__internal-agy-acp",
     ]);
+    expect(adapterLaunchCommand(ADAPTERS.pi!, realBinaryExec, "/$bunfs/root")).toEqual([
+      realBinaryExec,
+      "__internal-pi-acp",
+    ]);
     expect(adapterLaunchCommand(ADAPTERS.grok!, realBinaryExec, "/$bunfs/root")).toEqual([...GROK_AGENT_COMMAND]);
+    expect(adapterLaunchCommand(ADAPTERS.opencode!, realBinaryExec, "/$bunfs/root")).toEqual([...OPENCODE_AGENT_COMMAND]);
 
     expect(resolveDefaultUiDir("/usr/bin/bun", "/repo/packages/engine/src")).toBe(resolve("/repo/apps/desktop/dist"));
     expect(resolveDefaultUiDir(realBinaryExec, "/$bunfs/root")).toBe(join(realBundleDir, "ui"));

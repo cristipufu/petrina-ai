@@ -29,7 +29,7 @@ async function handoff(owner: EngineCaseOwner, products: readonly { id: string; 
     agentCommand: () => [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), fakes.dir],
     startAgentSession: fakeAgentSessions(fakes),
     toolPath: () => process.execPath,
-    toolProbe: scriptedToolProbe({ "claude-code": { status: "ready" }, codex: { status: "ready" }, grok: { status: "ready" }, antigravity: { status: "ready" }, gh: { status: "unknown" }, git: { status: "ready" } }), usageCommands: { codex: null, grok: null, antigravity: null },
+    toolProbe: scriptedToolProbe({ "claude-code": { status: "ready" }, codex: { status: "ready" }, grok: { status: "ready" }, antigravity: { status: "ready" }, opencode: { status: "not-installed" }, pi: { status: "not-installed" }, gh: { status: "unknown" }, git: { status: "ready" } }), usageCommands: { codex: null, grok: null, antigravity: null },
   });
   try {
     engine.schedule = () => {};

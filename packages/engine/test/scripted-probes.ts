@@ -17,10 +17,11 @@ export function scriptedToolProbe(observations: Readonly<Partial<Record<CheckId,
   };
 }
 
-const privateAgents = ["claude-code", "codex", "grok", "antigravity"] as const;
+const privateAgents = ["claude-code", "codex", "grok", "antigravity", "opencode", "pi"] as const;
+type PrivateAgentId = (typeof privateAgents)[number];
 
 /** Calibrated private fake-agent availability; native context and readiness-routing controls retain parity. */
-export function privateAgentToolProbe(ready: readonly (typeof privateAgents)[number][] = privateAgents): ToolProbe {
+export function privateAgentToolProbe(ready: readonly PrivateAgentId[] = privateAgents): ToolProbe {
   const observations: Partial<Record<CheckId, ToolProbeResult>> = {
     gh: { status: "unknown", detail: "This test must supply a scripted GitHub command." }, git: { status: "ready" },
   };

@@ -123,6 +123,7 @@
   --tool-antigravity: var(--t-teal);
   --tool-gemini: #4285f4;
   --tool-opencode: #6b7079;
+  --tool-pi: #7c5ce6;
   /* Provider colours in charts: the tool's colour where one tool stands for the provider. */
   --provider-anthropic: #d97757;
   --provider-openai: #10a37f;
@@ -199,6 +200,8 @@
 
   --tool-claude-code: #d4704f;
   --tool-codex: #10a37f;
+  --tool-opencode: #9a9ea6;
+  --tool-pi: #a78bfa;
   --provider-anthropic: #d4704f;
   --provider-openai: #10a37f;
   --provider-xai: #c9ccd2;

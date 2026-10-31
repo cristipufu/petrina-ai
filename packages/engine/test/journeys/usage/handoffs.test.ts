@@ -330,7 +330,7 @@ describe.concurrent("an agent that runs out of usage", () => {
         const reset = new Date(Math.min(...run.engine.getState().pool.limited!.map((limit) => limit.until)));
         const clock = reset.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
         const day = reset.toLocaleDateString("en-US", { weekday: "short" });
-        const prefix = "Waiting for usage: Claude Code, Codex, Grok and Antigravity are out until ";
+        const prefix = "Waiting for usage: Claude Code, Codex, Grok, Antigravity, OpenCode and Pi are out until ";
         // The reset may cross midnight; either date form remains valid if midnight passes after the status was recorded.
         expect([`${prefix}${clock}`, `${prefix}${day} ${clock}`]).toContain(waiting.statusLine);
         expect(waiting.holdsSlot).toBe(false);
@@ -360,7 +360,7 @@ describe.concurrent("an agent that runs out of usage", () => {
         expect(lines(task).some((line) => line.includes("took over from"))).toBe(false);
         expect(lines(task)).toContain("Picked up where it left off");
         // Claude Code's limit ended and was dropped; Codex's and Grok's, set to last longer, are still there.
-        expect(run.engine.getState().pool.limited?.map((limit) => limit.toolId)).toEqual(["codex", "grok", "antigravity"]);
+        expect(run.engine.getState().pool.limited?.map((limit) => limit.toolId)).toEqual(["codex", "grok", "antigravity", "opencode", "pi"]);
         expect(task.journey!.filter((step) => step.roleId === "builder")).toEqual([expect.objectContaining({ id: boxId, startedAt, end: "done" })]);
         // Picking the step up after the wait is a retry, counted once, with nothing left owed.
         const details = run.engine.usage({ view: "analytics", period: "today" }).squad.details;
@@ -381,6 +381,8 @@ describe.concurrent("an agent that runs out of usage", () => {
           { toolId: "codex", until: Date.now() + 3_600_000, reason: "Codex's usage limit" },
           { toolId: "grok", until: Date.now() + 3_600_000, reason: "Grok's rate limit" },
           { toolId: "antigravity", until: Date.now() + 3_600_000, reason: "Antigravity's usage limit" },
+          { toolId: "opencode", until: Date.now() + 3_600_000, reason: "OpenCode's usage limit" },
+          { toolId: "pi", until: Date.now() + 3_600_000, reason: "Pi's usage limit" },
         ];
       },
     });

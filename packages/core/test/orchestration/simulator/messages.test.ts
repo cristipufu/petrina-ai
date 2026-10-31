@@ -1,4 +1,5 @@
 import { emptyState, task } from "../../fixtures/simulator.js";
+import { taskFixture } from "../../fixtures/state.js";
 import { describe, expect, it } from "vitest";
 
 import { Simulator } from "../../../src/sim.js";
@@ -39,5 +40,37 @@ describe("Simulator", () => {
     expect(later.state).toBe("running");
     expect(later.queued.find(message => message.text === "Keep the guest view")?.deliveries?.main?.state).toBe("accepted");
     expect(later.journey?.flatMap(step => step.agentInputs ?? []).flatMap(input => input.updates ?? []).find(update => update.text === "Keep the guest view")?.delivery).toBe("accepted");
+  });
+
+  it("queues live guidance until the next turn on OpenCode while delivering live guidance on Pi", () => {
+    const seed = emptyState();
+    seed.tasks = [
+      taskFixture(seed, {
+        id: "opencode-task",
+        state: "running",
+        holdsSlot: true,
+        agent: { roleId: "builder", profileId: "opencode-sonnet-high", since: 0, step: 0 },
+      }),
+      taskFixture(seed, {
+        id: "pi-task",
+        state: "running",
+        holdsSlot: true,
+        agent: { roleId: "builder", profileId: "pi-sonnet-high", since: 0, step: 0 },
+      }),
+    ];
+    const sim = new Simulator(seed);
+    sim.sendMessage("opencode-task", "Hold until next turn");
+    expect(task(sim, "opencode-task").queued[0]?.deliveries?.main).toEqual({
+      state: "waiting",
+      reason: "unsupported",
+      toolId: "opencode",
+    });
+
+    sim.sendMessage("pi-task", "Steer right now");
+    expect(task(sim, "pi-task").queued[0]?.deliveries?.main).toEqual({
+      state: "accepted",
+      via: "live",
+      toolId: "pi",
+    });
   });
 });

@@ -7,6 +7,8 @@ import {
   claudeTerminalArguments,
   codexTerminalArguments,
   grokTerminalArguments,
+  opencodeTerminalArguments,
+  piTerminalArguments,
 } from "./terminal-arguments.js";
 import { claudeBackground } from "./claude-background.js";
 import { BACKGROUND_FEATURES } from "./codex-background.js";
@@ -16,7 +18,7 @@ import { claudeInterruptions, codexInterruptions, grokInterruptions } from "./na
 import { antigravityReading, antigravityTurnReport } from "./antigravity-report.js";
 import { forgetAntigravityProbe } from "./antigravity-runtime.js";
 import { interjection, steering } from "./live-input.js";
-import { CLAUDE_AGENT_ENTRY, CODEX_AGENT_ENTRY, GROK_AGENT_COMMAND } from "./tool-entry.js";
+import { CLAUDE_AGENT_ENTRY, CODEX_AGENT_ENTRY, GROK_AGENT_COMMAND, OPENCODE_AGENT_COMMAND } from "./tool-entry.js";
 
 export function codexWrapperPath(
   execPath: string = process.execPath,
@@ -138,5 +140,28 @@ export const ADAPTERS: Record<string, ToolAdapter> = {
     mode: "yolo",
     login: "open",
     models: ["Gemini 4 Argon", "Gemini 3.8 Flash"],
+  },
+  opencode: {
+    terminalArgs: opencodeTerminalArguments,
+    id: "opencode",
+    name: "OpenCode",
+    cli: "opencode",
+    command: OPENCODE_AGENT_COMMAND,
+    options: { model: "model", effort: "effort", mode: "mode" },
+    mode: "build",
+    login: "open",
+    models: ["Claude Sonnet 4.5", "GPT-5"],
+  },
+  pi: {
+    liveInput: steering(false),
+    terminalArgs: piTerminalArguments,
+    id: "pi",
+    name: "Pi",
+    internalSubcommand: "__internal-pi-acp",
+    cli: "pi",
+    options: { model: "model", effort: "thinking_level", mode: "mode" },
+    mode: "auto",
+    login: "open",
+    models: ["Claude Sonnet 4.5", "GPT-5"],
   },
 };

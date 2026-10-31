@@ -11,7 +11,7 @@ function participants() {
   const f = profileSelectionFixture();
   f.host.awayFromBuilder = () => false;
   f.state.pool.paused = false; f.state.pool.limit = 1;
-  f.state.setup!.checks = f.state.tools.map(tool => ({ id: tool.id as CheckId, status: tool.id === "antigravity" ? "logged-out" : "ready" }));
+  f.state.setup!.checks = f.state.tools.map(tool => ({ id: tool.id as CheckId, status: ["claude-code", "codex", "grok"].includes(tool.id) ? "ready" : "logged-out" }));
   f.task.plan = { rationale: "Explicit independent review seats", plannerProfileId: "sol-high", stages: [
     { id: "review", title: "Review", kind: "review-chain", roleId: "code-reviewer", profileIds: ["sol-high", "opus-high"] },
   ] }; f.task.stageIndex = 0;

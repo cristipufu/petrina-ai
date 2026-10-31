@@ -20,6 +20,10 @@ export const DEFAULT_PROFILES: readonly AgentProfile[] = [
   { id: "astra-ultra", toolId: "codex", model: "GPT-6 Astra", modelId: "gpt-6-astra", effort: "ultra" },
   { id: "sol-ultra", toolId: "codex", model: "GPT-6.1 Sol", modelId: "gpt-6.1-sol", effort: "ultra" },
   { id: "sol-medium", toolId: "codex", model: "GPT-6.1 Sol", modelId: "gpt-6.1-sol", effort: "medium" },
+  { id: "opencode-sonnet-high", toolId: "opencode", model: "Claude Sonnet 4.5", modelId: "anthropic/claude-sonnet-4-5", effort: "high" },
+  { id: "opencode-gpt5-high", toolId: "opencode", model: "GPT-5", modelId: "openai/gpt-5", effort: "high" },
+  { id: "pi-sonnet-high", toolId: "pi", model: "Claude Sonnet 4.5", modelId: "anthropic/claude-sonnet-4-5", effort: "high" },
+  { id: "pi-gpt5-high", toolId: "pi", model: "GPT-5", modelId: "openai/gpt-5", effort: "high" },
 ];
 
 /** Native launch settings, independent of display names and profile IDs. */

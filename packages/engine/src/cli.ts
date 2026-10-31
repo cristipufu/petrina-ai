@@ -19,6 +19,7 @@ import { runBrowserServer } from "@petrina/agent-runtime/browser-server";
 import { runClaudeAcp } from "@petrina/agent-runtime/claude-acp";
 import { runCodexAcp } from "@petrina/agent-runtime/codex-acp";
 import { runCodexBackground } from "@petrina/agent-runtime/codex-background";
+import { runPiAcp } from "@petrina/agent-runtime/pi-acp";
 import { compiledExecutableDir, isCompiledBinary } from "@petrina/platform/compiled-runtime";
 import pkg from "../package.json" with { type: "json" };
 import type { EngineClient } from "./engine-client.js";
@@ -107,6 +108,10 @@ export async function runCli(args: readonly string[] = process.argv.slice(2), st
   }
   if (command === "__internal-agy-acp") {
     await runAgyAcp(rest);
+    return;
+  }
+  if (command === "__internal-pi-acp") {
+    await runPiAcp(rest);
     return;
   }
   if (command === "--version" || command === "-v") {

@@ -50,7 +50,7 @@ async function fixture(scenario: Scenario, limit = 3, reviewers?: string[], buil
       req.argv[0] === "git" && req.argv[1] === "--version" ? { code: 0, stdout: "git version 2.45.0\n" } : undefined,
     // These journeys test native seat handoffs, not login transport. The setup contract owns real probes.
     toolProbe: scriptedToolProbe({ "claude-code": { status: "ready" }, codex: { status: "ready" }, grok: { status: "ready" },
-      antigravity: { status: antigravity ? "ready" : "logged-out" }, gh: { status: "unknown" }, git: { status: "ready" } }),
+      antigravity: { status: antigravity ? "ready" : "logged-out" }, opencode: { status: "not-installed" }, pi: { status: "not-installed" }, gh: { status: "unknown" }, git: { status: "ready" } }),
   };
   const openEngine = () => {
     const next = lifetime.open(join(root, "data"), options);

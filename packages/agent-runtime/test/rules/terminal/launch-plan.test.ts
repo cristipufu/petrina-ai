@@ -1,26 +1,37 @@
 import {describe,expect,it} from "bun:test";
 import {terminalEnv, UnsafeValue} from "../../../src/terminal-plan.js";
 import {launchPlan} from "../../fixtures/terminal-plan.js";
-import {input,PATHS,SESSION,SECRETS} from "../../fixtures/terminal-input.js";
+import {input,OPENCODE_SESSION,PATHS,SESSION,SECRETS} from "../../fixtures/terminal-input.js";
 import type {LaunchInput} from "../../../src/terminal-plan.js";
 
 describe("each system's launch plan", () => {
   for (const platform of ["darwin", "linux", "win32"] as const) {
-    for (const toolId of ["claude-code", "codex", "grok"] as const) {
+    for (const toolId of ["claude-code", "codex", "grok", "opencode", "pi"] as const) {
       it(`${platform}, ${toolId}: the tool on the same conversation in its normal mode, with no credentials`, () => {
         const plan = launchPlan(input(platform, toolId));
+        const expectedSession = toolId === "opencode" ? OPENCODE_SESSION : SESSION;
         for (const pattern of SECRETS) {
           expect(plan.script).not.toMatch(pattern);
           expect(plan.copy).not.toMatch(pattern);
         }
         // Never a skip-permissions, always-approve or yolo option.
         for (const flag of ["dangerously", "bypass", "approve-for-me", "auto_review", "acceptEdits", "dontAsk", "never", "danger-full-access", "yolo", "always-approve"]) expect(plan.args.join(" ").toLowerCase()).not.toContain(flag.toLowerCase());
-        expect(plan.args).toContain(SESSION);
-        expect(plan.args).toContain(toolId === "claude-code" ? "opus" : toolId === "grok" ? "grok-4.7" : "gpt-6.1-sol");
+        expect(plan.args).toContain(expectedSession);
+        expect(plan.args).toContain(
+          toolId === "claude-code"
+            ? "opus"
+            : toolId === "grok"
+              ? "grok-4.7"
+              : toolId === "opencode"
+                ? "anthropic/claude-sonnet-4-5"
+                : toolId === "pi"
+                  ? "openai/gpt-5"
+                  : "gpt-6.1-sol",
+        );
         expect(plan.script).toContain(PATHS[platform].worktree);
         // The copied command runs the launcher, nothing else.
         expect(plan.copy).toContain(plan.file);
-        expect(plan.copy).not.toContain(SESSION);
+        expect(plan.copy).not.toContain(expectedSession);
         if (platform === "win32") {
           expect(plan.file).toBe(`${PATHS.win32.dir}\\open.ps1`);
           expect(plan.copy).toBe(`powershell -NoLogo -ExecutionPolicy Bypass -File "${plan.file}"`);

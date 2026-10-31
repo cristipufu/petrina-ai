@@ -95,5 +95,9 @@ it("shows unsupported live guidance waiting in the step before it enters the tra
     expect(host.querySelector<HTMLButtonElement>("button")!.disabled).toBe(false);
     await act(async () => host.querySelector<HTMLButtonElement>("button")!.click());
     expect(remove).toHaveBeenLastCalledWith(task.id, "message");
+
+    task.agent = { ...task.agent!, profileId: "opencode-sonnet-high" };
+    await act(async () => root.render(<Session.Composer task={task} find={lookup(state)} drafts={new TaskDrafts()} focusRequest={false} onFocused={() => {}} />));
+    expect(host.textContent).toContain("OpenCode cannot take live guidance. Your message waits until the turn finishes.");
   } finally { await act(async () => root.unmount()); host.remove(); }
 });

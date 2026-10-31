@@ -25,5 +25,5 @@ export function legacyDeliveryAgents(world: Pick<World, "script" | "setScript">)
     }
     throw new Error(`Unexpected legacy-delivery participant: ${prompt.result}`);
   });
-  return { startAgentSession: agents.start, toolProbe: scriptedToolProbe({ "claude-code": { status: "ready" }, codex: { status: "ready" }, grok: { status: "ready" }, antigravity: { status: "not-installed" }, gh: { status: "ready" }, git: { status: "ready" } }) };
+  return { startAgentSession: agents.start, toolProbe: scriptedToolProbe({ "claude-code": { status: "ready" }, codex: { status: "ready" }, grok: { status: "ready" }, antigravity: { status: "not-installed" }, opencode: { status: "not-installed" }, pi: { status: "not-installed" }, gh: { status: "ready" }, git: { status: "ready" } }) };
 }

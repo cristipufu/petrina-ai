@@ -18,6 +18,6 @@ export function riskAgents(risk: "high" | "low" | undefined) {
   });
   const openings = (role: string) => agents.received().filter(prompt => prompt.roleId.replaceAll("-", " ") === role && prompt.turn === 1).map(prompt => prompt.text);
   return { start: agents.start, openings,
-    toolProbe: scriptedToolProbe({ "claude-code": { status: "ready" }, codex: { status: "ready" }, grok: { status: "ready" }, antigravity: { status: "not-installed" }, gh: { status: "not-installed" }, git: { status: "ready" } }),
+    toolProbe: scriptedToolProbe({ "claude-code": { status: "ready" }, codex: { status: "ready" }, grok: { status: "ready" }, antigravity: { status: "not-installed" }, opencode: { status: "not-installed" }, pi: { status: "not-installed" }, gh: { status: "not-installed" }, git: { status: "ready" } }),
   };
 }

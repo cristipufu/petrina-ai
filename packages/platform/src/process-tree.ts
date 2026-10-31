@@ -47,10 +47,12 @@ export function processList(args: readonly string[], timeout: number, maxBuffer?
   }).catch(() => undefined); // A sandbox can reject the spawn synchronously.
 }
 
-const WINDOWS_COMMAND_LIST =
-  "$ErrorActionPreference='Stop'; " +
-  "foreach ($p in @(Get-CimInstance -ClassName Win32_Process -Property ProcessId,ParentProcessId,CommandLine)) { " +
-  "\"$($p.ProcessId) $($p.ParentProcessId) R $($p.CommandLine -replace '[\\r\\n]+',' ')\" }";
+const WINDOWS_COMMAND_LIST = [
+  "$PSModuleAutoLoadingPreference='None'",
+  "$ErrorActionPreference='Stop'",
+  "foreach ($p in ([wmisearcher]'SELECT ProcessId,ParentProcessId,CommandLine FROM Win32_Process').Get()) "
+    + "{ [string]$p.ProcessId + ' ' + [string]$p.ParentProcessId + ' R ' + ([string]$p.CommandLine -replace '[\\r\\n]+',' ') }",
+].join("; ");
 
 /** Every running process on Windows with its command line, formatted for folder-scoped snapshots. */
 export function windowsCommandList(timeout = 10_000, maxBuffer = 32 * 1024 * 1024): Promise<string | undefined> {
@@ -59,7 +61,7 @@ export function windowsCommandList(timeout = 10_000, maxBuffer = 32 * 1024 * 102
     let timer: ReturnType<typeof setTimeout> | undefined;
     const child = execFile(
       "powershell.exe",
-      ["-NoProfile", "-NonInteractive", "-InputFormat", "None", "-Command", WINDOWS_COMMAND_LIST],
+      ["-NoProfile", "-NonInteractive", "-Command", WINDOWS_COMMAND_LIST],
       { timeout: budget, maxBuffer, windowsHide: true },
       (error, stdout) => {
         resolve(error || child.stdout?.readableEnded === false ? undefined : stdout);

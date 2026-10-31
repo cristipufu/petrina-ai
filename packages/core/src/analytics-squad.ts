@@ -192,7 +192,14 @@ export type UsageViewFor<R extends UsageRequest> = R extends { view: "readings" 
           ? TodayUsage
           : AnalyticsUsage;
 
-const TOOL_NAMES: Record<Id, string> = { "claude-code": "Claude Code", codex: "Codex", grok: "Grok", antigravity: "Antigravity" };
+const TOOL_NAMES: Record<Id, string> = {
+  "claude-code": "Claude Code",
+  codex: "Codex",
+  grok: "Grok",
+  antigravity: "Antigravity",
+  opencode: "OpenCode",
+  pi: "Pi",
+};
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 /** Today; today and the 6 days before; today and the 29 days before. Counted from local midnight. */

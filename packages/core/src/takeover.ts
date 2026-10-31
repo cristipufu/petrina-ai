@@ -10,6 +10,8 @@ export const TAKE_OVER_TOOLS: Readonly<Record<string, string>> = {
   codex: "Codex",
   grok: "Grok",
   antigravity: "Antigravity",
+  opencode: "OpenCode",
+  pi: "Pi",
 };
 
 export const TAKE_OVER_WORDS = {

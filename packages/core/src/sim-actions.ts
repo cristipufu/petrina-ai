@@ -266,7 +266,8 @@ export function simSendMessage(rt: SimRuntime, d: Draft, task: DraftTask, trimme
   }
   const message = { id: simId(d, task.id), text: trimmed, at: d.now, mode };
   const tool = d.profiles.find(profile => profile.id === task.agent?.profileId)?.toolId;
-  if (mode === "now" && task.agent && task.state === "running" && tool !== "antigravity") {
+  const noLiveInput = tool === "antigravity" || tool === "opencode";
+  if (mode === "now" && task.agent && task.state === "running" && !noLiveInput) {
     simSay(d, task, "you", trimmed);
     task.session.at(-1)!.coordinatorMessageId = message.id;
     simLog(d, task, "you", "You sent a message");
@@ -290,7 +291,7 @@ export function simSendMessage(rt: SimRuntime, d: Draft, task: DraftTask, trimme
   }
   task.queued.push({
     ...message,
-    ...(mode === "now" && tool === "antigravity" ? { deliveries: { main: {
+    ...(mode === "now" && noLiveInput ? { deliveries: { main: {
     state: "waiting" as const,
     reason: "unsupported" as const,
     toolId: tool

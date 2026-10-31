@@ -6,7 +6,7 @@ import { createVerifierBallots } from "../../src/verifier-host.js";
 export async function verifierSelection(owner: EngineCaseOwner, root: string, utilization: number) {
   const f = await reviewRecords(owner, root, { toolProbe: scriptedToolProbe({
       "claude-code": { status: "ready" }, codex: { status: "ready" }, grok: { status: "ready" }, antigravity: { status: "logged-out" },
-      gh: { status: "unknown" }, git: { status: "ready" },
+      opencode: { status: "not-installed" }, pi: { status: "not-installed" }, gh: { status: "unknown" }, git: { status: "ready" },
     }) }, false);
   try {
     f.engine.schedule = () => {};

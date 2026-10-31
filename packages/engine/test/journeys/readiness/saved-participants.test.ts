@@ -24,7 +24,7 @@ function engineIn(caseOwner: EngineCaseOwner, root: string, checkTimeoutMs = 8_0
   const fakes = new Fakes(join(root, "fake"));
   // Flags each tool's next readiness check gets; agent turns ignore them.
   const inChecks: Record<string, string[]> = {};
-  const name = { "claude-code": "Claude Code", codex: "Codex", grok: "Grok", antigravity: "Antigravity" } as Record<string, string>;
+  const name = { "claude-code": "Claude Code", codex: "Codex", grok: "Grok", antigravity: "Antigravity", opencode: "OpenCode", pi: "Pi" } as Record<string, string>;
   const baseProbe = privateAgentToolProbe();
   const scriptedProbe: ToolProbe = {
     absent: (id) => baseProbe.absent(id),
@@ -604,7 +604,7 @@ describe.concurrent("a review group's pending readiness decision", () => {
     // Two Codex seats share one planned profile; the other tools are out, so the review stays on Claude Code and Codex.
     const f = await fixture(caseOwner, { seats: ["opus-high", "sol-high", "sol-high"] });
     try {
-      for (const toolId of ["grok", "antigravity"]) {
+      for (const toolId of ["grok", "antigravity", "opencode", "pi"]) {
         Object.assign(f.check(toolId), { status: "logged-out" });
         f.engine.s.tools.find((tool) => tool.id === toolId)!.status = "logged-out";
       }

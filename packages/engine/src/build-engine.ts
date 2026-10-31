@@ -230,7 +230,12 @@ async function verifyEmbeddedAcpTranslators(binaryPath: string, tempRoot: string
     throw new Error(`Compiled petrina --version failed (exit ${cliCode}): ${cliStderr || cliStdout}`);
   }
 
-  for (const subcommand of ["__internal-claude-acp", "__internal-codex-acp", "__internal-agy-acp"] as const) {
+  for (const subcommand of [
+    "__internal-claude-acp",
+    "__internal-codex-acp",
+    "__internal-agy-acp",
+    "__internal-pi-acp",
+  ] as const) {
     const versionRun = Bun.spawn([binaryPath, subcommand, "--version"], {
       cwd: tempRoot,
       stdin: "ignore",
@@ -253,6 +258,7 @@ async function verifyEmbeddedAcpTranslators(binaryPath: string, tempRoot: string
     ["__internal-claude-acp", "claude"],
     ["__internal-codex-acp", "codex"],
     ["__internal-agy-acp", "agy"],
+    ["__internal-pi-acp", "pi"],
   ] as const) {
     const missingCliRun = Bun.spawn([binaryPath, subcommand], {
       cwd: tempRoot,

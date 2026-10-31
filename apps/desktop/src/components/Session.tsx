@@ -488,7 +488,8 @@ function Composer({ task, find, drafts, focusRequest, onFocused }: {
           ? mode === "queue"
             ? "Waits until the current turn finishes. Enter sends, Shift+Enter starts a new line."
             : mode === "interrupt" ? "Stops the current turn, then sends your message."
-            : tool === "antigravity" ? "Antigravity cannot take live guidance. Your message waits until the turn finishes."
+            : tool === "antigravity" || tool === "opencode"
+              ? `${tool === "opencode" ? "OpenCode" : "Antigravity"} cannot take live guidance. Your message waits until the turn finishes.`
             : "Tries to reach every agent still working in this step. Enter sends, Shift+Enter starts a new line."
           : task.driving
             ? "You're driving in your terminal. Delivered when you hand back."

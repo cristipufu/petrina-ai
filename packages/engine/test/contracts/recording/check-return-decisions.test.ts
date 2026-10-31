@@ -13,7 +13,7 @@ afterAll(() => cases.close());
 // unchanged Builder replies are explicit observations; command execution and ACP live in their anchors.
 for (const before of ["review", "acceptance"] as const) it(`persists unchanged check-return claims at the ${before} decision`, () => cases.use("check-return-record-", async owner => {
   const options = { agentCommand: () => undefined, usageCommands: { codex: null, grok: null }, terminals: () => [],
-    toolProbe: scriptedToolProbe({ codex: { status: "not-installed" }, "claude-code": { status: "not-installed" }, grok: { status: "not-installed" }, antigravity: { status: "not-installed" }, git: { status: "ready" }, gh: { status: "not-installed" } }) };
+    toolProbe: scriptedToolProbe({ codex: { status: "not-installed" }, "claude-code": { status: "not-installed" }, grok: { status: "not-installed" }, antigravity: { status: "not-installed" }, opencode: { status: "not-installed" }, pi: { status: "not-installed" }, git: { status: "ready" }, gh: { status: "not-installed" } }) };
   let engine = owner.open(join(owner.root, "data"), options);
   engine.schedule = () => {};
   await engine.waitUntilReady(); owner.check();

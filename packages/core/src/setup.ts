@@ -6,9 +6,9 @@
 import type { Id, InboxItem, State } from "./model.js";
 
 /** What Petrina checks: the agent tools, the GitHub CLI, and what Petrina itself needs. */
-export type CheckId = "claude-code" | "codex" | "grok" | "antigravity" | "gh" | "git";
+export type CheckId = "claude-code" | "codex" | "grok" | "antigravity" | "opencode" | "pi" | "gh" | "git";
 
-/** The two starter tools, in the order the squad prefers them; Grok and Antigravity join once their checks find them (see agentTools). */
+/** The two starter tools, in the order the squad prefers them; installed extra tools join once their checks find them (see agentTools). */
 export const AGENT_TOOLS = ["claude-code", "codex"] as const;
 
 /**
@@ -67,6 +67,8 @@ export const CHECK_NAMES: Record<CheckId, string> = {
   codex: "Codex",
   grok: "Grok",
   antigravity: "Antigravity",
+  opencode: "OpenCode",
+  pi: "Pi",
   gh: "GitHub CLI",
   git: "Git",
 };
@@ -99,6 +101,8 @@ const GUIDES: Record<CheckId, { install: string; login?: string }> = {
   codex: { install: "https://developers.openai.com/codex/cli", login: "https://developers.openai.com/codex/auth" },
   grok: { install: "https://docs.x.ai/build/overview", login: "https://docs.x.ai/build/cli/reference" },
   antigravity: { install: "https://antigravity.google/docs/cli/install/", login: "https://antigravity.google/docs/cli/reference" },
+  opencode: { install: "https://opencode.ai/docs", login: "https://opencode.ai/docs/providers" },
+  pi: { install: "https://pi.dev", login: "https://pi.dev" },
   gh: { install: "https://github.com/cli/cli#installation", login: "https://cli.github.com/manual/gh_auth_login" },
   git: { install: "https://git-scm.com/downloads" },
 };
@@ -112,6 +116,12 @@ const INSTALL: Record<CheckId, PerPlatform> = {
     linux: "curl -fsSL https://antigravity.google/cli/install.sh | bash",
     win32: "irm https://antigravity.google/cli/install.ps1 | iex",
   },
+  opencode: {
+    darwin: "curl -fsSL https://opencode.ai/install | bash",
+    linux: "curl -fsSL https://opencode.ai/install | bash",
+    win32: "npm install -g opencode-ai",
+  },
+  pi: "npm install -g --ignore-scripts @earendil-works/pi-coding-agent",
   gh: { darwin: "brew install gh", win32: "winget install --id GitHub.cli", linux: "sudo apt install gh" },
   git: { darwin: "xcode-select --install", win32: "winget install --id Git.Git -e", linux: "sudo apt install git" },
 };
@@ -121,6 +131,8 @@ const LOGIN: Partial<Record<CheckId, string>> = {
   codex: "codex login",
   grok: "grok login",
   antigravity: "agy",
+  opencode: "opencode auth login",
+  pi: "pi",
   gh: "gh auth login",
 };
 
@@ -172,7 +184,16 @@ export function fixFor(id: CheckId, status: CheckStatus, platform: Platform): Fi
 }
 
 /** The program behind each check, to see whether it runs at all. */
-const PROGRAM: Record<CheckId, string> = { "claude-code": "claude", codex: "codex", grok: "grok", antigravity: "agy", gh: "gh", git: "git" };
+const PROGRAM: Record<CheckId, string> = {
+  "claude-code": "claude",
+  codex: "codex",
+  grok: "grok",
+  antigravity: "agy",
+  opencode: "opencode",
+  pi: "pi",
+  gh: "gh",
+  git: "git",
+};
 
 /** The fix shown on a Stuck item for a tool that would not start, when its check found nothing wrong. */
 export function wontStartFix(id: CheckId, platform: Platform): Fix {
@@ -192,11 +213,11 @@ export function checkOf(checks: readonly ToolCheck[] | undefined, id: CheckId): 
 const present = (status: CheckStatus) => status === "ready" || status === "unknown";
 
 /**
- * The agent tools on this machine's list: Claude Code and Codex always, and Grok and Antigravity once their
- * checks have found them installed. The squad can run a whole task on any one of them.
+ * The agent tools on this machine's list: Claude Code and Codex always, and Grok, Antigravity, OpenCode and Pi
+ * once their checks have found them installed. The squad can run a whole task on any one of them.
  */
 export function agentTools(checks: readonly ToolCheck[] | undefined): CheckId[] {
-  const extras = (["grok", "antigravity"] as const).filter(id => checks?.some(check => check.id === id && check.status !== "not-installed"));
+  const extras = (["grok", "antigravity", "opencode", "pi"] as const).filter(id => checks?.some(check => check.id === id && check.status !== "not-installed"));
   return [...AGENT_TOOLS, ...extras];
 }
 

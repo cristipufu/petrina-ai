@@ -10,6 +10,8 @@ const observed: Pick<ToolCheck, "id" | "status" | "account" | "detail">[] = [
   { id: "codex", status: "ready" },
   { id: "grok", status: "ready" },
   { id: "antigravity", status: "ready" },
+  { id: "opencode", status: "ready" },
+  { id: "pi", status: "ready" },
   { id: "gh", status: "unknown", detail: "This test must supply a scripted GitHub command." },
   { id: "git", status: "ready" },
 ];
