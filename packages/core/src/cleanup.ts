@@ -2,6 +2,7 @@
 // is removed to free disk space. The branch and the task's history stay.
 // The engine and the simulator share these rules and words so the demo cannot drift from the real thing.
 
+import { hasNoProductChanges } from "./direct-tasks.js";
 import type { Cleanup, Task } from "./model.js";
 import { displayTask } from "./repositories.js";
 
@@ -25,7 +26,7 @@ export function markedDoneUnconfirmed(task: Pick<Task, "state">, work: { cleanup
 /** Marking work done is not evidence that its pull request ended, including work saved by older versions. */
 export function needsPullRequestCheck(task: Task): boolean {
   task = displayTask(task);
-  if (task.cleanup?.removedAt !== undefined) return false;
+  if (task.cleanup?.removedAt !== undefined || hasNoProductChanges(task)) return false;
   return task.cleanup?.foreignPullRequest !== undefined || task.cleanup?.pullRequest === "unconfirmed" || (task.state === "done" && task.delivery === "pull-request" && !task.pr && task.cleanup?.pullRequest !== "none");
 }
 

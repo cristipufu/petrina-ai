@@ -93,6 +93,9 @@ export function gateStatus(task: Task, gate: GateKind): string {
   const unverified = task.brief?.acceptance.filter((item) => item.verification === "blocked").length ?? 0;
   if (unverified) return `${unverified === 1 ? "1 acceptance check could not be verified" : `${unverified} acceptance checks could not be verified`}. Your call`;
   if (restoredAcceptance(task)) return "Acceptance could not be verified. Your call";
+  if (task.plan && !task.plan.stages.some((stage) => stage.kind === "review-chain")) {
+    return "Work done. Waiting for your OK to ship";
+  }
   return "Reviews done. Waiting for your OK to ship";
 }
 
@@ -126,7 +129,10 @@ export function afterChangesAsked(task: DeepMutable<Task>, kind: InboxKind, note
   } else if (kind === "delivery") {
     delete task.reviewDecision;
     task.sentBack = (task.sentBack ?? 0) + 1;
-    const index = lastIndexWhere(stages, (stage) => roleForTask(roles, stage.roleId, task)?.result === "build" && stage.kind === "do");
+    const buildIndex = lastIndexWhere(stages, (stage) => roleForTask(roles, stage.roleId, task)?.result === "build" && stage.kind === "do");
+    const index = buildIndex >= 0
+      ? buildIndex
+      : lastIndexWhere(stages, (stage) => !!roleForTask(roles, stage.roleId, task)?.canEdit && stage.kind === "do");
     if (index >= 0) {
       task.stageIndex = index;
       task.fixing = true;

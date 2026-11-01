@@ -52,7 +52,11 @@ function waitKindOf(task: TaskState, ctx: WorkflowContext): WaitKind | undefined
 }
 
 /** The seat an input or result belongs to, independent of a usage stand-in: the reviewer position, the vote place (older records: the voter's planned profile), or the role. */
-export function seatOf(entry: Pick<JourneyAgentInput, "roleId" | "profileId" | "reviewerKey" | "requestedProfileId" | "place">, roles: WorkflowContext["roles"], task?: Pick<TaskState, "maintenance">): string {
+export function seatOf(
+  entry: Pick<JourneyAgentInput, "roleId" | "profileId" | "reviewerKey" | "requestedProfileId" | "place">,
+  roles: WorkflowContext["roles"],
+  task?: Pick<TaskState, "maintenance" | "direct">,
+): string {
   if (entry.reviewerKey !== undefined) return `reviewer:${entry.reviewerKey}`;
   const role = roleForTask(roles, entry.roleId, task);
   if (role?.result === "votes") return `verifier:${entry.place ?? entry.requestedProfileId ?? entry.profileId}`;
@@ -60,7 +64,12 @@ export function seatOf(entry: Pick<JourneyAgentInput, "roleId" | "profileId" | "
 }
 
 /** A result's recorded input identifies its seat even when peers share a role and profile. Ambiguous older records stay unavailable. */
-export function resultSeatOf(step: JourneyStep, result: NonNullable<JourneyStep["agentResults"]>[number], roles: WorkflowContext["roles"], task?: Pick<TaskState, "maintenance">): string | undefined {
+export function resultSeatOf(
+  step: JourneyStep,
+  result: NonNullable<JourneyStep["agentResults"]>[number],
+  roles: WorkflowContext["roles"],
+  task?: Pick<TaskState, "maintenance" | "direct">,
+): string | undefined {
   if (result.inputIndex !== undefined) {
     const input = step.agentInputs?.[result.inputIndex];
     return input && input.roleId === result.roleId && input.profileId === result.profileId ? seatOf(input, roles, task) : undefined;
@@ -84,6 +93,7 @@ function resultSummary(value: unknown, result: Role["result"] | undefined): stri
       return `${tally("pass")} pass, ${tally("fail")} fail, ${tally("blocked")} could not be verified${text("summary") ? `: ${text("summary")}` : ""}`;
     }
     case "objections": return `${count("objections")} objection${count("objections") === 1 ? "" : "s"}`;
+    case "check-discovery": return `${count("checks")} check${count("checks") === 1 ? "" : "s"}`;
     case "brief": return text("summary") ?? "brief";
     case "plan": return `plan with ${Array.isArray(v.stages) ? (v.stages as unknown[]).length : 0} stages`;
     default: return text("summary") ?? text("notes") ?? "result handed back";

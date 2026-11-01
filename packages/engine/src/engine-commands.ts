@@ -24,10 +24,11 @@ import type { TaskCommands } from "./task-commands.js";
 import type { ToolChecks } from "./tool-checks.js";
 
 type KernelOwnedCommandKeys = "historyPage" | "taskDetails" | "taskDetailsDelta" | "publicMessage";
-type WidenedCommandKeys = "addTask" | "setAfter" | "answer" | "sendMessage" | "retry" | "approve";
+type WidenedCommandKeys = "addTask" | "discoverProductChecks" | "setAfter" | "answer" | "sendMessage" | "retry" | "approve";
 
 export interface EngineBoundCommands extends Omit<Commands, KernelOwnedCommandKeys | WidenedCommandKeys> {
   addTask(input: NewTaskInput, schedule?: boolean): Id;
+  discoverProductChecks(productId: Id, profileId?: Id, schedule?: boolean): Id;
   setAfter(taskId: Id, after: readonly Id[]): void;
   answer(itemId: Id, answer: string, context?: SaidContext, how?: AskAnswer): void;
   sendMessage(taskId: Id, text: string, mode?: "now" | "queue" | "interrupt", clientId?: Id): Id | undefined;
@@ -87,6 +88,8 @@ export function bindEngineCommands(owners: EngineCommandOwners): EngineBoundComm
     setProductDelivery: (productId, delivery, approveDelivery) =>
       catalogCommands.setProductDelivery(productId, delivery, approveDelivery),
     setProductChecks: (productId, checks) => catalogCommands.setProductChecks(productId, checks),
+    discoverProductChecks: (productId, profileId, schedule = true) =>
+      catalogCommands.discoverProductChecks(productId, profileId, schedule),
     setProductCheckSetup: (productId, requirements) => catalogCommands.setProductCheckSetup(productId, requirements),
     setProductRemoteChecks: (productId, checks) => catalogCommands.setProductRemoteChecks(productId, checks),
     updateProduct: (productId, settings) => catalogCommands.updateProduct(productId, settings),

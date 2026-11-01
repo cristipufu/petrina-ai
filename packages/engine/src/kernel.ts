@@ -355,9 +355,15 @@ export abstract class Kernel {
 
   unblock(task: RuntimeTask): void {
     resumeAgentAfterReply(task, this.s.inbox.some((item) => item.taskId === task.id && item.blocking), Date.now());
+    const stage = task.stageIndex >= 0 ? task.plan?.stages[task.stageIndex] : undefined;
+    const stageOwnsAgent = stage?.kind === "do" && stage.roleId === task.agent?.roleId;
     if (!task.holdsSlot && task.state === "waiting") {
       task.statusLine = this.waitingLine(task);
-    } else if (task.state === "running" && this.role(task.agent?.roleId ?? "", task)?.result === "check-discovery") {
+    } else if (
+      task.state === "running"
+      && !stageOwnsAgent
+      && this.role(task.agent?.roleId ?? "", task)?.result === "check-discovery"
+    ) {
       // An answer can continue discovery in place, without the driver's start path. Its released capacity stays released;
       // only the current activity is restored for the agent that is still preparing checks.
       task.checkActivity = {

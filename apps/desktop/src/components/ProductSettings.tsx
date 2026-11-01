@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import {
+  activeCheckDiscoveryTask,
   DELIVERY_LABEL,
   DELIVERY_MODES,
   commandInputText,
@@ -137,7 +138,7 @@ export function ProductEditor({ product, state, onClose, onRemoved }: { product:
           </div>
         </div>
       </FormSection>
-      <ProductChecks product={product} live={live} onState={setCheckState} />
+      <ProductChecks product={product} state={state} live={live} onState={setCheckState} />
       <ProductCheckSetup product={product} live={live} onState={setSetupState} />
       <ProductRemoteChecks product={product} live={live} onState={setRemoteCheckState} />
       <FormSection title="Remove product" description="Remove this product and its task history from Petrina. Your repository and GitHub stay as they are.">
@@ -183,13 +184,19 @@ export function ProductEditor({ product, state, onClose, onRemoved }: { product:
  * The commands that prove this product works. The Check finder works them out from the repository
  * (its CI first); Petrina runs them itself on every task. The coordinator can set them by hand.
  */
-function ProductChecks({ product, live, onState }: { product: Product; live: boolean; onState: (state: { busy: boolean; dirty: boolean }) => void }) {
+function ProductChecks({ product, state, live, onState }: {
+  product: Product;
+  state: State;
+  live: boolean;
+  onState: (state: { busy: boolean; dirty: boolean }) => void;
+}) {
   const [editing, setEditing] = useState(false);
   const [rows, setRows] = useState<ProductCommandRow[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [rowErrors, setRowErrors] = useState<ProductCommandErrors>({});
   const checks = product.checks ?? [];
+  const activeDiscoveryId = activeCheckDiscoveryTask(state.tasks, state.roles, product.id);
   const savedRows = checks.length ? checks.map((check, index) => ({ id: `check-${index}`, name: check.name, command: commandInputText(check.argv) }))
     : [{ id: "check-0", name: "", command: "" }];
   const values = (entries: readonly ProductCommandRow[]) => entries.map(({ name, command }) => ({ name, command }));
@@ -239,7 +246,25 @@ function ProductChecks({ product, live, onState }: { product: Product; live: boo
     }
     void run(rows.map(row => ({ name: row.name.trim(), command: row.command })));
   };
-  const source = product.checksBy === "coordinator" ? "Set by you." : product.checksBy === "finder" ? "Found by the Check finder from the repository, its CI first. It looks again when the CI or build files change." : "Not found yet: the Check finder works them out at this product's first review.";
+  const discover = async () => {
+    if (!live || busy || activeDiscoveryId) return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      await sim.discoverProductChecks(product.id);
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : String(failure));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const source = activeDiscoveryId
+    ? "The Check finder is working them out now."
+    : product.checksBy === "coordinator"
+      ? "Set by you."
+      : product.checksBy === "finder"
+        ? "Found by the Check finder from the repository, its CI first. It looks again when the CI or build files change."
+        : "Not found yet: choose Find checks now, or the Check finder works them out at this product's first review.";
   return (
     <FormSection title="Automated checks" description={<>Run before review and the delivery check. {source}</>}>
       {editing ? (
@@ -283,6 +308,9 @@ function ProductChecks({ product, live, onState }: { product: Product; live: boo
           )}
           <div className="row-actions">
             <button className="btn" disabled={!live || busy} onClick={start}>{checks.length ? "Edit checks" : "Set checks by hand"}</button>
+            <button className="btn quiet" disabled={!live || busy || !!activeDiscoveryId} onClick={() => void discover()}>
+              {activeDiscoveryId ? "Finding checks…" : "Find checks now"}
+            </button>
             {product.checksBy !== undefined && <button className="btn quiet" disabled={!live || busy} onClick={() => void run(null)}>Find again</button>}
           </div>
         </>

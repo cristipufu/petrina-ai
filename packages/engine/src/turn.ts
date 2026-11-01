@@ -199,7 +199,7 @@ export class Turns implements TurnAttemptCollaborators {
     const { task } = scope;
     if (
       !this.k.role(roleId, task)
-      || !(task.maintenance?.profile.id === plannedId || this.k.profile(plannedId))
+      || !(task.maintenance?.profile.id === plannedId || task.direct?.profile.id === plannedId || this.k.profile(plannedId))
       || (this.k.role(roleId, task)?.result !== "plan" && !this.k.productOf(scope))
     ) {
       throw new Error(`Unknown role or product: ${roleId} on ${plannedId}`);
@@ -256,7 +256,7 @@ export class Turns implements TurnAttemptCollaborators {
     if (
       !this.k.role(roleId, task)
       || !this.k.productOf(scope)
-      || !(task.maintenance?.profile.id === plannedId || this.k.profile(plannedId))
+      || !(task.maintenance?.profile.id === plannedId || task.direct?.profile.id === plannedId || this.k.profile(plannedId))
     ) {
       throw new Error(`Unknown role or profile: ${roleId} on ${plannedId}`);
     }

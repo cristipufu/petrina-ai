@@ -150,7 +150,13 @@ export function ReviewView({ task, now, find, onOpen }: { task: Task; now: numbe
   const reviewing = reviews.some((index) => index <= task.stageIndex);
   // Reaching review is not completion: all planned review steps must be behind us.
   const reviewed = reviews.length > 0 && (reviews.every((index) => index < task.stageIndex) || task.state === "pr-open" || task.state === "done");
-  const emptyReview = reviewed ? "Nothing to fix. Every reviewer passed it." : reviewing ? "No findings reported yet." : "Reviews start after the build.";
+  const emptyReview = reviewed
+    ? "Nothing to fix. Every reviewer passed it."
+    : reviewing
+      ? "No findings reported yet."
+      : task.direct && !reviews.length
+        ? "This single-agent task runs without reviewers."
+        : "Reviews start after the build.";
   const together = task.findings.filter((finding) => finding.productIds?.length !== 1 || !task.repositories?.some((work) => work.productId === finding.productIds?.[0]));
   if (task.repositories) return <>
     {task.repositories.map((work) => <section className="sheet-section repository-row" key={work.productId}>

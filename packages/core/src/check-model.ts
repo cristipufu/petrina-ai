@@ -38,6 +38,8 @@ export interface Product {
   checkSetup?: ProductCheckSetup;
   /** Who set the checks: the Check finder agent, or the coordinator by hand (never replaced on its own). */
   checksBy?: "finder" | "coordinator";
+  /** When the coordinator last saved checks by hand, so a discovery run started earlier does not overwrite a newer manual save. */
+  checksUpdatedAt?: number;
   /** A fingerprint of the CI and build files the finder read: when they change, it looks again. */
   checksFingerprint?: string;
   /** What the Check finder found for each recent set of CI and build files: tasks on different bases each reuse theirs. */

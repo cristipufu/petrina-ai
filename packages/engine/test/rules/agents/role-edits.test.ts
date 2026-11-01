@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { addRole, draftOf, editRole, libraryRoles, NO_ROLE_CHANGES, ROLE_STARTS, DESIGN_OBJECTION_RULE } from "@petrina/core";
 import { ASK_FOR_SCREEN, MAY_CHANGE, buildPrompt, continuePrompt, roleCard } from "../../../src/prompts.js";
+import { COMPLETE_CHECKS_RULE, hostChecksRule } from "../../../src/result-strategies.js";
 import { contractFor, plannerRoles, ROLE_CONTRACTS } from "../../../src/roles.js";
 import { promptContexts } from "../../fixtures/prompt-contexts.js";
 import before from "../../fixtures/role-contracts.json";
@@ -25,9 +26,9 @@ describe("saved role wording", () => {
         expect(now).toContain(plannerRoles(context.roles));
       } else if (context.role.result === "check-discovery") {
         const ending = "Hand back between one and eight checks, fastest first.";
-        const complete = "Where the repository defines a full local check, select that authoritative command. Focused, affected-only and early-feedback commands may complement it, but cannot replace it. If a required validation cannot run here, state that limitation instead of presenting a subset as complete validation.";
-        // Only this new gate requirement changes; retain the immutable baseline for all other wording.
-        expect(now).toBe(was.replace(ending, `${ending}\n${complete}`));
+        const taskHeader = `# The task: ${context.task.title}\n${context.task.description}`;
+        const productHeader = `# Product check discovery: ${context.product.name}\nDiscover the automated checks Petrina runs locally on ${context.product.name} (${context.product.repo}) across tasks.`;
+        expect(now).toBe(was.replace(taskHeader, productHeader).replace(ending, `${ending}\n${COMPLETE_CHECKS_RULE}\n${hostChecksRule()}`));
       } else expect(now).toBe(was);
     }
   });
@@ -66,14 +67,39 @@ describe("saved role wording", () => {
     expect(text).toContain("Always include exactly one builder stage before the review chain.");
     expect(text).toContain("Put every stage that may change the product before the final review chain.");
   });
-  for (const edited of [false, true]) it(`retains full-check discovery requirements with ${edited ? "edited" : "default"} wording`, () => {
+  for (const edited of [false, true]) it(`retains full-check and host-OS discovery requirements with ${edited ? "edited" : "default"} wording`, () => {
     const ctx = contexts["check-finder"]!;
     const role = edited ? { ...ctx.role, instructions: "Discover this repository's checks." } : ctx.role;
     const text = contractFor(role).instructions({ ...ctx, role });
+    expect(contractFor(role).reads).toEqual([]);
     expect(text).toContain("select that authoritative command");
     expect(text).toContain("cannot replace it");
     expect(text).toContain("state that limitation instead of presenting a subset as complete validation");
+    expect(text).toContain("runs locally on this");
+    expect(text).toContain("keep names and \"why\" reasons about the whole product, never a single task");
+    expect(text).toContain("Confirm each check's tool or runtime is installed and runs on this");
+    expect(text).toContain("leave out checks for other operating systems");
     if (edited) expect(text).toContain(role.instructions);
+  });
+  it("isolates fallback check discovery from feature task titles while naming the host OS", () => {
+    const ctx = contexts["check-finder"]!;
+    const fallbackPrompt = buildPrompt(ctx);
+    expect(fallbackPrompt).toContain(`# Product check discovery: ${ctx.product.name}`);
+    expect(fallbackPrompt).not.toContain(ctx.task.title);
+    expect(fallbackPrompt).not.toContain(ctx.task.description);
+    const directPrompt = buildPrompt({
+      ...ctx,
+      task: {
+        ...ctx.task,
+        title: "Find checks for Acme",
+        description: "Check scripts in package.json.",
+        direct: { productId: ctx.product.id, role: ctx.role, profile: ctx.profiles[0]! },
+      },
+    });
+    expect(directPrompt).toContain("# The task: Find checks for Acme");
+    expect(hostChecksRule("darwin")).toContain("macOS");
+    expect(hostChecksRule("linux")).toContain("Linux");
+    expect(hostChecksRule("win32")).toContain("Windows");
   });
 
   for (const [id, guidance] of [

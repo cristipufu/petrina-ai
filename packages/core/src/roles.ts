@@ -370,7 +370,13 @@ export function planUses(task: Pick<Task, "plan">, roleId: Id): boolean {
 /** Ordinary planning and task role pickers never include maintenance. */
 export function workflowRoles(roles: readonly Role[]): Role[] { return activeRoles(roles).filter(role => role.category !== "maintenance"); }
 
-/** Execution uses the role wording frozen when a routine queued its task. */
-export function roleForTask<R extends Pick<Role, "id">>(roles: readonly R[], id: Id, task?: Pick<Task, "maintenance">): R | Role | undefined {
-  return task?.maintenance?.role.id === id ? task.maintenance.role : roles.find(role => role.id === id);
+/** Execution uses the role wording frozen when a routine or single-agent task queued its run. */
+export function roleForTask<R extends Pick<Role, "id">>(
+  roles: readonly R[],
+  id: Id,
+  task?: { maintenance?: Task["maintenance"]; direct?: Task["direct"] },
+): R | Role | undefined {
+  if (task?.maintenance?.role.id === id) return task.maintenance.role;
+  if (task?.direct?.role.id === id) return task.direct.role;
+  return roles.find((role) => role.id === id);
 }

@@ -24,6 +24,20 @@ export function combinedBacklogInput(tasks: readonly Task[], ids: readonly Id[],
   ])) : value;
   const key = (task: Task) => JSON.stringify(stable([...choices(task)].sort((a, b) => a.productId.localeCompare(b.productId))));
   if (sources.some((task) => key(task) !== key(sources[0]!))) throw new Error("Choose tasks with the same products, starting points and delivery choices. Edit those choices first if needed.");
+  const firstDirect = sources[0]!.direct;
+  if (
+    sources.some(
+      (task) =>
+        Boolean(task.direct) !== Boolean(firstDirect)
+        || task.direct?.role.id !== firstDirect?.role.id
+        || task.direct?.profile.id !== firstDirect?.profile.id,
+    )
+  ) {
+    throw new Error("Choose tasks with the same execution mode, role and agent profile before combining them.");
+  }
+  if (firstDirect?.role.result === "check-discovery") {
+    throw new Error("Check-discovery tasks run one per product and cannot be combined.");
+  }
   const description = sources.map((task, index) => `${index + 1}. ${task.title}\nOriginal task: ${task.id}\n${task.description}`).join("\n\n");
   if (description.length > 8000) throw new Error("The combined request is too long. Select fewer tasks.");
   return {
@@ -34,6 +48,7 @@ export function combinedBacklogInput(tasks: readonly Task[], ids: readonly Id[],
     kind: sources.every((task) => task.kind === sources[0]!.kind) ? sources[0]!.kind : "feature",
     approvePlan: sources.some((task) => task.approvePlan),
     approveDelivery: sources.some((task) => task.approveDelivery),
+    ...(firstDirect ? { direct: { roleId: firstDirect.role.id, profileId: firstDirect.profile.id } } : {}),
     backlog: true
   };
 }

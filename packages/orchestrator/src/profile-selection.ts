@@ -105,7 +105,12 @@ export class ProfileSelection {
     const screen = task?.screen?.roleId === roleId && task?.screen?.profileId === plannedId
       && (reviewerKey === undefined || !task.screen.member || task.screen.member === `review-${reviewerKey}`);
     const saved = task?.maintenance && task.maintenance.role.id === roleId ? task.maintenance.profile : undefined;
-    const planned = saved ?? this.host.current().profiles.find(profile => profile.id === plannedId) ?? this.host.current().profiles.find(profile => profile.id === this.host.onUsable(plannedId));
+    const direct = task?.direct?.profile.id === plannedId ? task.direct.profile : undefined;
+    const planned =
+      saved
+      ?? this.host.current().profiles.find((profile) => profile.id === plannedId)
+      ?? direct
+      ?? this.host.current().profiles.find((profile) => profile.id === this.host.onUsable(plannedId));
     if (saved) {
       if (task?.maintenance?.settingsDecision && !task.maintenance.settingsDecision.choice) return {
         kind: "none",

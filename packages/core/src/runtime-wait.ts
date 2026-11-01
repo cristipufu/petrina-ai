@@ -1,3 +1,4 @@
+import { hasNoProductChanges } from "./direct-tasks.js";
 import type { DeepMutable } from "./flow.js";
 import type { HistoryItem } from "./history.js";
 import { openStep, syncRuntimeWaitJourney } from "./journey-recording.js";
@@ -29,7 +30,7 @@ export function validateTaskDependencies(taskId: Id, after: readonly Id[], find:
   if (ids.some((id) => reaches(id))) throw new Error("Those tasks would wait for each other. Remove a prerequisite that already waits on this task.");
   return ids;
 }
-export type RuntimeWaitTask = Pick<TaskState, "id" | "title" | "state"> & Partial<Pick<TaskState, "repository" | "repositories" | "combinedInto">> & Partial<RepositoryState> & Pick<HistoryItem, "deliveries" | "maintenance">;
+export type RuntimeWaitTask = Pick<TaskState, "id" | "title" | "state"> & Partial<Pick<TaskState, "repository" | "repositories" | "combinedInto" | "noProductChanges">> & Partial<RepositoryState> & Pick<HistoryItem, "deliveries" | "maintenance">;
 export type RuntimeWaitLookup = (id: Id) => RuntimeWaitTask | undefined;
 
 export interface RuntimePrerequisite {
@@ -50,7 +51,7 @@ export function runtimePrerequisite(id: Id, task: RuntimeWaitTask | undefined, s
     ?? task.deliveries?.map(work => ({ ...work }))
     ?? [task.repository ?? { ...task, productId: task.productId ?? "", delivery: task.delivery ?? "local" }];
   const publishing = works.filter(work => !work.nothingToPublish);
-  if (task.maintenance?.noProductChanges || works.length && !publishing.length) return task.state === "done"
+  if (hasNoProductChanges(task) || works.length && !publishing.length) return task.state === "done"
     ? { ...base, state: "finished with no product changes", decisionNeeded: true }
     : { ...base, state: "still in progress" };
   if (!works.length) return task.state === "done" ? {

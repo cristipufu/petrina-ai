@@ -1,4 +1,5 @@
 import { markedDoneUnconfirmed } from "./cleanup.js";
+import { hasNoProductChanges } from "./direct-tasks.js";
 import type { Id, TaskRepository, TaskState } from "./model.js";
 
 export type PublishingResult =
@@ -32,13 +33,16 @@ type Work = TaskRepository | NonNullable<TaskState["repository"]>;
 
 /** One product's recorded delivery result through the existing delivery and landing rules. Nothing is inferred from a general delivered marker. */
 export function publishingResult(
-  task: Pick<TaskState, "state" | "repositories"> & { maintenance?: Pick<NonNullable<TaskState["maintenance"]>, "noProductChanges"> },
+  task: Pick<TaskState, "state" | "repositories"> & {
+    noProductChanges?: boolean;
+    maintenance?: Pick<NonNullable<TaskState["maintenance"]>, "noProductChanges">;
+  },
   work: Work,
   interrupted: boolean,
 ): PublishingResult {
   const shared = work as Partial<TaskRepository>;
   if (work.shipping?.carriedOver) return { kind: "unknown", landed: false };
-  if (shared.nothingToPublish || task.maintenance?.noProductChanges) return { kind: "no-changes", landed: null };
+  if (shared.nothingToPublish || hasNoProductChanges(task)) return { kind: "no-changes", landed: null };
   if (markedDoneUnconfirmed(task, work)) {
     return {
       kind: "unconfirmed",

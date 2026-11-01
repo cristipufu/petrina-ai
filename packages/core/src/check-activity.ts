@@ -108,11 +108,16 @@ export function checkActivityDetails(activity: CheckActivity, tasks: Tasks): str
  * step, other than the Check finder, which only works out the checks. Without `roles`, any agent counts as work.
  */
 export function checksCurrent(
-  task: Pick<Task, "checkActivity" | "agent" | "state" | "maintenance">,
+  task: Pick<Task, "checkActivity" | "agent" | "state" | "maintenance" | "direct">
+    & Partial<Pick<Task, "plan" | "stageIndex">>,
   roles?: readonly Pick<Role, "id" | "result">[],
 ): boolean {
   if (!task.checkActivity || !["running", "waiting"].includes(task.state)) return false;
-  return !task.agent || (!!roles && roleForTask(roles, task.agent.roleId, task)?.result === "check-discovery");
+  if (!task.agent) return true;
+  const stage =
+    task.stageIndex !== undefined && task.stageIndex >= 0 ? task.plan?.stages[task.stageIndex] : undefined;
+  if (stage?.kind === "do" && stage.roleId === task.agent.roleId) return false;
+  return !!roles && roleForTask(roles, task.agent.roleId, task)?.result === "check-discovery";
 }
 
 const PURPOSE: Readonly<Record<CheckRunReason["purpose"], string>> = {

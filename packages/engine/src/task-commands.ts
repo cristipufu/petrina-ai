@@ -14,7 +14,9 @@ import {
   combinedBacklogInput,
   completeAll,
   createTaskState,
+  directTaskProblem,
   editBacklogRequest,
+  prepareDirectTask,
   queueBacklogTask,
   queueNeighbour,
   queueOf,
@@ -25,6 +27,7 @@ import {
   validateTaskDependencies,
   type Id,
   type NewTaskInput,
+  type State,
   type Task,
   type WorkChoice,
 } from "@petrina/core";
@@ -74,10 +77,22 @@ export class TaskCommands {
       { id: "", timelineId: "", now: Date.now(), priority: queueOf(this.engine.s.tasks).length },
       (id) => this.engine.task(id),
     );
+    if (input.direct) {
+      const chosenIds = task.selectedProducts?.length
+        ? task.selectedProducts.map((choice) => choice.productId)
+        : task.productId
+          ? [task.productId]
+          : [];
+      const problem = directTaskProblem(input.direct, chosenIds, this.engine.s as State);
+      if (problem) throw new Error(problem);
+    }
     let id = this.engine.id("task");
     while (this.engine.tracking.taskIdTaken(id)) id = this.engine.id("task");
     task.id = id;
     task.timeline[0]!.id = this.engine.id(id);
+    if (input.direct) {
+      prepareDirectTask(task, input.direct, this.engine.s as State);
+    }
     const product = this.engine.s.products.find((entry) => entry.id === task.productId);
     task.repository = {
       productId: task.productId,
@@ -214,6 +229,9 @@ export class TaskCommands {
   async setTaskStart(taskId: Id, choice: WorkChoice): Promise<void> {
     const task = this.engine.task(taskId);
     const scope = task ? executionFor(task) : undefined;
+    if (task?.direct || task?.maintenance) {
+      throw new Error("The starting point can be edited at the plan check before work starts.");
+    }
     if (task?.workValidating) throw new Error("Wait for validation to finish, then edit the choices.");
     if (task?.workRows) {
       if (!task.workRows.some((row) => row.choice.productId === choice.productId)) {
@@ -243,6 +261,8 @@ export class TaskCommands {
     const task = this.engine.task(taskId);
     const scope = task ? executionFor(task) : undefined;
     const editableAtPlan = !!task
+      && !task.direct
+      && !task.maintenance
       && !task.repositories?.some((entry) => entry.completedStages.length)
       && (!!task.repositories || !scope!.work.worktree)
       && this.engine.s.inbox.some((item) => item.taskId === taskId && ["plan", "stuck"].includes(item.kind));

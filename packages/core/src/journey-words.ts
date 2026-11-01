@@ -1,4 +1,5 @@
 import { markedDoneUnconfirmed } from "./cleanup.js";
+import { hasNoProductChanges } from "./direct-tasks.js";
 import type { HistoryItem } from "./history.js";
 import type { Cleanup, JourneyStep, JourneyWait, JourneyWork, Role, Task } from "./model.js";
 import { landingState } from "./repositories.js";
@@ -69,6 +70,7 @@ export const JOURNEY_WORDS = {
   noBlocking: "no blocking objections",
   notesReady: "notes ready",
   readyForReview: "ready for review",
+  readyForDelivery: "ready for checks and delivery",
   fixesReady: "fixes ready",
   checksFailed: (count: number) => `${plural(count, "check")} failed`,
   checksPassed: "checks passed",
@@ -115,12 +117,13 @@ export type Landing = "landed" | "awaiting-merge" | "closed" | "marked-done" | "
 
 export function landingOf(
   task: Pick<Task, "state" | "pr" | "release" | "landed"> & {
+    noProductChanges?: boolean;
     maintenance?: Pick<NonNullable<Task["maintenance"]>, "noProductChanges">;
     cleanup?: Pick<Cleanup, "markedDone" | "pullRequest">;
   },
 ): Landing {
   if (task.state === "cancelled") return "cancelled";
-  if (task.state === "done" && task.maintenance?.noProductChanges) return "no-changes";
+  if (task.state === "done" && hasNoProductChanges(task)) return "no-changes";
   // A pull request found after you marked the work done is not its delivery.
   const pr = markedDoneUnconfirmed(task, task) ? undefined : task.pr;
   if (task.release || task.landed || pr?.state === "merged") return "landed";
@@ -136,7 +139,7 @@ export function dependencyLanding(
   task: Parameters<typeof landingOf>[0] & Pick<Task, "repository" | "repositories"> & Pick<HistoryItem, "deliveries">,
 ): Landing {
   if (task.state === "cancelled") return "cancelled";
-  if (task.state === "done" && task.maintenance?.noProductChanges) return "no-changes";
+  if (task.state === "done" && hasNoProductChanges(task)) return "no-changes";
   // Engine records keep delivery on its repository owner; public task views flatten one owner.
   // Read every shared delivery so a successful lead cannot hide an unsuccessful companion.
   const deliveryLanding = (
@@ -169,6 +172,7 @@ export function taskLanding(task: Parameters<typeof dependencyLanding>[0]): Land
     const work = task.repository ?? task;
     return landingOf({
       state: task.state,
+      noProductChanges: task.noProductChanges,
       maintenance: task.maintenance,
       pr: work.pr,
       release: work.release,

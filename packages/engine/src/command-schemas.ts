@@ -110,6 +110,13 @@ export const ProfileDraftSchema = z
   })
   .strict();
 
+export const DirectTaskSelectionSchema = z
+  .object({
+    roleId: WireIdSchema,
+    profileId: WireIdSchema,
+  })
+  .strict();
+
 export const NewTaskWindowSchema = z.object({
   backlog: z.boolean().optional(),
   after: z.array(TaskIdSchema).max(20).optional(),
@@ -123,5 +130,6 @@ export const NewTaskWindowSchema = z.object({
   approvePlan: z.boolean().optional(),
   delivery: DeliveryModeSchema.optional(),
   approveDelivery: z.boolean().optional(),
+  direct: DirectTaskSelectionSchema.optional(),
   clientId: ClientIdSchema.optional(),
 });

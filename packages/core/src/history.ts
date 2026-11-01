@@ -4,6 +4,7 @@ import type { Cleanup, Id, State, StepRecord, Task } from "./model.js";
 import type { ReviewStats } from "./reviews.js";
 import { involvesProduct, taskProductIds } from "./repositories.js";
 import { markedDoneUnconfirmed } from "./cleanup.js";
+import { hasNoProductChanges } from "./direct-tasks.js";
 import { taskUsageSummaries, type TaskUsageSummary } from "./analytics.js";
 import type { WorkLogReader } from "./worklog.js";
 
@@ -14,6 +15,7 @@ export type HistoryItem = Pick<Task, "id" | "productId" | "title" | "kind" | "st
   usage?: TaskUsageSummary;
   /** Compact scheduling evidence; older summaries are refreshed by the archive reader. */
   blocksDependents?: boolean;
+  noProductChanges?: boolean;
   maintenance?: Pick<NonNullable<Task["maintenance"]>, "noProductChanges">;
   /** You marked one product's work done without a confirmed delivery; a pull request found later does not change that. */
   cleanup?: Pick<Cleanup, "markedDone">;
@@ -34,7 +36,7 @@ export type HistoryStatus = keyof typeof HISTORY_STATUSES;
 export function historyStatus(item: HistoryItem): HistoryStatus {
   if (item.combinedInto) return "combined";
   if (item.state === "cancelled") return "cancelled";
-  if (item.maintenance?.noProductChanges) return "no-changes";
+  if (hasNoProductChanges(item)) return "no-changes";
   if (item.deliveries?.length) {
     const statuses = new Set(item.deliveries.map(work => work.nothingToPublish ? "no-changes" : historyStatus(historyDeliveryItem(item, work))));
     // A repository with no changes adds no separate delivery outcome to a shared task.
@@ -110,7 +112,7 @@ export function historyItem(task: Task): HistoryItem {
       landed,
       localUpdate,
       nothingToPublish,
-      ...(markedDoneUnconfirmed(
+      ...(!work.nothingToPublish && !hasNoProductChanges(task) && markedDoneUnconfirmed(
       task,
       work
     ) ? { cleanup: { markedDone: true } } : {})
@@ -131,8 +133,9 @@ export function historyItem(task: Task): HistoryItem {
     release,
     landed,
     localUpdate,
+    ...(task.noProductChanges ? { noProductChanges: true } : {}),
     ...(task.maintenance?.noProductChanges ? { maintenance: { noProductChanges: true } } : {}),
-    ...(!task.repositories && markedDoneUnconfirmed(
+    ...(!task.repositories && !hasNoProductChanges(task) && markedDoneUnconfirmed(
     task,
     task
   ) ? { cleanup: { markedDone: true } } : {}),

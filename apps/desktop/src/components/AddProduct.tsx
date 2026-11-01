@@ -14,6 +14,7 @@ export function AddProductDialog({ waiting, onClose, onAdded }: { waiting?: stri
   const id = useId();
   const [path, setPath] = useState("");
   const [name, setName] = useState("");
+  const [findChecks, setFindChecks] = useState(true);
   const state = useSim();
   const status = useEngineStatus();
   const live = status.link === "live";
@@ -47,7 +48,11 @@ export function AddProductDialog({ waiting, onClose, onAdded }: { waiting?: stri
     try {
       const before = new Set(sim.getState().products.map((entry) => entry.id));
       const id = String(await sim.addProduct(path.trim(), name));
-      setAdded({ id, already: before.has(id) });
+      const already = before.has(id);
+      if (!already && findChecks) {
+        await Promise.resolve(sim.discoverProductChecks?.(id)).catch(() => undefined);
+      }
+      setAdded({ id, already });
     } catch (failure) {
       setError(failureText(failure));
     } finally {
@@ -143,6 +148,16 @@ export function AddProductDialog({ waiting, onClose, onAdded }: { waiting?: stri
             onChange={event => edit(() => setName(event.target.value))}
             onKeyDown={event => { if (event.key === "Enter") void add(); }}
           /></label>
+          <label className="toggle">
+            <input
+              type="checkbox"
+              checked={findChecks}
+              disabled={busy || picking || !!added}
+              onChange={(event) => setFindChecks(event.target.checked)}
+            />
+            Find automated checks now
+          </label>
+          <p className="hint">Queues the Check finder right away so checks are ready before your first task reaches review.</p>
         </FormSection>
         {!live && <p className="muted" role="status">Waiting for the engine before adding a product.</p>}
         {error && (

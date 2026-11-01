@@ -177,6 +177,15 @@ export function Overview({ task, state, find, onAboutNumbers, onReadSession, onP
         find,
         true
       )}</p>{task.maintenance.noProductChanges && <p>Completed · No product changes</p>}{task.maintenance.settingsDecision && <p>Requested: {task.maintenance.settingsDecision.requested}<br />Reported: {task.maintenance.settingsDecision.actual}<br />{task.maintenance.settingsDecision.choice === "keep" ? "You kept this run with its reported settings." : task.maintenance.settingsDecision.choice === "stop" ? "You stopped this run." : "Waiting for your decision in Inbox."}</p>}</section>}
+      {task.direct && (
+        <section className="sheet-section reading">
+          <h2>Single-agent task</h2>
+          <p>
+            {task.direct.role.name} · {profileText(task.direct.profile, find, true)}
+          </p>
+          {task.noProductChanges && <p>Completed · No product changes</p>}
+        </section>
+      )}
       {task.combinedInto && <section className="sheet-section reading"><h2>Combined request</h2><p>This request is part of <TaskLink
         taskId={task.combinedInto}
         find={find}

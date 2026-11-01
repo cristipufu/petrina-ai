@@ -30,8 +30,12 @@ export interface ProductSettings {
 export type ProductCheckSettingWork = DeepMutable<Pick<RepositoryState, "productId" | "checks">>;
 
 /** Save editable check declarations only; the caller owns persistence and supplies its actual executions. */
-export function configureProductChecks(product: DeepMutable<Pick<Product, "id" | "checks" | "checksBy" | "checksFingerprint" | "checksSeen">> | undefined,
-  checks: readonly { name: string; command: string }[] | null, executions: Iterable<ProductCheckSettingWork>): void {
+export function configureProductChecks(
+  product: DeepMutable<Pick<Product, "id" | "checks" | "checksBy" | "checksUpdatedAt" | "checksFingerprint" | "checksSeen">> | undefined,
+  checks: readonly { name: string; command: string }[] | null,
+  executions: Iterable<ProductCheckSettingWork>,
+  now?: number,
+): void {
   if (!product) throw new Error("This product is no longer in Petrina.");
   const parsed = checks === null ? [] : checks.map((check) => ({
     name: check.name.trim(),
@@ -44,11 +48,13 @@ export function configureProductChecks(product: DeepMutable<Pick<Product, "id" |
   if (checks === null) {
     delete product.checks;
     delete product.checksBy;
+    delete product.checksUpdatedAt;
     delete product.checksFingerprint;
     delete product.checksSeen;
   } else {
     product.checks = parsed;
     product.checksBy = "coordinator";
+    if (now !== undefined) product.checksUpdatedAt = now;
     delete product.checksFingerprint;
   }
 }

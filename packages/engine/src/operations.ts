@@ -104,6 +104,8 @@ export const OPERATIONS = [
       delivery: delivery.optional(),
       approveDelivery: z.boolean().optional(),
       startFrom: StartFromSchema.optional(),
+      roleId: id.optional().describe("Direct single-agent role ID (requires profileId and one productId; skips planning and reviewers)."),
+      profileId: id.optional().describe("Direct single-agent profile ID (requires roleId and one productId)."),
       after: z.array(id).max(20).optional().describe("Tasks that must land first. Saved atomically with the request, independently of queue priority."),
       backlog: z.boolean().optional().describe("Save for coordinator review without starting agents. Queueing it later is a separate explicit action."),
     },
@@ -425,6 +427,16 @@ export const OPERATIONS = [
       checks: ProductChecksInputSchema,
     },
     true,
+  ),
+  op(
+    "product.discover-checks",
+    "Queue a single-node Check finder task to discover this product's local automated checks now, returning the existing task if discovery is already active.",
+    {
+      productId: id,
+      profileId: id.optional(),
+    },
+    true,
+    { schedulesOn: "completed" },
   ),
   op(
     "product.check-setup",

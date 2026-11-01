@@ -203,7 +203,7 @@ export class AgentWorkflow {
       if (!task || ((this.ownership.settling.has(taskId) || this.ownership.drivers.has(taskId)) && !group)) continue;
       if (task.state === "queued") {
         task.startedAt = this.host.now();
-        task.stageIndex = task.maintenance ? 0 : -1;
+        task.stageIndex = task.maintenance || task.direct ? 0 : -1;
         this.host.note(task, "milestone", "Started from the queue");
       }
       // The group already has its peer's seat. Resuming the granted member must not take the task's
@@ -317,8 +317,12 @@ export class AgentWorkflow {
     else delete task.agent;
     task.column = this.host.column(task);
     // Automated checks come before this step: they are its current work until its agent starts.
-    // A returning Check finder keeps its normal agent admission, but still prepares the checks.
-    const checking = preparing || (!!next && this.catalog.role(next.roleId, task)?.result === "check-discovery");
+    // A returning Check finder keeps its normal agent admission, but still prepares the checks,
+    // except when the planned do-stage itself is a Check finder run.
+    const stage = task.stageIndex >= 0 ? task.plan?.stages[task.stageIndex] : undefined;
+    const stageOwnsAgent = stage?.kind === "do" && stage.roleId === next?.roleId;
+    const checking =
+      preparing || (!!next && !stageOwnsAgent && this.catalog.role(next.roleId, task)?.result === "check-discovery");
     if (checking) {
       task.checkActivity = {
         phase: "preparing",

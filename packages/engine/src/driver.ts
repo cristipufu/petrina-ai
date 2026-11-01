@@ -288,6 +288,12 @@ export class Driver {
       scope.work.source = { ...await this.sources.resolve(current, scope.work.workChoice!, current.maintenance.product), confirmed: true };
       this.k.commitNow(current);
     }
+    if (current.direct && !scope.work.source) {
+      const product = this.k.s.products.find(entry => entry.id === current.direct!.productId);
+      if (!product) throw new Error("The selected product was removed. This run cannot change products.");
+      scope.work.source = { ...await this.sources.resolve(current, scope.work.workChoice!, product), confirmed: true };
+      this.k.commitNow(current);
+    }
     if (!scope.work.worktree && this.sourceSettled(current) && (current.stageIndex >= 0 || !current.approvePlan)) await this.prepare(scope, signal);
     // A release can precede the first working copy. Preparation must not admit the next step
     // until every owner has also crossed the strict post-wait source boundary.

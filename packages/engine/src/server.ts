@@ -116,6 +116,7 @@ const ARGS = {
   addProduct: z.tuple([z.string().min(1).max(4096), z.string().max(200).optional()]),
   removeProduct: z.tuple([z.string()]),
   setProductChecks: z.tuple([z.string(), ProductChecksInputSchema]),
+  discoverProductChecks: z.tuple([z.string(), z.string().optional()]),
   setProductCheckSetup: z.tuple([z.string(), CheckSetupRequirementsSchema]),
   setProductRemoteChecks: z.tuple([z.string(), ProductRemoteChecksSchema]),
   updateProduct: z.tuple([z.string(), ProductSettingsSchema]),

@@ -76,7 +76,9 @@ export function PlanView({ task, state, find }: { task: Task; state: State; find
           </p>
         )}
         <p className="note">
-          Composed by the planner on {profileText(planner, find, true)}. Stages that haven't started can be changed.
+          {task.direct
+            ? `Single-agent task on ${profileText(planner, find, true)}. Stages that haven't started can be changed.`
+            : `Composed by the planner on ${profileText(planner, find, true)}. Stages that haven't started can be changed.`}
         </p>
       </section>
 

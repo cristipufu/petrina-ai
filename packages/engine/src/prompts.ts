@@ -204,7 +204,10 @@ export function buildPrompt(ctx: PromptContext, recordJob?: RecordPrompt): strin
 The coordinator who reads your work is a product person, not a developer: everything you write for them is plain language, short, and free of code.`;
   const workspace = role.result === "plan" ? `Your planning folder is ${worktree}. No task working copy exists yet. Investigate GitHub and the registered products’ existing local copies read-only; preserve all uncommitted work.` : `Your working copy is ${worktree}, on branch ${branch}. ${task.repositories ? "You may read every copy in the approved product map below; change only the product assigned to your conversation." : "Stay inside it."}`;
   const backgroundRules = background(ctx.screen ?? (mayAskScreen(role) ? "ask" : undefined));
-  const request = `# The task: ${task.title}\n${task.description || "(no further description)"}`;
+  const request =
+    role.result === "check-discovery" && task.direct?.role.result !== "check-discovery"
+      ? `# Product check discovery: ${product.name}\nDiscover the automated checks Petrina runs locally on ${product.name} (${product.repo}) across tasks.`
+      : `# The task: ${task.title}\n${task.description || "(no further description)"}`;
   const sections = [...productMap(ctx, false), ...ctx.sections].filter(section => section.body);
   const ending = RESULT_FOOTER(shapeFor(contract, ctx));
   recordJob?.(job, [

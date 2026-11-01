@@ -21,7 +21,7 @@ import { queueOf } from "./scheduler.js";
 import { SCREEN_HOUR_MS, SCREEN_WORDS } from "./screen.js";
 import { SETUP_STEPS, type SetupStep } from "./setup.js";
 import {
-  simAddLessons, simAddTask, simApproveItem, simCancelTask, simFinalizeCombineBacklog, simMoveInQueue,
+  simAddLessons, simAddTask, simApproveItem, simCancelTask, simDiscoverProductChecks, simFinalizeCombineBacklog, simMoveInQueue,
   simPauseTask, simRemoveProduct, simRerunChecks, simRequestChanges, simRetryItem, simSendMessage, simSetProductChecks,
   simSetProductCheckSetup, simSetProductRemoteChecks, simSetTaskProducts, simSetTaskStartSingle,
 } from "./sim-actions.js";
@@ -309,6 +309,12 @@ export class Simulator {
 
   setProductChecks(productId: Id, checks: readonly { name: string; command: string }[] | null): void {
     this.update(d => simSetProductChecks(d, productId, checks));
+  }
+
+  discoverProductChecks(productId: Id, profileId?: Id): Id {
+    let created = "";
+    this.update(d => { created = simDiscoverProductChecks(this.rt, d, productId, profileId); });
+    return created;
   }
 
   setProductCheckSetup(productId: Id, requirements: readonly CheckPrerequisite[]): void {

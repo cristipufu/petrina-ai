@@ -35,7 +35,7 @@ import { TONE_CATALOG } from "./themes/tones";
 
 export { EFFORT_LABEL } from "@petrina/core";
 
-export function lookup(state: State, task?: Pick<Task, "maintenance">) {
+export function lookup(state: State, task?: Pick<Task, "maintenance" | "direct">) {
   const roles = new Map(state.roles.map((role) => [role.id, role]));
   const profiles = new Map([...(state.retiredProfiles ?? []), ...state.profiles].map((profile) => [profile.id, profile]));
   const tools = new Map(state.tools.map((tool) => [tool.id, tool]));
@@ -43,8 +43,22 @@ export function lookup(state: State, task?: Pick<Task, "maintenance">) {
   const tasks = new Map(state.tasks.map((task) => [task.id, task]));
   const finished = new Map(state.history?.dependencies?.map((task) => [task.id, task]) ?? []);
   return {
-    role: (id?: Id): Role | undefined => (id ? (task?.maintenance?.role.id === id ? task.maintenance.role : roles.get(id)) : undefined),
-    profile: (id?: Id): AgentProfile | undefined => (id ? (task?.maintenance?.profile.id === id ? task.maintenance.profile : profiles.get(id)) : undefined),
+    role: (id?: Id): Role | undefined =>
+      id
+        ? task?.maintenance?.role.id === id
+          ? task.maintenance.role
+          : task?.direct?.role.id === id
+            ? task.direct.role
+            : roles.get(id)
+        : undefined,
+    profile: (id?: Id): AgentProfile | undefined =>
+      id
+        ? task?.maintenance?.profile.id === id
+          ? task.maintenance.profile
+          : task?.direct?.profile.id === id
+            ? task.direct.profile
+            : profiles.get(id)
+        : undefined,
     tool: (id?: Id): Tool | undefined => (id ? tools.get(id) : undefined),
     product: (id?: Id) => (id ? products.get(id) : undefined),
     task: (id?: Id): Task | undefined => (id ? tasks.get(id) : undefined),

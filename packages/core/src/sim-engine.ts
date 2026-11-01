@@ -279,7 +279,7 @@ export function simSchedule(rt: SimRuntime, d: Draft): void {
     const task = find(queued.id)!;
     // On hold too, a task stops waiting the moment the tasks it waits for land; it just does not start.
     if (blocked(task) || task.held) continue;
-    const profile = profiles.get(task.maintenance?.profile.id ?? simPlanner(d));
+    const profile = profiles.get(task.maintenance?.profile.id ?? task.direct?.profile.id ?? simPlanner(d));
     candidates.push({ ...profile, taskId: task.id, toolId: profile?.toolId ?? "unknown" });
   }
 
@@ -289,7 +289,7 @@ export function simSchedule(rt: SimRuntime, d: Draft): void {
     if (!task) continue;
     if (task.state === "queued") {
       task.startedAt = d.now;
-      task.stageIndex = task.maintenance ? 0 : -1;
+      task.stageIndex = task.maintenance || task.direct ? 0 : -1;
       simLog(d, task, "milestone", "Started from the queue");
     }
     // The screen is this agent's from now until its step ends.

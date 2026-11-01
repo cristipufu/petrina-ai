@@ -10,13 +10,14 @@ import {
   type CheckRun,
   type DeepMutable,
   type Id,
+  type Product,
   type ProductCheck,
 } from "@petrina/core";
 import { acquireCheckPlace, scopesFor, taskView, type RepositoryContext } from "@petrina/orchestrator";
 import { lineActivity, sameActivity } from "./check-activity.js";
 import { powerInterruption, readMachineRecords } from "./check-interruption.js";
 import { CHECKS_SEEN, checksFingerprint, commandText, detectChecks } from "./checks.js";
-import type { Context } from "./context.js";
+import { coordinatorNotes, type Context, type Section } from "./context.js";
 import {
   Aborted,
   CHECK_FINDER_PROFILE,
@@ -157,10 +158,77 @@ export async function acquireCheckTurnToRun(
   }
 }
 
+export function productCheckDiscoverySections(
+  scope: RepositoryContext,
+  product: Pick<Product, "checks">,
+  declared: readonly ProductCheck[],
+): Section[] {
+  return [
+    ...(scope.task.direct?.role.result === "check-discovery" ? coordinatorNotes(scope) : []),
+    ...(product.checks?.length
+      ? [
+          {
+            title: "The checks used until now",
+            body: product.checks.map((c) => `- ${c.name}: ${commandText(c.argv)}`).join("\n"),
+          },
+        ]
+      : []),
+    ...(declared.length
+      ? [
+          {
+            title: "Commands the repository declares (a starting point, not the answer)",
+            body: declared.map((c) => `- ${c.name}: ${commandText(c.argv)}`).join("\n"),
+          },
+        ]
+      : []),
+  ];
+}
+
+export function saveDiscoveredProductChecks(
+  k: Kernel,
+  scope: RepositoryContext,
+  product: DeepMutable<Product>,
+  fingerprint: string,
+  checks: readonly ProductCheck[],
+  finderRoleId: Id,
+  profileId: Id,
+  why: string,
+): readonly ProductCheck[] {
+  const next = checks.map((c) => ({
+    name: c.name,
+    argv: [...c.argv],
+    ...(c.why ? { why: c.why } : {}),
+  }));
+  const changed = JSON.stringify(product.checks ?? null) !== JSON.stringify(next);
+  product.checks = next;
+  product.checksBy = "finder";
+  delete product.checksUpdatedAt;
+  product.checksFingerprint = fingerprint;
+  product.checksSeen = [
+    ...(product.checksSeen ?? []).filter((e) => e.fingerprint !== fingerprint),
+    { fingerprint, checks: product.checks },
+  ].slice(-CHECKS_SEEN);
+  if (changed) {
+    for (const entry of k.s.tasks) {
+      for (const { work } of scopesFor(entry)) {
+        if (work.productId === product.id && work.checks) work.checks.current = false;
+      }
+    }
+  }
+  k.log(
+    scope,
+    "done",
+    `Found how to check ${product.name} (${why}): ${product.checks.map((c) => c.name).join(", ") || "none"}`,
+    finderRoleId,
+    profileId,
+  );
+  return product.checks;
+}
+
 export async function ensureProductChecks(
   k: Kernel,
   turns: Turns,
-  context: Context,
+  _context: Context,
   scope: RepositoryContext,
   signal: AbortSignal,
 ): Promise<readonly ProductCheck[]> {
@@ -187,25 +255,7 @@ export async function ensureProductChecks(
       scope,
       finderRoleId,
       finder,
-      async () => [
-        ...(await context.sectionsFor(scope, finderRoleId)),
-        ...(product.checks
-          ? [
-              {
-                title: "The checks used until now",
-                body: product.checks.map((c) => `- ${c.name}: ${commandText(c.argv)}`).join("\n"),
-              },
-            ]
-          : []),
-        ...(declared.length
-          ? [
-              {
-                title: "Commands the repository declares (a starting point, not the answer)",
-                body: declared.map((c) => `- ${c.name}: ${commandText(c.argv)}`).join("\n"),
-              },
-            ]
-          : []),
-      ],
+      async () => productCheckDiscoverySections(scope, product, declared),
       CheckFinderResult,
       signal,
       { status: "Working out how to check this product", used: (id) => (ran = id) },
@@ -213,19 +263,12 @@ export async function ensureProductChecks(
     k.releaseScreen(task);
     restore();
     if (product.checksBy === "coordinator") return product.checks ?? [];
-    product.checks = result.checks.map((c) => ({ name: c.name, argv: c.argv, why: c.why }));
     endAgentStep(
       task,
-      { outcome: JOURNEY_WORDS.foundChecks(product.checks.length), reason: JOURNEY_WORDS.checksFound },
+      { outcome: JOURNEY_WORDS.foundChecks(result.checks.length), reason: JOURNEY_WORDS.checksFound },
       Date.now(),
     );
-    k.log(
-      scope,
-      "done",
-      `Found how to check ${product.name} (${why}): ${product.checks.map((c) => c.name).join(", ")}`,
-      finderRoleId,
-      ran,
-    );
+    saveDiscoveredProductChecks(k, scope, product, fingerprint, result.checks, finderRoleId, ran, why);
   } catch (error) {
     if (signal.aborted || error instanceof Aborted || error instanceof ScreenWait) throw error;
     k.releaseScreen(task);
@@ -240,18 +283,18 @@ export async function ensureProductChecks(
       argv: [...c.argv],
       ...(c.why ? { why: c.why } : {}),
     }));
+    product.checksBy = "finder";
+    product.checksFingerprint = fingerprint;
+    product.checksSeen = [
+      ...(product.checksSeen ?? []).filter((e) => e.fingerprint !== fingerprint),
+      { fingerprint, checks: product.checks ?? [] },
+    ].slice(-CHECKS_SEEN);
     k.log(
       scope,
       "warn",
       `The ${k.role(finderRoleId)?.name ?? "Check finder"} could not finish, so Petrina uses ${fallback.length ? "the checks it had" : "no checks"} for now`,
     );
   }
-  product.checksBy = "finder";
-  product.checksFingerprint = fingerprint;
-  product.checksSeen = [
-    ...(product.checksSeen ?? []).filter((e) => e.fingerprint !== fingerprint),
-    { fingerprint, checks: product.checks ?? [] },
-  ].slice(-CHECKS_SEEN);
   k.commit();
   return product.checks ?? [];
 }

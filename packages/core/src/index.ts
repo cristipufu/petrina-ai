@@ -56,6 +56,7 @@ export * from "./combine-backlog.js";
 export * from "./task-transitions.js";
 
 export * from "./routines.js";
+export * from "./direct-tasks.js";
 export * from "./maintenance-roles.js";
 
 export * from "./profiles.js";

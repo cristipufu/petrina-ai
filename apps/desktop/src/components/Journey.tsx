@@ -40,13 +40,15 @@ function JourneyBody({ task, state, find, onPlan, onOpenTask, workspace = false,
   const profiles = useMemo(
     () => [
     ...(task.maintenance ? [task.maintenance.profile] : []),
+    ...(task.direct ? [task.direct.profile] : []),
     ...state.profiles,
     ...(state.retiredProfiles ?? [])
   ],
     [
     state.profiles,
     state.retiredProfiles,
-    task.maintenance?.profile
+    task.maintenance?.profile,
+    task.direct?.profile
   ]
   );
   const viewKey = journeyViewKey(

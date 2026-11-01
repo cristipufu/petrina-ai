@@ -142,6 +142,7 @@ const FALLBACK_TASK_SQL = `json_object(
   'runtimeWait', json_extract(h.body, '$.runtimeWait'),
   'modelCapacity', json_extract(h.body, '$.modelCapacity'),
   'capacityPaused', json_extract(h.body, '$.capacityPaused'),
+  'noProductChanges', json(CASE WHEN json_extract(h.body, '$.noProductChanges') THEN 'true' END),
   'maintenance', json(CASE WHEN json_extract(h.body, '$.maintenance.noProductChanges') THEN
     json_object('noProductChanges', json('true')) END),
   'agent', json(CASE WHEN json_extract(h.body, '$.agent') IS NOT NULL THEN '{}' END),

@@ -24,6 +24,7 @@ import {
   simLog,
   simMoment,
   simReleaseScreen,
+  simRemoveCopy,
   simRound,
   simSay,
   simStage,
@@ -85,7 +86,8 @@ export function simFinishStage(rt: SimRuntime, d: Draft, task: DraftTask, hooks:
   const stage = simStage(task);
   if (!stage) return;
   const round = simRound(task);
-  const result = d.roles.find((role) => role.id === agent.roleId)?.result;
+  const role = library.roleForTask(d.roles, agent.roleId, task);
+  const result = role?.result;
 
   if (stage.kind === "do" && result === "delivery") {
     simEndStage(rt, d, task, "delivered");
@@ -93,8 +95,51 @@ export function simFinishStage(rt: SimRuntime, d: Draft, task: DraftTask, hooks:
     return;
   }
 
-  if (stage.kind === "do" && task.maintenance?.role.id === agent.roleId) {
-    const summary = "Investigated the selected area. Nothing actionable found in this demo run.";
+  if (stage.kind === "do" && result === "check-discovery") {
+    const product = d.products.find((entry) => entry.id === task.productId);
+    const checks = product?.checksBy === "finder" && product.checks?.length
+      ? product.checks
+      : [
+          { name: "Type check", argv: ["bun", "run", "typecheck"], why: "CI runs the full type check on every pull request" },
+          { name: "Tests", argv: ["bun", "run", "test"], why: "CI runs the automated test suite on every pull request" },
+        ];
+    const manualSavedLater =
+      product?.checksBy === "coordinator" && (product.checksUpdatedAt ?? 0) > (task.startedAt ?? task.createdAt);
+    if (product && !manualSavedLater) {
+      const changed = JSON.stringify(product.checks ?? null) !== JSON.stringify(checks);
+      product.checks = [...checks];
+      product.checksBy = "finder";
+      delete product.checksUpdatedAt;
+      if (changed) {
+        for (const item of d.tasks) {
+          for (const work of item.repositories ?? [item]) {
+            if (work.productId === product.id && work.checks) work.checks.current = false;
+          }
+        }
+      }
+    }
+    const summary = `Found how to check ${product?.name ?? "this product"}: ${checks.map((c) => c.name).join(", ")}.`;
+    simSay(d, task, "agent", summary, agent.roleId, agent.profileId);
+    simLog(d, task, "done", summary, agent.roleId, agent.profileId);
+    endAgentStep(task, { outcome: JOURNEY_WORDS.foundChecks(checks.length), reason: JOURNEY_WORDS.checksFound }, d.now);
+    simEndStage(rt, d, task, "done");
+    Object.assign(task, {
+      noProductChanges: true,
+      state: "done",
+      column: "done",
+      finishedAt: d.now,
+      statusLine: "Completed · No product changes",
+      holdsSlot: false,
+    });
+    delete task.agent;
+    if (task.startedAt !== undefined) simRemoveCopy(rt, d, task);
+    return;
+  }
+
+  if (stage.kind === "do" && (task.maintenance?.role.id === agent.roleId || (task.direct && !role?.canEdit))) {
+    const summary = task.maintenance
+      ? "Investigated the selected area. Nothing actionable found in this demo run."
+      : `${role?.name ?? "Agent"} completed the request without changing product files.`;
     task.handedBack = [
       ...(task.handedBack ?? []),
       {
@@ -102,13 +147,15 @@ export function simFinishStage(rt: SimRuntime, d: Draft, task: DraftTask, hooks:
         roleId: agent.roleId,
         profileId: agent.profileId,
         stageId: stage.id,
-        roleName: task.maintenance.role.name,
+        roleName: role?.name ?? agent.roleId,
         title: stage.title,
         summary,
         notes: ["Completed without product changes."],
       },
     ];
-    task.maintenance.noProductChanges = true;
+    if (task.maintenance) task.maintenance.noProductChanges = true;
+    else task.noProductChanges = true;
+    simSay(d, task, "agent", summary, agent.roleId, agent.profileId);
     simLog(d, task, "done", summary, agent.roleId, agent.profileId);
     endAgentStep(task, { outcome: JOURNEY_WORDS.wroteNotes, reason: JOURNEY_WORDS.notesReady }, d.now);
     simEndStage(rt, d, task, "done");
@@ -118,6 +165,7 @@ export function simFinishStage(rt: SimRuntime, d: Draft, task: DraftTask, hooks:
     task.statusLine = "Completed · No product changes";
     task.holdsSlot = false;
     delete task.agent;
+    if (task.startedAt !== undefined) simRemoveCopy(rt, d, task);
     return;
   }
 
@@ -176,11 +224,15 @@ export function simFinishStage(rt: SimRuntime, d: Draft, task: DraftTask, hooks:
       if (returned) returned.builderReturn = { productId: task.productId, changed: true, claimedFixes: count, outcome };
       endAgentStep(task, { outcome, reason: outcome }, d.now);
     } else {
+      if (role?.canEdit) task.fixing = false;
       simLog(d, task, "done", `${stage.title} done`, agent.roleId, agent.profileId);
       endAgentStep(
         task,
         result === "build"
-          ? { outcome: JOURNEY_WORDS.built, reason: JOURNEY_WORDS.readyForReview }
+          ? {
+              outcome: JOURNEY_WORDS.built,
+              reason: task.direct ? JOURNEY_WORDS.readyForDelivery : JOURNEY_WORDS.readyForReview,
+            }
           : result === "checks"
             ? {
                 outcome: JOURNEY_WORDS.checks(0, task.brief?.acceptance.length ?? 0),

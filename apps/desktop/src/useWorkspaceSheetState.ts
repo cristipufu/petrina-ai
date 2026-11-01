@@ -66,6 +66,7 @@ export function useWorkspaceSheetState(state: State, route: AppRoute, find: Look
     () => lookup(detailState, sheetTask),
     [
       sheetTask?.maintenance,
+      sheetTask?.direct,
       detailState.roles,
       detailState.profiles,
       detailState.retiredProfiles,

@@ -428,7 +428,8 @@ export function nextSteps(state: People & Pick<State, "inbox">, task: Task): Nex
   // a step, and Petrina's automated checks run before it: the card is already running, but the review,
   // the test or the build they are getting ready has not started, so that work is still what comes next.
   const result = roleForTask(state.roles, task.agent?.roleId ?? "", task)?.result;
-  const preparing = result === "check-discovery" || result === "guide" || checksCurrent(task, state.roles);
+  const stageOwnsAgent = stage.kind === "do" && stage.roleId === task.agent?.roleId;
+  const preparing = !stageOwnsAgent && (result === "check-discovery" || result === "guide" || checksCurrent(task, state.roles));
   const onStep = !preparing && (task.state === "running" || items.some((item) => item.blocking));
   if (!onStep) {
     const past = task.state === "needs-you" && (stage.kind === "gate" || stage.kind === "converge");

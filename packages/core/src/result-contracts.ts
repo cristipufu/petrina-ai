@@ -48,6 +48,8 @@ export interface RoleResultDescriptor {
   };
   readonly simTokenWeight: number;
   readonly allowsReportImages: boolean;
+  /** Whether a role with this result can run standalone in a single-agent task without planner, design or review peers. */
+  readonly directCapable: boolean;
 }
 
 const DEFAULT_NOTES_SEES =
@@ -67,6 +69,7 @@ export const ROLE_RESULT_CATALOG: Readonly<Record<RoleResult, RoleResultDescript
     analytics: { defaultLabel: "Planning", order: 1 },
     simTokenWeight: 0.5,
     allowsReportImages: false,
+    directCapable: false,
   },
   notes: {
     id: "notes",
@@ -80,6 +83,7 @@ export const ROLE_RESULT_CATALOG: Readonly<Record<RoleResult, RoleResultDescript
     analytics: { order: 2 },
     simTokenWeight: 0.8,
     allowsReportImages: true,
+    directCapable: true,
   },
   brief: {
     id: "brief",
@@ -97,6 +101,7 @@ export const ROLE_RESULT_CATALOG: Readonly<Record<RoleResult, RoleResultDescript
     analytics: { defaultLabel: "Design", order: 3 },
     simTokenWeight: 0.8,
     allowsReportImages: false,
+    directCapable: false,
   },
   objections: {
     id: "objections",
@@ -112,6 +117,7 @@ export const ROLE_RESULT_CATALOG: Readonly<Record<RoleResult, RoleResultDescript
     analytics: { defaultLabel: "Design", order: 3 },
     simTokenWeight: 0.8,
     allowsReportImages: true,
+    directCapable: false,
   },
   build: {
     id: "build",
@@ -131,6 +137,7 @@ export const ROLE_RESULT_CATALOG: Readonly<Record<RoleResult, RoleResultDescript
     analytics: { defaultLabel: "Build", order: 5 },
     simTokenWeight: 1.6,
     allowsReportImages: true,
+    directCapable: true,
   },
   checks: {
     id: "checks",
@@ -145,6 +152,7 @@ export const ROLE_RESULT_CATALOG: Readonly<Record<RoleResult, RoleResultDescript
     analytics: { defaultLabel: "Testing", order: 6 },
     simTokenWeight: 0.8,
     allowsReportImages: true,
+    directCapable: false,
   },
   findings: {
     id: "findings",
@@ -165,6 +173,7 @@ export const ROLE_RESULT_CATALOG: Readonly<Record<RoleResult, RoleResultDescript
     analytics: { defaultLabel: "Review", order: 7 },
     simTokenWeight: 1.1,
     allowsReportImages: true,
+    directCapable: false,
   },
   delivery: {
     id: "delivery",
@@ -179,6 +188,7 @@ export const ROLE_RESULT_CATALOG: Readonly<Record<RoleResult, RoleResultDescript
     analytics: { defaultLabel: "Delivery", order: 9 },
     simTokenWeight: 0.8,
     allowsReportImages: false,
+    directCapable: false,
   },
   "check-discovery": {
     id: "check-discovery",
@@ -192,6 +202,7 @@ export const ROLE_RESULT_CATALOG: Readonly<Record<RoleResult, RoleResultDescript
     analytics: { defaultLabel: "Check discovery", order: 10 },
     simTokenWeight: 0.8,
     allowsReportImages: false,
+    directCapable: true,
   },
   guide: {
     id: "guide",
@@ -205,6 +216,7 @@ export const ROLE_RESULT_CATALOG: Readonly<Record<RoleResult, RoleResultDescript
     analytics: { defaultLabel: "Review guide", order: 10 },
     simTokenWeight: 0.8,
     allowsReportImages: false,
+    directCapable: false,
   },
   votes: {
     id: "votes",
@@ -218,6 +230,7 @@ export const ROLE_RESULT_CATALOG: Readonly<Record<RoleResult, RoleResultDescript
     analytics: { defaultLabel: "Finding verification", order: 10 },
     simTokenWeight: 0.8,
     allowsReportImages: false,
+    directCapable: false,
   },
 } satisfies Readonly<Record<RoleResult, RoleResultDescriptor>>;
 

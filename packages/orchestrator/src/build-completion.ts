@@ -126,7 +126,7 @@ export class BuildCompletion {
         ...(problem ? { tone: "back" as const } : {})
       } : {
         outcome: changed === false ? JOURNEY_WORDS.unchanged : JOURNEY_WORDS.built,
-        reason: JOURNEY_WORDS.readyForReview
+        reason: task.direct ? JOURNEY_WORDS.readyForDelivery : JOURNEY_WORDS.readyForReview
       },
       this.host.now(),
     );

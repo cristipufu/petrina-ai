@@ -1,6 +1,7 @@
 // Coordinator action handlers (inbox decisions, product settings, task lifecycle, messages) for Simulator.
 
 import { CALL_WORDS } from "./call.js";
+import { activeCheckDiscoveryTask, checkDiscoveryTaskInput, prepareDirectTask } from "./direct-tasks.js";
 import { findingKind } from "./findings.js";
 import { afterChangesAsked, type DeepMutable } from "./flow.js";
 import { AFTER_WORDS, endYouStep, JOURNEY_WORDS, syncWait, withdrawAsks } from "./journey.js";
@@ -188,7 +189,15 @@ export function simSetProductChecks(d: Draft, productId: Id, checks: readonly { 
   const executions = function* () {
     for (const task of d.tasks) for (const work of task.repositories ?? [task]) yield work;
   };
-  configureProductChecks(d.products.find(product => product.id === productId), checks, executions());
+  configureProductChecks(d.products.find(product => product.id === productId), checks, executions(), d.now);
+}
+
+export function simDiscoverProductChecks(rt: SimRuntime, d: Draft, productId: Id, profileId?: Id): Id {
+  const product = d.products.find((entry) => entry.id === productId);
+  if (!product) throw new Error("This product is no longer in Petrina.");
+  const active = activeCheckDiscoveryTask(d.tasks as Task[], d.roles, productId);
+  if (active) return active;
+  return simAddTask(rt, d, checkDiscoveryTaskInput(product, d, profileId));
 }
 
 export function simSetProductCheckSetup(d: Draft, productId: Id, requirements: readonly CheckPrerequisite[]): void {
@@ -301,6 +310,7 @@ export function simSendMessage(rt: SimRuntime, d: Draft, task: DraftTask, trimme
 }
 
 export function simSetTaskStartSingle(d: Draft, task: DraftTask, choice: WorkChoice): void {
+  if (task.direct || task.maintenance) throw new Error("The starting point can be edited at the plan check before work starts.");
   const product = d.products.find((entry) => entry.id === choice.productId);
   if (!product) throw new Error("Add the product first.");
   task.workChoice = choice;
@@ -312,6 +322,7 @@ export function simSetTaskStartSingle(d: Draft, task: DraftTask, choice: WorkCho
 }
 
 export function simSetTaskProducts(d: Draft, task: DraftTask, choices: readonly WorkChoice[]): void {
+  if (task.direct || task.maintenance) throw new Error("Change products at the plan check before work starts.");
   task.selectedProducts = [...choices];
   task.workRows = choices.map((choice) => {
     const earlier = task.workRows?.find((row) => row.choice.productId === choice.productId);
@@ -351,6 +362,7 @@ export function simAddTask(rt: SimRuntime, d: Draft, input: NewTask): Id {
     (id) => d.tasks.find((task) => task.id === id)
   );
   // Only source resolution is scripted; task defaults and validation are shared with the engine.
+  if (input.direct) prepareDirectTask(task, input.direct, d);
   const product = d.products.find((entry) => entry.id === task.productId) ?? d.products[0];
   if (product) {
     if (!task.productId) {
@@ -358,9 +370,10 @@ export function simAddTask(rt: SimRuntime, d: Draft, input: NewTask): Id {
       task.workChoice = { ...task.workChoice!, productId: product.id };
       task.approveDelivery = input.approveDelivery ?? product.approveDelivery ?? true;
     }
-    Object.assign(task, { source: demoSource(product, task.workChoice!) });
+    const source = demoSource(product, task.workChoice!);
+    Object.assign(task, { source: input.direct ? { ...source, confirmed: true } : source });
   }
-  if (input.worksOn) task.workRows = input.worksOn.map((choice) => ({
+  if (input.worksOn && !input.direct) task.workRows = input.worksOn.map((choice) => ({
     choice: {
     ...choice,
     startFrom: { ...choice.startFrom }
@@ -370,7 +383,9 @@ export function simAddTask(rt: SimRuntime, d: Draft, input: NewTask): Id {
     choice
   )
   }));
-  task.confirmWork = (input.worksOn ? input.worksOn.length !== 1 : !input.productId) || task.workChoice?.startFrom.kind === "pull-request";
+  task.confirmWork = input.direct
+    ? false
+    : (input.worksOn ? input.worksOn.length !== 1 : !input.productId) || task.workChoice?.startFrom.kind === "pull-request";
   d.tasks.push(task);
   if (task.after?.length) {
     const find = (id: Id) => d.tasks.find((entry) => entry.id === id);

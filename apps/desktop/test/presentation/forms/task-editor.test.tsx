@@ -61,3 +61,64 @@ it("keeps shared task options descriptions on hover and queue controls available
   await click('Top');
   expect(position).toHaveBeenCalledWith('top');
 });
+
+it("switches NewTaskDialog into Single agent mode for read-only and editing roles", async () => {
+  add.mockResolvedValue("direct-1");
+  const state = stateFixture(1000);
+  await act(async () => root.render(<NewTaskDialog state={state} initialTitle="Audit cache keys" onClose={() => {}} onCreated={() => {}} />));
+  await click("Single agent");
+  expect(host.textContent).toContain("Choose one product to run a single-agent task.");
+
+  await act(async () => root.render(<NewTaskDialog key="with-product" state={state} defaultProduct="shop" initialTitle="Audit cache keys" onClose={() => {}} onCreated={() => {}} />));
+
+  expect(host.textContent).toContain("Show me the plan first");
+  await click("Single agent");
+
+  expect(host.textContent).not.toContain("Show me the plan first");
+  expect(host.textContent).not.toContain("Kind of work");
+
+  const roleSelect = host.querySelector<HTMLSelectElement>('select[aria-label="Role"]')!;
+  const profileSelect = host.querySelector<HTMLSelectElement>('select[aria-label="Agent profile"]')!;
+  expect(roleSelect).not.toBeNull();
+  expect(profileSelect).not.toBeNull();
+
+  // Select read-only Researcher: no delivery approval checkbox, shows read-only summary
+  await act(async () => {
+    roleSelect.value = "researcher";
+    roleSelect.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  expect(host.textContent).toContain("Read-only · No delivery");
+  expect(host.textContent).not.toContain("Ask me before shipping");
+
+  await click("Ready for the queue");
+  await click("Add to queue ↵");
+  expect(add).toHaveBeenCalledWith(
+    expect.objectContaining({
+      title: "Audit cache keys",
+      approvePlan: false,
+      approveDelivery: false,
+      backlog: false,
+      direct: { roleId: "researcher", profileId: profileSelect.value },
+    }),
+  );
+
+  // Switch to editing Builder: restores Ask me before shipping
+  add.mockClear();
+  await act(async () => root.render(<NewTaskDialog key="edit-direct" state={state} defaultProduct="shop" initialTitle="Quick copy tweak" onClose={() => {}} onCreated={() => {}} />));
+  await click("Single agent");
+  const editRoleSelect = host.querySelector<HTMLSelectElement>('select[aria-label="Role"]')!;
+  await act(async () => {
+    editRoleSelect.value = "builder";
+    editRoleSelect.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  expect(host.textContent).toContain("Ask me before shipping");
+  await click("Add to backlog ↵");
+  expect(add).toHaveBeenCalledWith(
+    expect.objectContaining({
+      title: "Quick copy tweak",
+      approvePlan: false,
+      backlog: true,
+      direct: expect.objectContaining({ roleId: "builder" }),
+    }),
+  );
+});

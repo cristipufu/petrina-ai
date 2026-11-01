@@ -32,7 +32,7 @@ type RoleSummary = readonly Pick<Role, "id" | "name" | "result">[];
 
 /** What the recording helpers read and write: the engine's and the simulator's working copies of a task. */
 export type JourneyTask = Pick<Task, "plan" | "stageIndex" | "rounds" | "sub" | "fixing" | "call" | "updating" | "portReview"> &
-  Partial<Pick<Task, "findings" | "maintenance" | "repositories" | "acceptanceBlocked">> & { journey?: JourneyStep[] };
+  Partial<Pick<Task, "findings" | "maintenance" | "direct" | "repositories" | "acceptanceBlocked">> & { journey?: JourneyStep[] };
 
 /** How a step ended, in a few words, and why the work moved on. */
 export interface StepEnd {
@@ -157,7 +157,7 @@ export function beginAgentStep(
   }
   if (open) close(open, at);
   const fixingFindings =
-    task.fixing && (task.maintenance?.role.id === roleId ? task.maintenance.role : roles.find((role) => role.id === roleId))?.result === "build"
+    task.fixing && roleForTask(roles, roleId, task)?.result === "build"
       ? {
           findingIds: (task.findings ?? [])
             .filter((finding) => finding.status === "open" && finding.severity !== "pre-existing" && !exhaustedAcceptanceFailure(task, finding))

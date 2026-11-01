@@ -3,6 +3,7 @@
 
 import { checkEntryResult } from "./check-evidence.js";
 import { markedDoneUnconfirmed } from "./cleanup.js";
+import { hasNoProductChanges } from "./direct-tasks.js";
 import type { ExtraValidation } from "./extra-validation.js";
 import type {
   CheckActivity,
@@ -538,7 +539,7 @@ export function throughputTaskRecord(task: Task): ThroughputTaskRecord {
     ...(task.startedAt !== undefined ? { startedAt: task.startedAt } : {}),
     ...(task.finishedAt !== undefined ? { finishedAt: task.finishedAt } : {}),
     ...(task.combinedInto ? { combinedInto: task.combinedInto } : {}),
-    ...(task.maintenance?.noProductChanges ? { noProductChanges: true } : {}),
+    ...(hasNoProductChanges(task) ? { noProductChanges: true } : {}),
     ...(task.sentBack ? { sentBack: task.sentBack } : {}),
     ...(task.after?.length ? { after: [...task.after] } : {}),
     activeAgents: (task.agent ? 1 : 0) + (task.helpers?.length ?? 0),

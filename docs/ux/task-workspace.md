@@ -217,9 +217,13 @@ For a prerequisite discovered after work starts, Overview shows a separate read-
 
 Creation saves each request and its prerequisites together before scheduling. Retry confirmation reuses that request’s reference, including after an engine restart; pasted titles share the selection and partial-batch retries retain it. Add another keeps scheduling choices with a fresh request.
 
+### How to run
+
+**Planned workflow** (default) lets the Planner assemble the stages and reviewers, or uses a template. **Single agent** runs one chosen role and agent profile directly on a single product without planning, design or review: read-only roles finish with their report and no product changes, while roles that can change the product run automated checks and follow the product's delivery and **Ask me before shipping** choices when files change (or finish with no product changes when nothing changed).
+
 ### Plan
 
-Auto (the planner decides) or a template.
+Auto (the planner decides) or a template, in Planned workflow.
 
 ### Ask me before starting
 

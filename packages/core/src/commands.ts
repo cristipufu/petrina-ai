@@ -31,6 +31,8 @@ export interface NewTaskInput {
   approvePlan?: boolean;
   delivery?: DeliveryMode;
   approveDelivery?: boolean;
+  /** Run one chosen role and profile directly without planning or reviewers. */
+  direct?: import("./direct-tasks.js").DirectTaskSelection;
   /** The window's id for this request: sending it again after a lost reply finds the task instead of adding another. */
   clientId?: Id;
 }
@@ -69,6 +71,7 @@ export interface Commands {
   updateProduct(productId: Id, settings: ProductSettings): void;
   setProductDelivery(productId: Id, delivery: DeliveryMode, approveDelivery: boolean): void;
   setProductChecks(productId: Id, checks: { name: string; command: string }[] | null): void;
+  discoverProductChecks(productId: Id, profileId?: Id): Id;
   setProductCheckSetup(productId: Id, requirements: readonly CheckPrerequisite[]): void;
   setProductRemoteChecks(productId: Id, checks: readonly string[]): void;
   // First run and the tools check
@@ -177,6 +180,7 @@ export const COMMAND_META = {
   updateProduct: { changes: true },
   setProductDelivery: { changes: true },
   setProductChecks: { changes: true },
+  discoverProductChecks: { changes: true },
   setProductCheckSetup: { changes: true },
   setProductRemoteChecks: { changes: true },
   checkTools: { changes: true },

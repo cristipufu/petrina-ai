@@ -57,8 +57,12 @@ export class TakeOver {
     if (blocked) throw new Error(blocked);
     const agent = { ...task.agent! };
     const conversation = scope!.work.conversation!;
-    const profile = this.k.profile(agent.profileId)!;
-    const role = conversation.role ?? this.k.role(agent.roleId)!;
+    const profile =
+      this.k.profile(agent.profileId)
+      ?? (task.direct?.profile.id === agent.profileId ? task.direct.profile : undefined)
+      ?? (task.maintenance?.profile.id === agent.profileId ? task.maintenance.profile : undefined);
+    if (!profile) throw new Error(TAKE_OVER_WORDS.unsupported);
+    const role = conversation.role ?? this.k.role(agent.roleId, task)!;
     const terminal = how === "open" ? pickTerminal(this.k.found, this.k.s.terminal) : undefined;
     if (how === "open" && !terminal) throw new Error(TAKE_OVER_WORDS.noTerminal);
 
@@ -230,7 +234,11 @@ export class TakeOver {
       git.commitsSince(worktree, driving.head),
       git.isClean(worktree),
     ]);
-    const problem = this.branchProblem(task, where);
+    const problem =
+      this.branchProblem(task, where)
+      ?? (this.hasNoDeliveryStep(task) && (files.length > 0 || commits > 0 || !clean)
+        ? "This read-only run has no delivery step. Revert product file changes in your terminal before handing back, or start an editing task."
+        : undefined);
     return {
       open,
       tool: toolName(driving.toolId),
@@ -267,7 +275,7 @@ export class TakeOver {
       const worktree = this.k.agentWorktree(task);
       const problem = this.branchProblem(task, await git.workingState(worktree));
       if (problem) throw new Error(problem);
-      const role = this.k.role(driving.roleId)!;
+      const role = this.k.role(driving.roleId, task)!;
       const [commits, files, status] = await Promise.all([
         git.commitsSince(
         worktree,
@@ -279,6 +287,11 @@ export class TakeOver {
       ),
         git.worktreeStatus(worktree)
       ]);
+      if (this.hasNoDeliveryStep(task) && (files.length > 0 || commits > 0 || !status.clean)) {
+        throw new Error(
+          "This read-only run has no delivery step. Revert product file changes in your terminal before handing back, or start an editing task.",
+        );
+      }
       let leftovers: string | undefined;
       let leftoverTree: string | undefined;
       if (!status.clean && await git.commitChanges(
@@ -471,7 +484,12 @@ export class TakeOver {
     const scope = executionFor(task);
     const driving = task.driving!;
     const conversation = scope.work.conversation!;
-    const effort = this.k.profile(driving.profileId)?.effort ?? "high";
+    const effort =
+      (
+        this.k.profile(driving.profileId)
+        ?? (task.direct?.profile.id === driving.profileId ? task.direct.profile : undefined)
+        ?? (task.maintenance?.profile.id === driving.profileId ? task.maintenance.profile : undefined)
+      )?.effort ?? "high";
     const dir = this.takeOverDir(task.id);
     const plan = launchPlan(this.launchInput(task, tool ?? (await this.takeOverTool(driving.toolId)), conversation.sessionId, conversation.model, effort));
     // Opening again: until the new copy reports, Petrina can't tell, so an old "it has closed" never lets a hand back through.
@@ -499,5 +517,9 @@ export class TakeOver {
   private branchProblem(task: RuntimeTask, where: { branch?: string; busy?: string }): string | undefined {
     const scope = executionFor(task);
     return takeOverBranchProblem(scope.work, this.k.agentWorktree(task), where);
+  }
+
+  private hasNoDeliveryStep(task: RuntimeTask): boolean {
+    return Boolean((task.direct && !task.direct.role.canEdit) || (task.maintenance && !task.maintenance.role.canEdit));
   }
 }

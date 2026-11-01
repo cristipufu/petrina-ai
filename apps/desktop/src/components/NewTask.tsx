@@ -1,4 +1,5 @@
 import { DEPENDENCY_HELP, DependencyPicker } from "./TaskDependencies";
+import { DirectTaskOptions } from "./DirectTaskOptions";
 import { uncertainReply } from "../commandFailures";
 import { Select } from "./Select";
 import { ChevronDown, Package, Search } from "lucide-react";
@@ -12,6 +13,7 @@ import {
   DELIVERY_SELECT_MODES,
   deliveryChoiceSummaryLabel,
   deliverySelectLabel,
+  directCapableRoles,
   isValidDeliveryStart,
   type DeliveryMode,
   type NewTaskInput,
@@ -204,6 +206,7 @@ export function NewTaskDialog({ state, defaultProduct, initialTitle = "", waitin
   onCreated: () => void
 }) {
   const initial = state.products.find((product) => product.id === defaultProduct);
+  const directRoles = directCapableRoles(state.roles);
   const [choices, setChoices] = useState<WorkChoice[]>(initial ? [{
     productId: initial.id,
     startFrom: { kind: "default" },
@@ -212,6 +215,13 @@ export function NewTaskDialog({ state, defaultProduct, initialTitle = "", waitin
   const [title, setTitle] = useState(initialTitle);
   const [description, setDescription] = useState("");
   const [kind, setKind] = useState<TaskKind>("feature");
+  const [directMode, setDirectMode] = useState(false);
+  const [directRoleId, setDirectRoleId] = useState(() => directRoles[0]?.id ?? "");
+  const [directProfileId, setDirectProfileId] = useState(
+    () => state.profiles.find((p) => p.id === (state.planner ?? "opus-high"))?.id ?? state.profiles[0]?.id ?? "",
+  );
+  const selectedDirectRole = directRoles.find((entry) => entry.id === directRoleId);
+  const directEdits = Boolean(selectedDirectRole?.canEdit);
   const [position, setPosition] = useState<Position>("bottom");
   const [backlog, setBacklog] = useState(true);
   const [after, setAfter] = useState<string[]>([]);
@@ -240,6 +250,9 @@ export function NewTaskDialog({ state, defaultProduct, initialTitle = "", waitin
     name,
     details,
     kind,
+    directMode,
+    directRoleId,
+    directProfileId,
     position,
     backlog,
     approvePlan,
@@ -252,6 +265,9 @@ export function NewTaskDialog({ state, defaultProduct, initialTitle = "", waitin
   const dirty = draftKey() !== baseline.current;
   const close = () => { if (!saving) { if (dirty) setDiscard(true);
   else onClose(); } };
+  const invalidDirect =
+    directMode
+    && (choices.length !== 1 || !selectedDirectRole || !state.profiles.some((entry) => entry.id === directProfileId));
   const invalidSource = choices.some(({
     startFrom,
     delivery
@@ -260,7 +276,7 @@ export function NewTaskDialog({ state, defaultProduct, initialTitle = "", waitin
     delivery
   ));
   const add = async (another: boolean) => {
-    if (adding.current || (!pending.current && (!title.trim() || invalidSource || (backlog && !supportsBacklog)))) return;
+    if (adding.current || (!pending.current && (!title.trim() || invalidDirect || invalidSource || (backlog && !supportsBacklog)))) return;
     const request = pending.current ??= {
       inputs: [
         title.trim(),
@@ -271,10 +287,11 @@ export function NewTaskDialog({ state, defaultProduct, initialTitle = "", waitin
         worksOn: choices,
         title: entry,
         description,
-        kind,
+        kind: directMode ? "chore" : kind,
         position,
-        approvePlan: approvePlan || choices.length !== 1,
-        approveDelivery,
+        approvePlan: directMode ? false : approvePlan || choices.length !== 1,
+        approveDelivery: directMode && !directEdits ? false : approveDelivery,
+        ...(directMode ? { direct: { roleId: directRoleId, profileId: directProfileId } } : {}),
         backlog,
         after: [...after]
       })),
@@ -315,7 +332,17 @@ export function NewTaskDialog({ state, defaultProduct, initialTitle = "", waitin
     }
   };
   const change = (id: string, update: Partial<WorkChoice>) => setChoices(choices.map((choice) => choice.productId === id ? { ...choice, ...update } : choice));
-  const disabled = saving || (!pending.current && (!title.trim() || invalidSource || (backlog && !supportsBacklog)));
+  const switchDirectMode = (next: boolean) => {
+    setDirectMode(next);
+    if (!next) return;
+    if (choices.length > 1) setChoices(choices.slice(0, 1));
+    else if (!choices.length && state.products.length === 1) {
+      const only = state.products[0]!;
+      setChoices([{ productId: only.id, startFrom: { kind: "default" }, delivery: only.delivery ?? "pull-request" }]);
+      setApproveDelivery(only.approveDelivery ?? true);
+    }
+  };
+  const disabled = saving || (!pending.current && (!title.trim() || invalidDirect || invalidSource || (backlog && !supportsBacklog)));
   return <>
     <EditorPanel title="New task" description="Describe the outcome. Choose where and when to work." closeLabel="Close new task" className="new-task-dialog" bodyClassName="new-task-body" busy={saving} onClose={close} footer={<>
 
@@ -378,9 +405,9 @@ export function NewTaskDialog({ state, defaultProduct, initialTitle = "", waitin
         <section
           className="new-task-section new-task-products"
           aria-labelledby="new-task-products-heading"
-        ><h3 id="new-task-products-heading">Products & delivery <span className="quiet-text">{choices.length ? `${choices.length} selected` : "Optional"}</span></h3>
+        ><h3 id="new-task-products-heading">Products & delivery <span className="quiet-text">{choices.length ? `${choices.length} selected` : directMode ? "Choose 1 product" : "Optional"}</span></h3>
           <fieldset className="new-task-product-controls" aria-labelledby="new-task-products-heading" disabled={locked}>
-          <p className="note">Select the products involved, or let the planner propose them.</p>
+          <p className="note">{directMode ? "Select the product this agent works on." : "Select the products involved, or let the planner propose them."}</p>
           <ProductPicker
             products={state.products}
             choices={choices}
@@ -391,35 +418,33 @@ export function NewTaskDialog({ state, defaultProduct, initialTitle = "", waitin
           ) => {
             const product = state.products.find((entry) => entry.id === id)!;
             if (selected) {
-            setChoices([
-            ...choices,
-            {
-            productId: id,
-            startFrom: { kind: "default" },
-            delivery: product.delivery ?? "pull-request"
-          }
-          ]);
+            const nextChoice: WorkChoice = {
+              productId: id,
+              startFrom: { kind: "default" },
+              delivery: product.delivery ?? "pull-request",
+            };
+            setChoices(directMode ? [nextChoice] : [...choices, nextChoice]);
             if (product.approveDelivery) setApproveDelivery(true);
           } else setChoices(choices.filter((choice) => choice.productId !== id));
           }}
           />
-          {!choices.length && <p className="note">Let the planner propose products.</p>}
+          {!choices.length && <p className="note">{directMode ? "Choose one product to run a single-agent task." : "Let the planner propose products."}</p>}
           {choices.map((choice) => { const product = state.products.find((entry) => entry.id === choice.productId);
           if (!product) return null;
+          const summaryDelivery = directMode && !directEdits
+            ? "Read-only · No delivery"
+            : deliveryChoiceSummaryLabel(choice.delivery, choice.startFrom.kind);
           return <details
             className="repository-row new-task-product-settings"
             key={choice.productId}
           >
-            <summary><span><strong>{product.name}</strong><span className="quiet-text">{choice.startFrom.kind === "default" ? "Default branch" : choice.startFrom.kind === "branch" ? choice.startFrom.name || "Choose a branch" : choice.startFrom.value || "Choose a pull request"} · {deliveryChoiceSummaryLabel(
-              choice.delivery,
-              choice.startFrom.kind
-            )}</span></span><ChevronDown
+            <summary><span><strong>{product.name}</strong><span className="quiet-text">{choice.startFrom.kind === "default" ? "Default branch" : choice.startFrom.kind === "branch" ? choice.startFrom.name || "Choose a branch" : choice.startFrom.value || "Choose a pull request"} · {summaryDelivery}</span></span><ChevronDown
               size={16}
               aria-hidden="true"
             /></summary>
             <div className="new-task-product-fields">
               <StartFromFields product={product.name} value={choice.startFrom} onChange={(startFrom) => change(product.id, { startFrom })} />
-              <label>When ready for {product.name}<Select
+              {(!directMode || directEdits) && <label>When ready for {product.name}<Select
                 className="select"
                 value={choice.delivery}
                 onChange={(event) => change(
@@ -432,8 +457,8 @@ export function NewTaskDialog({ state, defaultProduct, initialTitle = "", waitin
               >{deliverySelectLabel(
                 mode,
                 choice.startFrom.kind
-              )}</option>)}</Select></label>
-              {!isValidDeliveryStart(choice.startFrom.kind, choice.delivery) && <p
+              )}</option>)}</Select></label>}
+              {(!directMode || directEdits) && !isValidDeliveryStart(choice.startFrom.kind, choice.delivery) && <p
                 className="note bad"
                 role="alert"
               >{product.name}: {DELIVERY_MODE_CATALOG[choice.delivery].invalidStartInlineNote}</p>}
@@ -444,13 +469,23 @@ export function NewTaskDialog({ state, defaultProduct, initialTitle = "", waitin
               >Remove product</button>
             </div>
           </details>; })}
-          <p className="note">You’ll approve the complete product list and starting points before work begins.</p>
+          {!directMode && <p className="note">You’ll approve the complete product list and starting points before work begins.</p>}
           </fieldset>
         </section>
 
         <section className="new-task-section" aria-labelledby="new-task-work-heading">
           <h3 id="new-task-work-heading">Work & review</h3>
-          <TaskOptions
+          <DirectTaskOptions
+            state={state}
+            directMode={directMode}
+            roleId={directRoleId}
+            profileId={directProfileId}
+            disabled={locked}
+            onDirectMode={switchDirectMode}
+            onRoleId={setDirectRoleId}
+            onProfileId={setDirectProfileId}
+          />
+          {!directMode && <TaskOptions
             kind={kind}
             delivery={choices[0]?.delivery ?? "pull-request"}
             position={position}
@@ -460,21 +495,21 @@ export function NewTaskDialog({ state, defaultProduct, initialTitle = "", waitin
             hideDelivery
             hidePosition
             disabled={locked}
-          />
-          <div className="new-task-approvals">
-            <label className="toggle"><input
+          />}
+          {(!directMode || directEdits) && <div className="new-task-approvals">
+            {!directMode && <label className="toggle"><input
               type="checkbox"
               checked={approvePlan || choices.length !== 1}
               disabled={locked || choices.length !== 1}
               onChange={(event) => setApprovePlan(event.target.checked)}
-            />Show me the plan first</label>
+            />Show me the plan first</label>}
             <label className="toggle"><input
               type="checkbox"
               checked={approveDelivery}
               disabled={locked}
               onChange={(event) => setApproveDelivery(event.target.checked)}
             />Ask me before shipping</label>
-          </div>
+          </div>}
         </section>
         <section className="new-task-section new-task-destination" aria-labelledby="new-task-start-heading">
           <h3 id="new-task-start-heading">When to start</h3>

@@ -4,18 +4,43 @@ import { stateFixture } from "../../fixtures/state";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { parseCommand, type ProductCheck } from "@petrina/core";
+import { parseCommand, type ProductCheck, type State } from "@petrina/core";
+import { AddProductDialog } from "../../../src/components/AddProduct";
 import { ProductEditor } from "../../../src/components/ProductSettings";
 
-const commands = vi.hoisted(() => ({ updateProduct: vi.fn(), removeProduct: vi.fn(), setProductChecks: vi.fn(), setProductCheckSetup: vi.fn(), setProductRemoteChecks: vi.fn() }));
+let currentSimState: State = stateFixture(1_000_000);
 
-vi.mock("../../../src/engine", () => ({ sim: commands, useEngineStatus: () => ({ link: "live" }), failureText: (failure: unknown) => failure instanceof Error ? failure.message : String(failure) }));
+const commands = vi.hoisted(() => ({
+  getState: vi.fn(() => currentSimState),
+  addProduct: vi.fn(),
+  pickFolder: vi.fn(),
+  updateProduct: vi.fn(),
+  removeProduct: vi.fn(),
+  setProductChecks: vi.fn(),
+  discoverProductChecks: vi.fn(),
+  setProductCheckSetup: vi.fn(),
+  setProductRemoteChecks: vi.fn(),
+}));
+
+vi.mock("../../../src/engine", () => ({
+  sim: commands,
+  useSim: () => currentSimState,
+  useEngineStatus: () => ({ link: "live" }),
+  failureText: (failure: unknown) => (failure instanceof Error ? failure.message : String(failure)),
+}));
 
 let host: HTMLDivElement, root: Root;
 
 const closed = vi.fn(), removed = vi.fn();
 
-beforeEach(() => { vi.resetAllMocks(); host = document.createElement("div"); document.body.append(host); root = createRoot(host); });
+beforeEach(() => {
+  vi.resetAllMocks();
+  currentSimState = stateFixture(1_000_000);
+  commands.getState.mockImplementation(() => currentSimState);
+  host = document.createElement("div");
+  document.body.append(host);
+  root = createRoot(host);
+});
 
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); });
 
@@ -137,4 +162,60 @@ it("edits, validates, and saves plain-language GitHub check names while guarding
   await edit(input()[1]!, "  Linux validation  ");
   await click("Save GitHub checks");
   expect(commands.setProductRemoteChecks).toHaveBeenCalledWith("shop", ["Tests", "Linux validation"]);
+});
+
+it("queues single-step check discovery from Product settings and shows live status while active", async () => {
+  const base = stateFixture(1_000_000);
+  await act(async () =>
+    root.render(
+      <ProductEditor
+        product={{ ...base.products[0]!, checks: [], checksBy: undefined }}
+        state={{ ...base, tasks: [] }}
+        onClose={closed}
+        onRemoved={removed}
+      />,
+    ),
+  );
+  expect(host.textContent).toContain("choose Find checks now");
+  await click("Find checks now");
+  expect(commands.discoverProductChecks).toHaveBeenCalledWith("shop");
+
+  const discoveryTask = {
+    ...base.tasks[0]!,
+    id: "discover-shop",
+    productId: "shop",
+    state: "running" as const,
+    plan: {
+      rationale: "Run Check finder directly as a single-step task.",
+      plannerProfileId: "opus-high",
+      stages: [{ id: "discover-shop:direct", title: "Find automated checks", kind: "do" as const, roleId: "check-finder", profileIds: ["opus-high"] }],
+    },
+  };
+  const activeState = { ...base, tasks: [discoveryTask] };
+  await act(async () =>
+    root.render(<ProductEditor product={activeState.products[0]!} state={activeState} onClose={closed} onRemoved={removed} />),
+  );
+  expect(host.textContent).toContain("The Check finder is working them out now.");
+  const findingBtn = [...host.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent?.trim() === "Finding checks…")!;
+  expect(findingBtn.disabled).toBe(true);
+});
+
+it("queues check discovery by default when adding a new product unless unchecked or already registered", async () => {
+  const added = vi.fn();
+  commands.addProduct.mockResolvedValueOnce("new-repo");
+  await act(async () => root.render(<AddProductDialog onClose={closed} onAdded={added} />));
+  const checkbox = host.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+  expect(checkbox.checked).toBe(true);
+  await edit(host.querySelector<HTMLInputElement>('input[aria-label="Folder of the local clone"]')!, "~/code/new-repo");
+  await click("Add product");
+  expect(commands.addProduct).toHaveBeenCalledWith("~/code/new-repo", "New Repo");
+  expect(commands.discoverProductChecks).toHaveBeenCalledWith("new-repo");
+
+  // Re-adding an already registered product does not queue duplicate check discovery.
+  await act(async () => root.render(<AddProductDialog key="existing" onClose={closed} onAdded={added} />));
+  commands.discoverProductChecks.mockClear();
+  commands.addProduct.mockResolvedValueOnce("shop");
+  await edit(host.querySelector<HTMLInputElement>('input[aria-label="Folder of the local clone"]')!, "~/code/shop");
+  await click("Add product");
+  expect(commands.discoverProductChecks).not.toHaveBeenCalled();
 });

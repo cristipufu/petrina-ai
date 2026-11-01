@@ -7,8 +7,10 @@ import { versionsOf, committedCodeOf, acceptanceVersion, invalidateAcceptance } 
 
 import { builderFindings, endAgentStep, JOURNEY_WORDS, type Role, type Task } from "@petrina/core";
 import * as git from "@petrina/repositories/git";
+import { checksFingerprint, detectChecks } from "./checks.js";
+import { productCheckDiscoverySections, saveDiscoveredProductChecks } from "./product-check-discovery.js";
 import { formatFindings } from "./prompts.js";
-import { BuildResult, freshBuilderRethink, NotesResult, TestResult, TEXT_LIMITS } from "./roles.js";
+import { BuildResult, CheckFinderResult, freshBuilderRethink, NotesResult, TestResult, TEXT_LIMITS } from "./roles.js";
 import { Kernel, type MutableStage } from "./kernel.js";
 import type { Turns } from "./turn.js";
 import type { Context } from "./context.js";
@@ -24,7 +26,7 @@ function tooLong(value: { description?: string | undefined }): string | undefine
   return undefined;
 }
 
-type DoStageResult = "build" | "checks" | "notes";
+type DoStageResult = "build" | "checks" | "notes" | "check-discovery";
 
 interface DoStageRunContext {
   readonly scope: RepositoryContext;
@@ -43,7 +45,7 @@ interface DoStageRunContext {
 type DoStageOutcome = { readonly next?: "continue" | "stop"; readonly testedVersions?: Record<string, string> };
 
 function resolveDoStageResult(result: Role["result"] | undefined): DoStageResult {
-  return result === "build" || result === "checks" ? result : "notes";
+  return result === "build" || result === "checks" || result === "check-discovery" ? result : "notes";
 }
 
 export class Work {
@@ -109,6 +111,7 @@ export class Work {
       build: (run) => this.runBuildDo(run),
       checks: (run) => this.runChecksDo(run),
       notes: (run) => this.runNotesDo(run),
+      "check-discovery": (run) => this.runCheckDiscoveryDo(run),
     } satisfies Readonly<Record<DoStageResult, (run: DoStageRunContext) => Promise<DoStageOutcome>>>;
   }
 
@@ -254,6 +257,81 @@ export class Work {
     return {};
   }
 
+  private async runCheckDiscoveryDo(run: DoStageRunContext): Promise<DoStageOutcome> {
+    const { scope, stage, signal, roleId, role, profileId, used, actualProfileId } = run;
+    const { task, work: repository } = scope;
+    const product = this.k.productOf(scope);
+    const worktree = repository.worktree;
+    const fingerprint = worktree ? checksFingerprint(worktree) : "";
+    const declared = worktree ? detectChecks(worktree) : [];
+    const why = !product?.checks ? "first time" : "check discovery";
+    const result = await this.turns.turn(
+      scope,
+      roleId,
+      profileId,
+      async () => (product ? productCheckDiscoverySections(scope, product, declared) : []),
+      CheckFinderResult,
+      signal,
+      { status: "Working out how to check this product", used },
+    );
+    const by = actualProfileId();
+    const notes = result.checks.map((c) => `${c.name} — ${c.why}`);
+    task.handedBack = [
+      ...(task.handedBack ?? []).filter((entry) => entry.stageId !== stage.id),
+      {
+        at: Date.now(),
+        profileId: by,
+        stageId: stage.id,
+        roleId,
+        roleName: repository.conversation?.role?.name ?? role?.name ?? roleId,
+        title: stage.title,
+        summary: result.summary,
+        notes,
+      },
+    ];
+    this.k.participantSay(
+      scope,
+      "agent",
+      [result.summary, ...notes.map((line) => `• ${line}`)].join("\n"),
+      roleId,
+      by,
+      undefined,
+    );
+    const manualSavedLater =
+      product?.checksBy === "coordinator" && (product.checksUpdatedAt ?? 0) > (task.startedAt ?? task.createdAt);
+    if (product && !manualSavedLater) {
+      saveDiscoveredProductChecks(this.k, scope, product, fingerprint, result.checks, roleId, by, why);
+    }
+    endAgentStep(
+      task,
+      { outcome: JOURNEY_WORDS.foundChecks(result.checks.length), reason: JOURNEY_WORDS.checksFound },
+      Date.now(),
+    );
+    await this.k.saveRoleEdits(scope, roleId, by);
+    return {};
+  }
+
+  private completeNoProductChanges(scope: RepositoryContext): "stop" {
+    const { task, work: repository } = scope;
+    task.noProductChanges = true;
+    this.k.finishStep(scope);
+    this.k.tracking.endStage(scope, "done");
+    Object.assign(task, {
+      state: "done",
+      column: "done",
+      statusLine: "Completed · No product changes",
+      holdsSlot: false,
+      finishedAt: Date.now(),
+    });
+    delete task.agent;
+    delete task.checkActivity;
+    repository.nothingToPublish = true;
+    repository.cleanup = { ...repository.cleanup, pullRequest: "none" };
+    this.k.onTaskDone?.(task);
+    this.k.commitNow();
+    return "stop";
+  }
+
   async runDo(scope: RepositoryContext, stage: MutableStage, signal: AbortSignal): Promise<"continue" | "stop"> {
     const { task, work: repository } = scope;
     const roleId = stage.roleId;
@@ -305,16 +383,15 @@ export class Work {
       const changed = repository.worktree && base ? (await git.changedFiles(repository.worktree, base, "HEAD")).length > 0 : true;
       if (!changed) {
         maintenance.noProductChanges = true;
-        this.k.finishStep(scope);
-        this.k.tracking.endStage(scope, "done");
-        Object.assign(task, { state: "done", column: "done", statusLine: "Completed · No product changes", holdsSlot: false, finishedAt: Date.now() });
-        delete task.agent;
-        repository.nothingToPublish = true;
-        repository.cleanup = { ...repository.cleanup, pullRequest: "none" };
-        this.k.onTaskDone?.(task);
-        this.k.commitNow(task);
-        return "stop";
+        return this.completeNoProductChanges(scope);
       }
+    }
+    if (task.direct) {
+      if (!role?.canEdit) return this.completeNoProductChanges(scope);
+      const base = repository.baseSha;
+      const changed =
+        repository.worktree && base ? (await git.changedFiles(repository.worktree, base, "HEAD")).length > 0 : true;
+      if (!changed) return this.completeNoProductChanges(scope);
     }
     return this.completion.complete(scope, { stageId: stage.id, canEdit: !!role?.canEdit, ...(testedVersions ? { testedVersions } : {}) });
   }

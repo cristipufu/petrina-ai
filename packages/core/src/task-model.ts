@@ -182,6 +182,7 @@ export type TaskRepository = RepositoryState & {
 /** The request and coordinator choices. They survive every step and restart. */
 export interface TaskRequest {
   maintenance?: import("./routines.js").MaintenanceRun;
+  direct?: import("./direct-tasks.js").DirectTaskRun;
   id: Id;
   /** The requested product; execution may currently belong to another approved product. */
   productId: Id;
@@ -270,6 +271,8 @@ export interface TaskProgress {
   startedAt?: number;
   finishedAt?: number;
   deliveryRecorded?: boolean;
+  /** Completed intentionally without modifying product files (single-agent read-only or empty edit run). */
+  noProductChanges?: boolean;
 }
 
 /** Every coordinator decision is retained; release never rewrites the task's attempt history. */

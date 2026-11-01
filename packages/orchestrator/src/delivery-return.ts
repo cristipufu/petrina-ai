@@ -25,8 +25,11 @@ export function prepareDeliveryReturn(host: RepairHost, scope: RepositoryContext
   delete task.acceptanceBlocked;
   delete task.acceptanceUnverified;
   // The Guide keeper looks for what reviewers missed, only when they had passed it: if Important findings
-  // were open (the rounds ran out), the reviewers had caught it, and nothing was missed.
-  if (!task.findings.some((finding) => finding.status === "open" && finding.severity === "blocking")) task.miss = { note: input.note, at: input.now };
+  // were open (the rounds ran out) or no review stage ran before this gate, nothing was missed by reviewers.
+  const hadReview = task.plan?.stages.some((stage, index) => index < input.fromCheck && stage.kind === "review-chain");
+  if (hadReview && !task.findings.some((finding) => finding.status === "open" && finding.severity === "blocking")) {
+    task.miss = { note: input.note, at: input.now };
+  }
   clearDeliveryPreparation(scope);
   if (task.repositories) {
     for (const work of task.repositories) if (!repositoryPublished(work)) delete work.acceptanceReturns;

@@ -29,6 +29,7 @@ export class WorkCompletion {
         else if (task.repair.kind === "acceptance") task.repairCheck = true;
         task.stageIndex = task.repair.returnStage;
         delete task.repair;
+        task.fixing = false;
         task.sub = 0;
         this.host.checkpoint();
         return "continue";
@@ -40,6 +41,7 @@ export class WorkCompletion {
         return "continue";
       }
     }
+    if (input.canEdit) task.fixing = false;
     task.stageIndex += 1;
     task.sub = 0;
     this.host.changed();

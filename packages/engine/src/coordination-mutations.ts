@@ -3,7 +3,7 @@ import type {
   InboxDecisionOperation,
   InboxItem,
 } from "@petrina/core";
-import { messageRemovalText, offeredLessons } from "@petrina/core";
+import { activeCheckDiscoveryTask, messageRemovalText, offeredLessons } from "@petrina/core";
 import { executionFor } from "@petrina/orchestrator";
 import {
   decisionsForRequest,
@@ -323,9 +323,19 @@ export const GLOBAL_MUTATION_HANDLERS: { readonly [K in GlobalMutationName]: Glo
     engine.setPoolPaused(false);
     return done();
   },
-  "task.add": ({ engine, args, done }) => {
-    const { requestId, ...input } = args;
-    const taskId = engine.addTask({ ...input, clientId: requestId }, false);
+  "task.add": ({ engine, args, done, unavailable }) => {
+    const { requestId, roleId, profileId, ...input } = args;
+    if (Boolean(roleId) !== Boolean(profileId)) {
+      return unavailable("Supply both roleId and profileId to run a single-agent task.");
+    }
+    const taskId = engine.addTask(
+      {
+        ...input,
+        ...(roleId && profileId ? { direct: { roleId, profileId } } : {}),
+        clientId: requestId,
+      },
+      false,
+    );
     return done({ taskId });
   },
   "product.settings": ({ engine, args }) => {
@@ -334,6 +344,11 @@ export const GLOBAL_MUTATION_HANDLERS: { readonly [K in GlobalMutationName]: Glo
   },
   "product.checks": ({ engine, args }) => {
     engine.setProductChecks(args.productId, args.checks);
+  },
+  "product.discover-checks": ({ engine, args, done }) => {
+    const reused = Boolean(activeCheckDiscoveryTask(engine.s.tasks, engine.s.roles, args.productId));
+    const taskId = engine.discoverProductChecks(args.productId, args.profileId, false);
+    return done({ productId: args.productId, taskId, reused });
   },
   "product.check-setup": ({ engine, args }) => {
     engine.setProductCheckSetup(args.productId, args.requirements);

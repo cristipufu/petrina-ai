@@ -27,7 +27,7 @@ import { pickLocalFolder } from "@petrina/platform/folder-picker";
 import { expandPath, findClones } from "@petrina/repositories/discovery";
 import * as git from "@petrina/repositories/git";
 import type { Engine } from "./engine.js";
-import { TONES, type RuntimeTask } from "./kernel.js";
+import { CHECK_FINDER_PROFILE, TONES, type RuntimeTask } from "./kernel.js";
 import { browserCommand } from "./setup.js";
 import type { ToolChecks } from "./tool-checks.js";
 
@@ -243,8 +243,23 @@ export class CatalogCommands {
       this.engine.s.products.find((product) => product.id === productId),
       checks,
       executions(),
+      Date.now(),
     );
     this.engine.commit();
+  }
+
+  discoverProductChecks(productId: Id, profileId?: Id, schedule = true): Id {
+    const product = this.engine.s.products.find((entry) => entry.id === productId);
+    if (!product) throw new Error("This product is no longer in Petrina.");
+    const active = library.activeCheckDiscoveryTask(this.engine.s.tasks, this.engine.s.roles, productId);
+    if (active) return active;
+    const input = library.checkDiscoveryTaskInput(
+      product,
+      this.engine.s as library.State,
+      profileId,
+      this.engine.onUsable(CHECK_FINDER_PROFILE),
+    );
+    return this.engine.addTask(input, schedule);
   }
 
   setProductCheckSetup(productId: Id, requirements: readonly library.CheckPrerequisite[]): void {

@@ -84,8 +84,19 @@ export function formatShapeJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
-const COMPLETE_CHECKS_RULE =
+export const COMPLETE_CHECKS_RULE =
   "Where the repository defines a full local check, select that authoritative command. Focused, affected-only and early-feedback commands may complement it, but cannot replace it. If a required validation cannot run here, state that limitation instead of presenting a subset as complete validation.";
+
+const HOST_PLATFORM_LABEL: Readonly<Record<string, string>> = {
+  darwin: "macOS",
+  linux: "Linux",
+  win32: "Windows",
+};
+
+export function hostChecksRule(platform: string = process.platform): string {
+  const host = HOST_PLATFORM_LABEL[platform] ?? platform;
+  return `Every check you return runs locally on this ${host} machine on every future task, so keep names and "why" reasons about the whole product, never a single task. Confirm each check's tool or runtime is installed and runs on this ${host} host before including it; leave out checks for other operating systems, missing toolchains or unstarted local services, push-only benchmarks, and slow installer packaging.`;
+}
 
 const LEARN =
   'Only propose verified, durable rules for working in this repository: how to build, run or test it, a recurring trap, or an unwritten convention that will help unrelated future tasks. Add at most three plain lines to "learnings", and skip anything AGENTS.md already says. Never propose task history, delivery summaries, historical comparisons, older feature briefs, acceptance checklists, one-off investigations or temporary conditions. Current product behavior belongs in its existing design or UX contract; bugs belong in findings or follow-up tasks. Do not copy those materials into AGENTS.md. Leave learnings empty when nothing meets this standard. The coordinator approves every line before it joins AGENTS.md.';
@@ -541,8 +552,8 @@ Do not change any files, and do not commit, tag, push or publish anything: Petri
   },
   "check-discovery": {
     schema: CheckFinderResult,
-    reads: ["notes", "brief"],
-    requiredRules: () => [COMPLETE_CHECKS_RULE],
+    reads: [],
+    requiredRules: () => [COMPLETE_CHECKS_RULE, hostChecksRule()],
     shape: () =>
       formatShapeJson({
         summary: "How this product is checked, in one sentence",

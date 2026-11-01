@@ -81,7 +81,11 @@ export function takeOverBlock(task: Task, state: Pick<State, "profiles" | "tools
   const delivery = state.roles ? roleForTask(state.roles, agent.roleId, task)?.result === "delivery" : agent.roleId === "release-manager";
   if (delivery) return TAKE_OVER_WORDS.releaseManager;
   if (task.helpers?.length) return TAKE_OVER_WORDS.several;
-  const toolId = state.profiles.find((profile) => profile.id === agent.profileId)?.toolId;
+  const toolId = (
+    state.profiles.find((profile) => profile.id === agent.profileId)
+    ?? (task.direct?.profile.id === agent.profileId ? task.direct.profile : undefined)
+    ?? (task.maintenance?.profile.id === agent.profileId ? task.maintenance.profile : undefined)
+  )?.toolId;
   if (!toolId || !TAKE_OVER_TOOLS[toolId]) return TAKE_OVER_WORDS.unsupported;
   if (state.tools.find((tool) => tool.id === toolId)?.status !== "ready") return TAKE_OVER_WORDS.missing(toolName(toolId));
   const conversation = task.conversation;

@@ -249,7 +249,8 @@ function endOf(task: Task): JourneyView["end"] {
  * ahead, with a start point and, once it is over, an end point. Pure: the same task gives the same journey.
  */
 export function journeyView(task: Task, ctx: JourneyContext): JourneyView {
-  if (task.maintenance) ctx = { ...ctx, roles: [...ctx.roles.filter((role) => role.id !== task.maintenance!.role.id), task.maintenance.role] };
+  const frozenRole = task.maintenance?.role ?? task.direct?.role;
+  if (frozenRole) ctx = { ...ctx, roles: [...ctx.roles.filter((role) => role.id !== frozenRole.id), frozenRole] };
   const recorded: readonly JourneyStep[] = task.journey ?? legacyJourney(task, ctx.inbox, ctx.roles);
   const open = openStep({ journey: recorded });
   const finished = FINISHED.includes(task.state);
@@ -387,6 +388,7 @@ export function journeyViewKey(task: Task, ctx: JourneyContext): string {
     delivery: task.delivery,
     shippingPrepared: task.shipping?.prepared,
     agent: task.agent && [task.agent.roleId, task.agent.profileId, task.agent.since],
+    frozenRole: (task.maintenance?.role ?? task.direct?.role)?.id,
     journey: task.journey,
     statusLine: task.statusLine,
     pr: task.pr,
