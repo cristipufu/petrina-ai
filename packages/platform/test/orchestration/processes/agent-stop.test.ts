@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { confirmStoppedProcesses, stopAgentPrograms, type AgentStopTarget } from "../../../src/agent-stop.js";
+import { confirmStoppedProcesses, stopAgentPrograms, stopAgentTree, type AgentStopTarget } from "../../../src/agent-stop.js";
 import { AgentStopFixture } from "../../fixtures/agent-stop.js";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 
@@ -168,4 +168,118 @@ it("still takes one bounded group snapshot when the first poll sleep stalls past
     ended: true,
     processes: [{ pid: 4242, state: "finished", sources: ["target"] }],
   });
+});
+
+it("waits for Windows OS kernel process-table exit even after stopTree and child exit report success", async () => {
+  let now = 0;
+  let running = true;
+  let rundownPollsRemaining = 3;
+  let treeStops = 0;
+  let forceKills = 0;
+  const stopped = await stopAgentTree({ pid: 7777, running: () => running }, true, {
+    now: () => now,
+    async sleep(ms) {
+      now += ms;
+      if (rundownPollsRemaining > 0) rundownPollsRemaining--;
+    },
+    async stopTree(pid, timeoutMs) {
+      expect(pid).toBe(7777);
+      expect(timeoutMs).toBe(2_000);
+      treeStops++;
+      running = false;
+      return true;
+    },
+    missing: () => rundownPollsRemaining === 0,
+    forceKill() {
+      forceKills++;
+    },
+  });
+  expect(stopped).toBe(true);
+  expect(treeStops).toBe(1);
+  expect(rundownPollsRemaining).toBe(0);
+  expect(now).toBe(30);
+  expect(forceKills).toBeGreaterThanOrEqual(1);
+});
+
+it("falls back to forceKill on stopTree timeout, skips stopTree for childless probes, and refuses confirmation if the PID remains", async () => {
+  // 1. WMI stopTree timeout falls back to forceKill.
+  {
+    let now = 0;
+    let running = true;
+    let missing = false;
+    let treeStops = 0;
+    let forceKills = 0;
+    const stopped = await stopAgentTree({ pid: 8888, running: () => running }, true, {
+      now: () => now,
+      async sleep(ms) {
+        now += ms;
+      },
+      async stopTree() {
+        treeStops++;
+        now += 2_000;
+        return false;
+      },
+      missing: () => missing,
+      forceKill() {
+        forceKills++;
+        running = false;
+        missing = true;
+      },
+    });
+    expect(stopped).toBe(true);
+    expect(treeStops).toBe(1);
+    expect(forceKills).toBe(1);
+  }
+
+  // 2. Childless probe (collectPrograms = false) skips stopTree completely.
+  {
+    let running = true;
+    let missing = false;
+    let treeStops = 0;
+    let forceKills = 0;
+    const stopped = await stopAgentTree({ pid: 9999, running: () => running }, false, {
+      now: () => 0,
+      async sleep() {},
+      async stopTree() {
+        treeStops++;
+        return true;
+      },
+      missing: () => missing,
+      forceKill() {
+        forceKills++;
+        running = false;
+        missing = true;
+      },
+    });
+    expect(stopped).toBe(true);
+    expect(treeStops).toBe(0);
+    expect(forceKills).toBe(1);
+  }
+
+  // 3. Already-exited child handle skips stopTree, still waits for kernel rundown, and fails if stuck past deadline.
+  {
+    let now = 0;
+    let treeStops = 0;
+    const unconfirmed = await stopAgentTree({ pid: 5555, running: () => false }, true, {
+      now: () => now,
+      async sleep() {
+        now += 2_500;
+      },
+      async stopTree() {
+        treeStops++;
+        return true;
+      },
+      missing: () => false,
+      forceKill() {},
+    });
+    expect(unconfirmed).toBe(false);
+    expect(treeStops).toBe(0);
+    expect(await stopAgentTree({ pid: undefined, running: () => false }, true, {
+      now: () => 0,
+      async sleep() {},
+      async stopTree() { return false; },
+      missing: () => false,
+      forceKill() {},
+    })).toBe(true);
+  }
 });

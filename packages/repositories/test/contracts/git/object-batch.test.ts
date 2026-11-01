@@ -1,11 +1,12 @@
 import { afterAll, expect, it, spyOn } from "bun:test";
-import { cpSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { git, gitWith } from "@petrina/test-support/commands";
 import { tempDir } from "@petrina/test-support/fixtures";
 import { repositorySeed } from "@petrina/test-support/repositories";
 import { FixtureOperations } from "@petrina/test-support/fixture-operations";
 import { registerFixtureRoot } from "@petrina/test-support/fixture-retention";
+import { removeFixtureRoot } from "@petrina/test-support/fixture-roots";
 import { CLEANUP_MS } from "@petrina/test-support/commands";
 import { SLOW } from "@petrina/test-support/slow";
 import { expectRejection } from "@petrina/test-support/rejections";
@@ -15,7 +16,7 @@ import { plainFileAt } from "../../../src/git.js";
 const root = tempDir("petrina-object-packets-");
 registerFixtureRoot(root);
 const owner = new FixtureOperations({ label: `Git object packets at ${root}`, stop() {},
-  dispose: () => rmSync(root, { recursive: true, force: true }), allowanceMs: CLEANUP_MS * SLOW,
+  dispose: () => removeFixtureRoot(root), allowanceMs: CLEANUP_MS * SLOW,
   arm: (expired, ms) => { const timer = setTimeout(expired, ms); return () => clearTimeout(timer); } });
 afterAll(() => owner.close());
 

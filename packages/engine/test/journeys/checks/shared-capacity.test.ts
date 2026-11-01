@@ -11,6 +11,7 @@ import { afterAll, expect, it } from "bun:test";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { journeyProblems, slotUses, type Task } from "@petrina/core";
+import { removeTreeWithRetries } from "@petrina/test-support/fixture-roots";
 
 
 import { createProductRepository, Fakes, waitFor } from "../../fixtures.js";
@@ -58,7 +59,7 @@ try {
             while (existsSync(hold) && !req.signal?.aborted) await Bun.sleep(20);
             return { code: req.signal?.aborted ? 130 : 0 };
           } finally {
-            rmSync(lock, { recursive: true });
+            removeTreeWithRetries(lock);
           }
         },
       }),

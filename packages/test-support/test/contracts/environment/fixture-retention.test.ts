@@ -2,6 +2,7 @@ import { afterAll, expect, it, spyOn } from "bun:test";
 import * as fs from "node:fs";
 import { join } from "node:path";
 import { createFixtureJournal, fixtureRetention, FIXTURE_JOURNAL, registerFixtureRoot } from "../../../src/fixture-retention.js";
+import { removeFixtureRoot } from "../../../src/fixture-roots.js";
 import { removeDir, tempDir } from "../../../src/fixtures.js";
 
 const root = tempDir("petrina-fixture-journal-");
@@ -21,9 +22,9 @@ it("retains every actual root until its independent terminal cleanup removes tha
   if (both.kind !== "retained") throw new Error("Existing roots lost their disposal veto");
   expect(new Set(both.roots)).toEqual(new Set([first, browser]));
   // This control starts no actors. These are actual terminal filesystem removals, not inferred stops.
-  fs.rmSync(first, { recursive: true });
+  removeFixtureRoot(first);
   expect(fixtureRetention(f.path)).toEqual({ kind: "retained", roots: [browser] });
-  fs.rmSync(browser, { recursive: true });
+  removeFixtureRoot(browser);
   expect(fixtureRetention(f.path)).toEqual({ kind: "clear" });
 });
 
@@ -31,7 +32,7 @@ for (const corruption of ["missing journal", "missing header", "malformed header
   const f = journal(corruption), actual = join(root, "owned-" + corruption);
   fs.mkdirSync(actual); registerFixtureRoot(actual, f.env);
   const record = fs.readdirSync(f.path).find(name => name !== "journal.json")!;
-  if (corruption === "missing journal") fs.rmSync(f.path, { recursive: true });
+  if (corruption === "missing journal") removeFixtureRoot(f.path);
   else if (corruption === "missing header") fs.rmSync(join(f.path, "journal.json"));
   else if (corruption === "malformed header") fs.writeFileSync(join(f.path, "journal.json"), '{"version":1,"unknown":true}');
   else if (corruption === "partial record") fs.writeFileSync(join(f.path, record), '{"version":');

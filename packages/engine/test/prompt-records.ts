@@ -1,7 +1,8 @@
 // Private fake-agent evidence, shared by several processes. Never append large prompts to one file:
 // an observer can read a short write, and another writer can append between its pieces.
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { removeTreeWithRetries } from "@petrina/test-support/fixture-roots";
 
 export interface PromptRecord { role: string; session: string; text: string }
 
@@ -33,7 +34,7 @@ export async function recordPrompt(dir: string, record: PromptRecord, write: (pa
     }
   } finally {
     // An interrupted process can leave only a private pending directory, reclaimed with its fixture.
-    rmSync(pending, { recursive: true, force: true });
+    removeTreeWithRetries(pending);
   }
 }
 

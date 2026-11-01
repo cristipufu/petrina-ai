@@ -426,3 +426,75 @@ it("rejects hardcoded multi-provider tables and dispatches outside providers.ts 
   }
   expect(found(`export const CAPS = { "claude-code": 5, codex: 4 };\n`, "packages/core/src/demo.ts")).toEqual([]);
 });
+
+it("rejects discarded onGone callbacks, recursive rmSync in tests, and raw process.kill(..., 0) in engine tests", () => {
+  for (const snippet of [
+    `export const req = { onGone: () => {} };\n`,
+    `export const req = { onGone: (_gone: Promise<void>) => {} };\n`,
+    `export const req = { onGone: (_gone: Promise<void>) => void _gone };\n`,
+    `export const req = { onGone: () => undefined };\n`,
+    `export const req = { onGone() {} };\n`,
+    `export function assign(req: { onGone?: (gone: Promise<void>) => void }) { req.onGone = () => {}; }\n`,
+  ]) {
+    expect(found(snippet, "packages/engine/test/contracts/runtime/sample.test.ts")).toEqual([
+      expect.stringContaining("collect and await the onGone cleanup promise"),
+    ]);
+    expect(found(snippet, "packages/agent-runtime/test/contracts/processes/sample.test.ts")).toEqual([
+      expect.stringContaining("collect and await the onGone cleanup promise"),
+    ]);
+  }
+  expect(
+    found(
+      `const cleanups: Promise<void>[] = [];\nexport const req = { onGone: (gone: Promise<void>) => { cleanups.push(gone); } };\n`,
+      "packages/engine/test/contracts/runtime/sample.test.ts",
+    ),
+  ).toEqual([]);
+  expect(
+    found(
+      `export const req = { onGone() { throw new Error("observer failure"); } };\n`,
+      "packages/agent-runtime/test/contracts/agents/sample.test.ts",
+    ),
+  ).toEqual([]);
+
+  for (const snippet of [
+    `import { rmSync } from "node:fs";\nrmSync("/tmp/x", { recursive: true, force: true });\n`,
+    `import { rmSync as remove } from "fs";\nremove("/tmp/x", { "recursive": true });\n`,
+    `import * as fs from "node:fs";\nfs.rmSync("/tmp/x", { recursive: true });\n`,
+  ]) {
+    expect(found(snippet, "packages/engine/test/contracts/cleanup/sample.test.ts")).toEqual([
+      expect.stringContaining("use removeFixtureRoot, removeTreeWithRetries or removeDir"),
+    ]);
+    expect(found(snippet, "packages/repositories/test/contracts/git/sample.test.ts")).toEqual([
+      expect.stringContaining("use removeFixtureRoot, removeTreeWithRetries or removeDir"),
+    ]);
+  }
+  expect(
+    found(
+      `import { rmSync } from "node:fs";\nrmSync("/tmp/flag", { force: true });\n`,
+      "packages/engine/test/contracts/cleanup/sample.test.ts",
+    ),
+  ).toEqual([]);
+  expect(
+    found(
+      `import { rmSync } from "node:fs";\nrmSync("/tmp/alias", { recursive: true });\n`,
+      "packages/test-support/test/contracts/filesystem/aliases.test.ts",
+    ),
+  ).toEqual([]);
+
+  for (const snippet of [
+    `process.kill(1234, 0);\n`,
+    `globalThis.process.kill(1234, 0);\n`,
+    `import proc from "node:process";\nproc.kill(1234, 0);\n`,
+    `import { kill } from "node:process";\nkill(1234, 0);\n`,
+  ]) {
+    expect(found(snippet, "packages/engine/test/contracts/runtime/sample.test.ts")).toEqual([
+      expect.stringContaining("instead of raw process.kill(..., 0)"),
+    ]);
+  }
+  expect(
+    found(`process.kill(1234, "SIGKILL");\n`, "packages/engine/test/contracts/runtime/sample.test.ts"),
+  ).toEqual([]);
+  expect(
+    found(`export const prose = "process.kill(pid, 0) and rmSync(dir, { recursive: true })";\n`, "packages/engine/test/contracts/runtime/sample.test.ts"),
+  ).toEqual([]);
+});

@@ -1,6 +1,7 @@
-import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import * as gitOps from "@petrina/repositories/git";
+import { removeTreeWithRetries } from "@petrina/test-support/fixture-roots";
 import { createProductRepository } from "@petrina/test-support/repositories";
 import { tempDir } from "../support.js";
 
@@ -60,9 +61,9 @@ export async function prepareReviewRepository(
   const origin = join(root, "origin.git");
   const repo = join(root, "clone");
   const worktree = join(root, options.folder);
-  rmSync(origin, { recursive: true, force: true });
-  rmSync(repo, { recursive: true, force: true });
-  rmSync(worktree, { recursive: true, force: true });
+  removeTreeWithRetries(origin);
+  removeTreeWithRetries(repo);
+  removeTreeWithRetries(worktree);
   cpSync(join(seed.root, "origin.git"), origin, { recursive: true });
   cpSync(join(seed.root, "clone"), repo, { recursive: true });
   cpSync(join(seed.root, "worktree"), worktree, { recursive: true });
@@ -109,11 +110,11 @@ export async function attachReviewWorktree(
   const id = options.id ?? "worktree";
   cpSync(join(seed.root, "clone", ".git", "objects"), join(repo, ".git", "objects"), { recursive: true });
   mkdirSync(dirname(options.worktree), { recursive: true });
-  rmSync(options.worktree, { recursive: true, force: true });
+  removeTreeWithRetries(options.worktree);
   cpSync(join(seed.root, "worktree"), options.worktree, { recursive: true });
 
   const worktreeMeta = join(repo, ".git", "worktrees", id);
-  rmSync(worktreeMeta, { recursive: true, force: true });
+  removeTreeWithRetries(worktreeMeta);
   mkdirSync(dirname(worktreeMeta), { recursive: true });
   cpSync(join(seed.root, "clone", ".git", "worktrees", "worktree"), worktreeMeta, { recursive: true });
   writeFileSync(join(worktreeMeta, "gitdir"), `${join(options.worktree, ".git")}\n`);

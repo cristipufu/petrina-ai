@@ -9,10 +9,15 @@ const { until, status, taskOf, toolsUsed, run } = setupFixtures();
 /** These existing native login journeys also calibrate the explicit one-tool workflow recipes. */
 async function calibrated(engine: Engine, only: "claude-code" | "codex" | "grok") {
   const expected = privateAgentToolProbe([only]);
-  for (const id of [...PROVIDER_IDS, "git"] as const) {
-    const { status, account, detail } = checkOf(engine.s.setup?.checks, id);
-    expect({ status, ...(account ? { account } : {}), ...(detail ? { detail } : {}) })
-      .toEqual(await expected.run(id, { signal: engine.stopRequested.signal, onGone: () => {} }));
+  const cleanups: Promise<void>[] = [];
+  try {
+    for (const id of [...PROVIDER_IDS, "git"] as const) {
+      const { status, account, detail } = checkOf(engine.s.setup?.checks, id);
+      expect({ status, ...(account ? { account } : {}), ...(detail ? { detail } : {}) })
+        .toEqual(await expected.run(id, { signal: engine.stopRequested.signal, onGone: (gone) => cleanups.push(gone) }));
+    }
+  } finally {
+    await Promise.allSettled(cleanups);
   }
 }
 

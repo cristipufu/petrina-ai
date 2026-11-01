@@ -9,6 +9,7 @@ import { runtimeWaitHolds, runtimeWaitView, type CheckId } from "@petrina/core";
 import { commandInputText } from "../../../src/checks.js";
 import type { Engine, EngineOptions } from "../../engine.js";
 import { headNow } from "@petrina/test-support/repository-head";
+import { removeFixtureRoot, removeTreeWithRetries } from "@petrina/test-support/fixture-roots";
 import { createProductRepository } from "@petrina/test-support/repositories";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { fakeEngineSettings } from "../../fixtures/fake-agent-sessions.js";
@@ -21,7 +22,7 @@ const landSeeds = new Map<string, Promise<{ root: string; objectsDir: string; in
 afterAll(async () => {
   const entries = await Promise.all([...landSeeds.values()]);
   landSeeds.clear();
-  for (const entry of entries) rmSync(entry.root, { recursive: true, force: true });
+  for (const entry of entries) removeFixtureRoot(entry.root);
   await fixtures.close();
 });
 
@@ -32,7 +33,7 @@ function getLandSeed(clone: string, initial: string) {
       const root = tempDir("petrina-release-recovery-land-");
       const repo = join(root, "clone");
       cpSync(clone, repo, { recursive: true });
-      rmSync(join(repo, ".git", "worktrees"), { recursive: true, force: true });
+      removeTreeWithRetries(join(repo, ".git", "worktrees"));
       writeFileSync(join(repo, "required-fix.txt"), "The prerequisite fix\n");
       await gitOps.commitChanges(repo, "Land the required fix");
       const sha = headNow(repo)!;

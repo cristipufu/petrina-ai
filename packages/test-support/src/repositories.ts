@@ -3,6 +3,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, r
 import { join } from "node:path";
 import { gitWith } from "./commands.js";
 import { tempDir, removeDir } from "./fixtures.js";
+import { removeTreeWithRetries } from "./fixture-roots.js";
 import { headNow } from "./repository-head.js";
 import { repositorySeedEnvironment, seedRecord } from "./repository-seed-environment.js";
 import { privateOriginConfig } from "./repository-config.js";
@@ -111,16 +112,17 @@ async function claimSeedPreparation(
       } catch {
         // Best-effort owner hint: if writing pid fails, mkdirSync already established exclusive lock ownership.
       }
-      return { kind: "claimed", release: () => rmSync(claimPath, { recursive: true, force: true }) };
+      return { kind: "claimed", release: () => removeTreeWithRetries(claimPath) };
     } catch (error) {
       if ((error as NodeJS.ErrnoException | undefined)?.code !== "EEXIST") return { kind: "fallback" };
       const ownerText = seedRecord(join(claimPath, "pid"));
       const ownerPid = ownerText ? Number(ownerText.trim()) : NaN;
       if (Number.isInteger(ownerPid) && ownerPid > 0) {
-        try { process.kill(ownerPid, 0); }
-        catch (probeError) {
+        try {
+          process.kill(ownerPid, 0);
+        } catch (probeError) {
           if ((probeError as NodeJS.ErrnoException | undefined)?.code === "ESRCH") {
-            rmSync(claimPath, { recursive: true, force: true });
+            removeTreeWithRetries(claimPath);
             continue;
           }
         }
@@ -157,7 +159,7 @@ async function prepareSeed(path: string, version: string | undefined, versionFil
   const head = headNow(source);
   cpSync(join(source, ".git"), origin, { recursive: true });
   rmSync(join(origin, "index"), { force: true });
-  rmSync(join(origin, "logs"), { recursive: true, force: true });
+  removeTreeWithRetries(join(origin, "logs"));
   const sourceConfig = readFileSync(join(source, ".git", "config"), "utf8");
   writeFileSync(join(origin, "config"), sourceConfig.replace("\tbare = false", "\tbare = true").replace(/\tlogallrefupdates = true\r?\n/, ""));
   // Files check out exactly as tests write them, whatever line endings this machine's own Git settings ask for: Git for

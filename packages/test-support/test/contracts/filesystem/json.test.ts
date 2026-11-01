@@ -2,7 +2,7 @@ import { afterAll, expect, it, spyOn } from "bun:test";
 import * as fs from "node:fs";
 import { closeSync, mkdirSync, openSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { readFixtureJsonLines, writeFixtureJson } from "@petrina/test-support/fixture-json";
+import { readFixtureJsonLines, writeFixtureJson, writeFixtureText } from "@petrina/test-support/fixture-json";
 import { removeDir, tempDir } from "@petrina/test-support/fixtures";
 
 const roots: string[] = [];
@@ -35,6 +35,21 @@ it("preserves published state and removes staging files when serialization or pu
   expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({ kept: true });
   expect(readFileSync(join(target, "keep"), "utf8")).toBe("owned existing state");
   expect(readdirSync(root).sort()).toEqual(["config.json", "unreplaceable"]);
+});
+
+it("publishes plain-text flags atomically to live readers and cleans up staging files on failure", () => {
+  const root = tempDir("petrina-text-publication-"); roots.push(root);
+  const path = join(root, "release.flag"), unreplaceable = join(root, "directory-target");
+  writeFixtureText(path, "hold");
+  const reader = openSync(path, "r");
+  try {
+    writeFixtureText(path, "fail");
+    expect(readFileSync(reader, "utf8")).toBe("hold");
+    expect(readFileSync(path, "utf8")).toBe("fail");
+    mkdirSync(unreplaceable);
+    expect(() => writeFixtureText(unreplaceable, "fail")).toThrow();
+    expect(readdirSync(root).sort()).toEqual(["directory-target", "release.flag"]);
+  } finally { closeSync(reader); }
 });
 
 it("waits for a complete record when the live fixture log is missing or empty", () => {

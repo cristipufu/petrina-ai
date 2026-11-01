@@ -11,13 +11,13 @@ import { executionFor, type ToolProbe } from "@petrina/orchestrator";
 import { WaitingForUsage } from "../../../src/usage.js";
 import { BuildResult } from "../../../src/roles.js";
 import { Fakes, createProductRepository, SLOW, waitFor } from "../../fixtures.js";
+import { childState } from "@petrina/platform/process-tree";
 import { rejectionOf } from "@petrina/test-support/rejections";
 const engineCases = engineCaseFixtures();
 afterAll(() => engineCases.close());
 
 
 const OLD = 10 * 60_000;
-const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 
 /** An engine whose agents and readiness checks run the fake tool in `root`, keeping its data there across restarts. */
 function engineIn(caseOwner: EngineCaseOwner, root: string, checkTimeoutMs = 8_000 * SLOW, nativeProbe = false) {
@@ -94,13 +94,13 @@ it("records an unknown readiness answer when a native probe dies while opening i
     try {
       await held.reached(checking);
       const probe = f.checks().find(check => check.tool === "grok")!;
-      expect(alive(probe.pid)).toBe(true);
+      expect(await childState(probe.pid)).toBe("running");
       process.kill(probe.pid, "SIGKILL");
       await checking;
       expect(f.check("grok").status).toBe("unknown");
       expect(f.checks().filter(check => check.tool === "grok")).toHaveLength(1);
       await owner.stop(f.engine);
-      expect(alive(probe.pid)).toBe(false);
+      await waitFor(async () => (await childState(probe.pid)) === "ended", "the killed readiness probe to exit");
     } finally { held.release(); await owner.stop(f.engine); await checking; }
   });
 });
@@ -211,7 +211,7 @@ describe.concurrent("a saved reviewer's uncertain tool", () => {
       expect(f.fakes.opens().filter((open) => open.session === saved.sessionId)).toHaveLength(1);
       await caseOwner.stop(f.engine);
       // The hung check was stopped with the engine.
-      for (const { pid } of f.checks()) expect(alive(pid)).toBe(false);
+      for (const { pid } of f.checks()) expect(await childState(pid)).toBe("ended");
     } finally { await caseOwner.stop(f.engine); }
 
   });
@@ -307,7 +307,7 @@ describe.concurrent("a saved reviewer's uncertain tool", () => {
       const pid = f.checks()[0]!.pid;
       await caseOwner.stop(f.engine);
       await waiting;
-      expect(alive(pid)).toBe(false);
+      expect(await childState(pid)).toBe("ended");
       expect(f.engine["tools"].pending().checking).toHaveLength(0);
       expect(f.engine["tools"].pending().stopping).toHaveLength(0);
       restarted = engineIn(caseOwner, f.root, undefined, true);

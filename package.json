@@ -24,6 +24,7 @@
     "test:impact": "bun packages/engine/test/quality/repository.ts impact",
     "test:coverage": "bun packages/engine/test/quality/coverage.ts",
     "test:install-browser": "bun packages/engine/test/quality/install-browser.ts",
+    "test:os-contracts": "bun run --cwd packages/engine test --bail ../test-support/test ../platform/test ../storage/test ../repositories/test/contracts/worktrees/cleanup.test.ts ../agent-runtime/test/contracts/processes ./test/contracts/runtime ./test/contracts/checks/check-activity.test.ts ./test/contracts/recovery/profiles.test.ts ./test/journeys/runtime/shutdown.test.ts",
     "test:affected": "bun packages/engine/test/quality/affected-run.ts",
     "test:resources": "bun packages/engine/test/quality/resources.ts",
     "test:resources:ledger": "bun packages/engine/test/quality/resource-ledger.ts",

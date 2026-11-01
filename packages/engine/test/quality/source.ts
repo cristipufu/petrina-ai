@@ -1,5 +1,6 @@
 import { parse } from "@babel/parser";
 import { childPrograms, type ChildProgram } from "./child-programs.js";
+import { crossPlatformHazards, type CrossPlatformHazards } from "./cross-platform.js";
 import { engineConstructions, type EngineConstruction } from "./engine-construction.js";
 import { providerEnumerations } from "./provider-enumerations.js";
 import { CALLS, FUNCTIONS, lineOf, name, node, text, WRAPPERS, type Node } from "./source-ast.js";
@@ -33,6 +34,8 @@ export interface SourceFacts {
   anyTypes: number[];
   /** Multi-provider ID tables, unions or switch/branch dispatches hardcoded in syntax. */
   providerEnumerations: number[];
+  /** Cross-platform lifecycle, filesystem and PID-probing hazards in test code. */
+  crossPlatform: CrossPlatformHazards;
 }
 
 const BLOCKING = new Set(["spawnSync", "execFileSync", "execSync"]);
@@ -60,6 +63,7 @@ export function sourceFacts(source: string, filename: string): SourceFacts {
     engineConstructions: [],
     anyTypes: [],
     providerEnumerations: [],
+    crossPlatform: { discardedOnGone: [], recursiveRmSync: [], rawPidZeroKill: [] },
   };
   const ast = parse(source, {
     sourceType: "unambiguous",
@@ -69,6 +73,7 @@ export function sourceFacts(source: string, filename: string): SourceFacts {
   });
   facts.childPrograms = childPrograms(ast.program as unknown as Node, filename);
   facts.providerEnumerations = providerEnumerations(ast.program as unknown as Node);
+  facts.crossPlatform = crossPlatformHazards(ast.program as unknown as Node);
   if (filename.startsWith("packages/engine/test/")) {
     facts.engineConstructions = engineConstructions(ast.program, filename);
   }

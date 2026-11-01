@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   checkActivityDetails,
@@ -12,6 +12,7 @@ import {
 } from "@petrina/core";
 import { executionFor, repositoryView } from "@petrina/orchestrator";
 import * as gitOps from "@petrina/repositories/git";
+import { writeFixtureText } from "@petrina/test-support/fixture-json";
 import { writeGitProgram } from "@petrina/test-support/git-program";
 import { Coordination } from "../../../src/coordination.js";
 import { stepKey } from "../../../src/kernel.js";
@@ -88,18 +89,16 @@ async function fixture(caseOwner: EngineCaseOwner, checkRuns = 1, extraOptions: 
       const started = join(root, `${tag}-started`);
       const release = join(root, `${tag}-release`);
       const script = join(root, `${tag}.ts`);
+      const fixtureJson = import.meta.resolve("@petrina/test-support/fixture-json");
       writeFileSync(
         script,
-        `import { existsSync, renameSync, writeFileSync } from "node:fs";
-const [started, release] = process.argv.slice(2); writeFileSync(started + ".tmp", "ready"); renameSync(started + ".tmp", started);
+        `import { existsSync } from "node:fs";
+import { writeFixtureText } from ${JSON.stringify(fixtureJson)};
+const [started, release] = process.argv.slice(2); writeFixtureText(started, "ready");
 while (!existsSync(release)) await Bun.sleep(10);
 process.exit(Bun.file(release).size ? 1 : 0);`,
       );
-      const publish = (value: string) => {
-        const tmp = `${release}.${process.pid}.${counter++}.tmp`;
-        writeFileSync(tmp, value);
-        renameSync(tmp, release);
-      };
+      const publish = (value: string) => writeFixtureText(release, value);
       caseOwner.onStop(() => {
         try {
           publish("");

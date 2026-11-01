@@ -1,6 +1,7 @@
 import type { EngineCaseOwner } from "./engine-cases.js";
-import { cpSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { removeTreeWithRetries } from "@petrina/test-support/fixture-roots";
 import { repositorySeed } from "@petrina/test-support/repositories";
 import { commitChanges } from "@petrina/repositories/git";
 import { promptApplication, type PromptApplication } from "./prompt-application.js";
@@ -32,7 +33,7 @@ async function prepareCheckContext(owner: EngineCaseOwner, f: PromptApplication,
     const { worktree } = f.scope.work;
     const preparedRepo = await getGreetingRepoSeed();
     owner.check();
-    rmSync(worktree!, { recursive: true, force: true });
+    removeTreeWithRetries(worktree!);
     cpSync(preparedRepo, worktree!, { recursive: true });
     owner.check();
     const check = checkCommand(root);

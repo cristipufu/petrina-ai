@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { normalizePlan, type DeepMutable } from "@petrina/core";
 import { executionFor, repositoryView } from "@petrina/orchestrator";
@@ -6,7 +6,7 @@ import { commitChanges, commitVersion } from "@petrina/repositories/git";
 import { fixtureFiles } from "@petrina/test-support/fixture-files";
 import type { ProductRepository } from "@petrina/test-support/repositories";
 import type { Engine } from "../engine.js";
-import { createProductRepository, tempDir } from "../fixtures.js";
+import { createProductRepository, removeDir, tempDir } from "../fixtures.js";
 import { checkBrief, checkPlan, type CheckScript } from "./check-agents.js";
 
 interface PreparedWorktreeSeed {
@@ -21,7 +21,7 @@ interface PreparedWorktreeSeed {
 const preparedSeeds = new Map<string, Promise<PreparedWorktreeSeed>>();
 process.once("exit", () => {
   for (const seed of preparedSeeds.values()) {
-    void seed.then(entry => rmSync(entry.root, { recursive: true, force: true })).catch(() => {});
+    void seed.then(entry => removeDir(entry.root)).catch(() => {});
   }
 });
 

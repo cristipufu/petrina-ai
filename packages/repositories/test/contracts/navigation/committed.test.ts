@@ -1,5 +1,5 @@
 import { afterAll, expect, it, spyOn } from "bun:test";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { RepoOrientation } from "@petrina/repositories/navigation";
 import { git } from "@petrina/test-support/commands";
@@ -7,13 +7,14 @@ import { makeProduct } from "@petrina/test-support/repositories";
 import { tempDir } from "@petrina/test-support/fixtures";
 import { FixtureOperations } from "@petrina/test-support/fixture-operations";
 import { registerFixtureRoot } from "@petrina/test-support/fixture-retention";
+import { removeFixtureRoot } from "@petrina/test-support/fixture-roots";
 import { CLEANUP_MS } from "@petrina/test-support/commands";
 import { SLOW } from "@petrina/test-support/slow";
 
 const root = tempDir("petrina-navigation-packets-");
 registerFixtureRoot(root);
 const owner = new FixtureOperations({ label: `Git navigation at ${root}`, stop() {},
-  dispose: () => rmSync(root, { recursive: true, force: true }), allowanceMs: CLEANUP_MS * SLOW,
+  dispose: () => removeFixtureRoot(root), allowanceMs: CLEANUP_MS * SLOW,
   arm: (expired, ms) => { const timer = setTimeout(expired, ms); return () => clearTimeout(timer); } });
 afterAll(() => owner.close());
 it("reuses navigation for one committed tree and refreshes it when that tree changes", () => owner.run(async () => {

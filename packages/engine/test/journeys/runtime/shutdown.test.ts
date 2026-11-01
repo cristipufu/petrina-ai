@@ -2,7 +2,7 @@ import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
 import { afterAll } from "bun:test";
 import { engineProcessCases } from "../../support.js";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
-import { shutdownActors, alive, pidsIn } from "../../fixtures/shutdown-actors.js";
+import { shutdownActors, pidsIn } from "../../fixtures/shutdown-actors.js";
 import { slowStopFixture } from "../../fixtures/slow-stop.js";
 // Quit the real engine process while fake agents are active, then restart: none may survive the old engine.
 import { describe, expect, it } from "bun:test";
@@ -162,15 +162,15 @@ describe.concurrent("Quitting stops agents before the engine exits", () => {
         }, "the background build");
         const copy = (await engine.task(id)).worktree!;
         await waitForFile(join(copy, "target", "background", "out.bin"));
-        const pids = pidsIn(buildPids).filter(alive);
+        const pids = pidsIn(buildPids).filter(actors.isPidAlive);
         expect(pids.length).toBeGreaterThan(0);
-        const agents = pidsIn(join(fakes.dir, "processes")).filter(alive);
+        const agents = pidsIn(join(fakes.dir, "processes")).filter(actors.isPidAlive);
         expect(agents.length).toBeGreaterThan(0);
         if (!native) writeFileSync(slow, "");
         if (end === "cancel") {
           await engine.act("cancel", id);
           const state = await engine.until((state) => !!state.tasks.find((task) => task.id === id)?.cleanup, "the first cleanup attempt after the build stopped");
-          const remaining = pids.filter(alive);
+          const remaining = pids.filter(actors.isPidAlive);
           const listed = remaining.length ? await readProcessList(4_000) : undefined;
           const task = state.tasks.find((task) => task.id === id)!;
           if (remaining.length) console.error("Cancelled build cleanup evidence:", JSON.stringify({ native, stubborn, killFirst, cleanup: task.cleanup, timeline: task.timeline.slice(-8), processes: listed?.split("\n").filter(line => remaining.includes(Number(line.trim().split(/\s+/)[0]))), log: readFileSync(join(home, "engine.log"), "utf8").split("\n").slice(-40) }));
@@ -179,7 +179,7 @@ describe.concurrent("Quitting stops agents before the engine exits", () => {
           expect(existsSync(copy)).toBe(false);
         } else {
           const elapsed = await engine.quit();
-          const remaining = [...pids, ...agents].filter(alive);
+          const remaining = [...pids, ...agents].filter(actors.isPidAlive);
           if (remaining.length) {
             const listed = await readProcessList(4_000);
             console.error("Engine quit evidence:", JSON.stringify({ elapsed, buildPids: pids, agents, processes: listed?.split("\n").filter(line => remaining.includes(Number(line.trim().split(/\s+/)[0]))), log: readFileSync(join(home, "engine.log"), "utf8").split("\n").slice(-40) }));

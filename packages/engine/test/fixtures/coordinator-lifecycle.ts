@@ -13,6 +13,57 @@ import { coordinatorLifetimes } from "./coordinator-lifetime.js";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import type { LifecycleStore } from "@petrina/storage/lifecycle-store";
 
+export interface StopEngineOptions {
+  requestId: string;
+  timeoutMs?: number;
+  observePids?: () => Iterable<number | undefined>;
+  excludePids?: Iterable<number | undefined>;
+  run?: <T>(step: () => Promise<T>) => Promise<T>;
+  afterStop?: () => Promise<void>;
+}
+
+/**
+ * Request an engine stop over RPC and wait until every observed owner or replacement OS process
+ * has actually terminated, preventing Windows directory-removal races during kernel handle rundown.
+ */
+export async function stopEngineAndAwaitExit(
+  client: EngineClient,
+  home: string,
+  options: StopEngineOptions,
+): Promise<void> {
+  const excluded = new Set<number>();
+  for (const pid of options.excludePids ?? []) {
+    if (pid !== undefined) excluded.add(pid);
+  }
+  const targets = new Set<number>();
+  const collect = () => {
+    const candidates = [readConnection(home)?.pid, ...(options.observePids?.() ?? [])];
+    for (const pid of candidates) {
+      if (pid !== undefined && Number.isSafeInteger(pid) && pid > 0 && !excluded.has(pid)) {
+        targets.add(pid);
+      }
+    }
+  };
+  collect();
+  const invoke = () =>
+    client.call("engine.stop", {
+      requestId: options.requestId,
+      wait: true,
+      timeoutMs: options.timeoutMs ?? 10_000 * SLOW,
+    });
+  await (options.run ? options.run(invoke) : invoke());
+  collect();
+  await options.afterStop?.();
+  collect();
+  for (const pid of targets) {
+    await waitFor(
+      async () => (await childState(pid)) === "ended",
+      `engine process ${pid} to exit`,
+      10_000,
+    );
+  }
+}
+
 /** A seed can finish stopping after cleanup began; no replacement storage may open then. */
 export async function coordinatorStoreAfterSeed(signal: AbortSignal, shutdown: () => Promise<void>, openStore: () => LifecycleStore): Promise<LifecycleStore> {
   await shutdown();
@@ -79,16 +130,15 @@ export async function lifecycleFixture(lifetimes: ReturnType<typeof coordinatorL
     });
     const stop = async () => {
       await setupWithCleanup(() => lifetime.prepare(async () => {
-        const activePid = readConnection(home)?.pid;
         try {
           const state = await engine.state();
           for (const entry of state.tasks) if (!["done", "cancelled", "pr-open"].includes(entry.state)) await engine.act("cancel", entry.id);
         } catch { /* The native owner may have already stopped; independent command/lease cleanup still confirms it. */ }
-        await client.call("engine.stop", { requestId: "cleanup-review-lifecycle", wait: true, timeoutMs: 3000 * SLOW });
-        const finalPid = readConnection(home)?.pid ?? activePid;
-        if (finalPid !== undefined && finalPid !== engine.proc.pid) {
-          await waitFor(async () => (await childState(finalPid)) === "ended", "the restarted engine process to exit", 10_000);
-        }
+        await stopEngineAndAwaitExit(client, home, {
+          requestId: "cleanup-review-lifecycle",
+          timeoutMs: 3000 * SLOW,
+          excludePids: [engine.proc.pid],
+        });
       }), () => lifetime.close());
       await lifetime.close();
     };

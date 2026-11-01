@@ -4,6 +4,7 @@ import type { DeepMutable, Finding } from "@petrina/core";
 import { executionFor } from "@petrina/orchestrator";
 import * as gitOps from "@petrina/repositories/git";
 import { headNow } from "@petrina/test-support/repository-head";
+import { removeFixtureRoot } from "@petrina/test-support/fixture-roots";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { createProductRepository, Fakes, makeProduct, tempDir } from "../fixtures.js";
 import { ScriptedAgents, scriptedResult } from "../scripted-agents.js";
@@ -59,7 +60,7 @@ function getReviewerInputSeed() {
       await gitOps.removeWorktree(seedRepo, prepCopy);
       return { files: captureDirectory(seedRepo), base };
     } finally {
-      rmSync(seedTemp, { recursive: true, force: true });
+      removeFixtureRoot(seedTemp);
     }
   })();
   return reviewerSeedPromise;

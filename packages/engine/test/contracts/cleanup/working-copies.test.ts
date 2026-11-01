@@ -3,6 +3,8 @@ import type { Engine } from "../../engine.js";
 import { completeAll, CLEANUP_WORDS, displayTask, type Task } from "@petrina/core";
 import { gitCommand } from "@petrina/test-support/git-program";
 import { fixtureFiles } from "@petrina/test-support/fixture-files";
+import { removeTreeWithRetries } from "@petrina/test-support/fixture-roots";
+import { removeDir } from "@petrina/test-support/fixtures";
 import { executionFor, resolveSource, type RepositoryContext, type SourceQueries } from "@petrina/orchestrator";
 import { checkSetupContract } from "@petrina/repositories/check-environment";
 
@@ -72,7 +74,7 @@ function writeGreetingCommit(gitDir: string, branch: string, parentSha: string, 
 let cachedGreetingIndexPromise: Promise<{ root: string; index: string }> | undefined;
 process.once("exit", () => {
   if (cachedGreetingIndexPromise) {
-    void cachedGreetingIndexPromise.then(({ root }) => rmSync(root, { recursive: true, force: true })).catch(() => {});
+    void cachedGreetingIndexPromise.then(({ root }) => removeDir(root)).catch(() => {});
   }
 });
 
@@ -322,7 +324,7 @@ it("recovers orphaned reviewer copies after the main copy was already removed, l
         await addCopy(w.clone, missing, sha);
         await git(w.clone, "worktree", "lock", copy);
         await git(w.clone, "worktree", "lock", missing);
-        rmSync(missing, { recursive: true, force: true });
+        removeTreeWithRetries(missing);
         const active = join(w.data, "worktrees", productId, "unfinished.copies", "review-0");
         await addCopy(w.clone, active, sha);
         writeFileSync(join(active, "unsaved.txt"), "Keep this unfinished review");
@@ -930,7 +932,7 @@ it("catches up older tasks across products at startup while a stalled pull reque
         }
         // As if cleanup stopped after deleting the folder, before dropping its repository record.
         const interrupted = join(w.data, "worktrees", "second-product", "done");
-        rmSync(interrupted, { recursive: true, force: true });
+        removeTreeWithRetries(interrupted);
         expect(await listed(w, interrupted)).toBe(true);
         const secondGhState = join(w.dir, "github-second.json");
         w.setGitHub((github) => {
@@ -1001,7 +1003,7 @@ it("says nothing about a copy when cancelled before setup, and safely completes 
           const path = join(w.data, "worktrees", productId, "interrupted");
           const branch = branchName("Interrupted", "old");
           await ensureWorktree(w.clone, path, branch, "main");
-          rmSync(path, { recursive: true, force: true });
+          removeTreeWithRetries(path);
           expect(await listed(w, path)).toBe(true);
           expect(await removeWorktree(w.clone, path)).toBe(true);
           expect(await listed(w, path)).toBe(false);

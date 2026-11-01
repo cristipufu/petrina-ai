@@ -9,6 +9,8 @@ import { testTempParent } from "@petrina/test-support/temp-parent";
 import { coordinatorLifetimes } from "../../fixtures/coordinator-lifetime.js";
 import { closeControlledRunner, installRunFailure, isolatedRunnerEnvironment } from "../../fixtures/required-suite.js";
 import { removeFixtureRoot } from "../../fixtures/direct-drivers.js";
+import { browserProcesses } from "@petrina/platform/browser-processes";
+import { childState } from "@petrina/platform/process-tree";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 
 const fixture = tempDir("petrina-test-runner-");
@@ -303,7 +305,6 @@ it("waits to be interrupted", async () => {
 }, 90_000);`);
   const child = Bun.spawn([process.execPath, TEST_RUNNER, test], { cwd: fixture, env: testGitEnv(), stdin: "ignore", stdout: "ignore", stderr: "ignore" });
   let worker: number | undefined;
-  const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
   try {
     await waitFor(() => existsSync(record), "the isolated test worker to start");
     const saved = JSON.parse(readFileSync(record, "utf8")) as { folder: string; pid: number; browsers: string; owned: string };
@@ -311,7 +312,7 @@ it("waits to be interrupted", async () => {
     expect(existsSync(join(saved.browsers, "petrina-browser-interrupted"))).toBe(true);
     child.kill(signal);
     expect(await child.exited).toBe(signal === "SIGINT" ? 130 : 143);
-    await waitFor(() => !alive(saved.pid), "the isolated test worker to stop");
+    await waitFor(async () => (await childState(saved.pid)) === "ended", "the isolated test worker to stop");
     expect(existsSync(saved.folder)).toBe(false);
     expect(existsSync(saved.browsers)).toBe(false);
     expect(existsSync(saved.owned)).toBe(false);
@@ -319,6 +320,6 @@ it("waits to be interrupted", async () => {
     expect(existsSync(tmpdir())).toBe(true);
   } finally {
     if (child.exitCode === null) { child.kill("SIGKILL"); await child.exited; }
-    if (worker && alive(worker)) process.kill(worker, "SIGKILL");
+    if (worker && browserProcesses.exists(worker)) process.kill(worker, "SIGKILL");
   }
 });

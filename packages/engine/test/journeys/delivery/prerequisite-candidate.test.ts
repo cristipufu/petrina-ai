@@ -2,9 +2,10 @@ import { acmeDemoProduct, installPreparedProduct } from "../../fixtures/prepared
 import * as gitOps from "@petrina/repositories/git";
 import { installSharedWorkflowFastPaths, materializePreparedWorktree, readLooseBlobInCommit, readLooseCommit, readWorktreeCommit } from "../../fixtures/shared-preparation.js";
 import { afterAll, describe, expect, it } from "bun:test";
-import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { runtimeWaitHolds, runtimeWaitView, type CheckId, type DeliveryMode } from "@petrina/core";
+import { removeFixtureRoot, removeTreeWithRetries } from "@petrina/test-support/fixture-roots";
 import type { Engine, EngineOptions } from "../../engine.js";
 import { nativeWorldFixtures, type NativeWorld } from "../../fixtures/native-worlds.js";
 import { Coordination } from "../../../src/coordination.js";
@@ -19,7 +20,7 @@ const landSeeds = new Map<string, Promise<{ root: string; objectsDir: string; in
 afterAll(async () => {
   const entries = await Promise.all([...landSeeds.values()]);
   landSeeds.clear();
-  for (const entry of entries) rmSync(entry.root, { recursive: true, force: true });
+  for (const entry of entries) removeFixtureRoot(entry.root);
   await fixtures.close();
 });
 
@@ -31,7 +32,7 @@ function getLandSeed(clone: string, initial: string, failChecks: boolean) {
       const root = tempDir("petrina-prereq-land-seed-");
       const repo = join(root, "clone");
       cpSync(clone, repo, { recursive: true });
-      rmSync(join(repo, ".git", "worktrees"), { recursive: true, force: true });
+      removeTreeWithRetries(join(repo, ".git", "worktrees"));
       writeFileSync(join(repo, "required-fix.txt"), "The prerequisite's fix\n");
       if (failChecks) writeFileSync(join(repo, "required-check-failure"), "The integrated product must fail this check\n");
       await gitOps.commitChanges(repo, "Land the required fix");

@@ -1,4 +1,5 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { removeTreeWithRetries } from "@petrina/test-support/fixture-roots";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "bun:test";
 import { removeDir, tempDir } from "@petrina/test-support/fixtures";
@@ -201,7 +202,7 @@ describe("embedded __internal-agy-acp translator", () => {
         },
       });
     } finally {
-      if (dir) rmSync(dir, { recursive: true, force: true });
+      if (dir) removeTreeWithRetries(dir);
     }
   });
 

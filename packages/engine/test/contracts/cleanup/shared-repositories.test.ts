@@ -1,7 +1,7 @@
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { completeAll } from "@petrina/core";
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import * as gitOps from "@petrina/repositories/git";
 import { addCopy, ensureWorktree } from "@petrina/repositories/git";
@@ -10,6 +10,7 @@ import { Cleanup } from "../../../src/cleanup.js";
 import { withRepositoryRecords } from "../../fixtures/shared-records.js";
 import { sharedWorldFixtures } from "../../fixtures/shared-world.js";
 import * as worldBoundary from "../../support.js";
+import { removeTreeWithRetries } from "@petrina/test-support/fixture-roots";
 import { removeFixtureRoot } from "../../fixtures/direct-drivers.js";
 import type { CommandResult } from "@petrina/test-support/commands";
 import { tempDir, type World } from "../../support.js";
@@ -44,7 +45,7 @@ describe.concurrent("one task across products", () => {
       for (const work of task.repositories) {
         const copy = join(shop.data, "worktrees", work.productId, `${id}.copies`, "review-0");
         await addCopy(work.source!.product.path!, copy, (await gitOps.head(work.worktree!))!);
-        rmSync(copy, { recursive: true });
+        removeTreeWithRetries(copy);
       }
       task.state = "cancelled";
       task.repositories[0]!.report = { summary: "Saved before cleanup", changes: [], tests: "Not run" };

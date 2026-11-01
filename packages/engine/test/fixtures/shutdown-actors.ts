@@ -1,12 +1,10 @@
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { browserProcesses } from "@petrina/platform/browser-processes";
 import { createProcessLease, type LeasedActor } from "@petrina/test-support/process-lease";
 import { waitFor } from "@petrina/test-support/fixtures";
 import { ENGINE_TEST_ROOT } from "./runtime-paths.js";
 
-export const alive = (pid: number): boolean => browserProcesses.exists(pid);
 export const pidsIn = (path: string): number[] => existsSync(path) ? readFileSync(path, "utf8").split("\n").map(Number).filter(pid => Number.isSafeInteger(pid) && pid > 0) : [];
 
 /** Every native actor has an independent loopback owner; PID files are observations, never signal authority. */

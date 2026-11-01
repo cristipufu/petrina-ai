@@ -1,5 +1,5 @@
 import { afterAll, expect, it } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { git } from "../../../src/commands.js";
 import { headNow } from "../../../src/repository-head.js";
@@ -8,6 +8,7 @@ import { removeDir, tempDir } from "../../../src/fixtures.js";
 import { rejectionOf } from "../../../src/rejections.js";
 import { FixtureOperations } from "../../../src/fixture-operations.js";
 import { registerFixtureRoot } from "../../../src/fixture-retention.js";
+import { removeFixtureRoot } from "../../../src/fixture-roots.js";
 import { CLEANUP_MS } from "../../../src/command-budgets.js";
 import { SLOW } from "../../../src/slow.js";
 const roots: string[] = [];
@@ -16,7 +17,7 @@ afterAll(() => roots.forEach(removeDir));
 const copiesRoot = tempDir("petrina-private-origin-");
 registerFixtureRoot(copiesRoot);
 const copies = new FixtureOperations({ label: `Private origins at ${copiesRoot}`, stop() {},
-  dispose: () => rmSync(copiesRoot, { recursive: true, force: true }), allowanceMs: CLEANUP_MS * SLOW,
+  dispose: () => removeFixtureRoot(copiesRoot), allowanceMs: CLEANUP_MS * SLOW,
   arm: (expired, ms) => { const timer = setTimeout(expired, ms); return () => clearTimeout(timer); } });
 afterAll(() => copies.close());
 

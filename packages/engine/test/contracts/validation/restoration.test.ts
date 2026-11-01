@@ -185,7 +185,7 @@ it("holds an unverified saved process number across restart without claiming or 
       expect(detail).not.toContain("Stop those owned programs"); expect(detail).toContain("restart this computer");
       const status = await new Coordination(replacement).call("engine.status", {});
       expect(JSON.stringify(status.checkBlockers)).toContain("may be unrelated");
-      expect(process.kill(unrelated.pid, 0)).toBe(true);
+      expect(await processTree.childState(unrelated.pid)).toBe("running");
       expect(signals.mock.calls.filter(([pid, signal]) => Math.abs(pid) === unrelated.pid && signal !== 0)).toEqual([]);
       const unavailable = spyOn(processTree, "processList");
     owner.onStop(() => unavailable.mockRestore());

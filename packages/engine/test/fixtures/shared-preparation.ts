@@ -1,11 +1,11 @@
 import { createHash } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { deflateSync, inflateSync } from "node:zlib";
 import { executionFor, scopesFor } from "@petrina/orchestrator";
 import * as git from "@petrina/repositories/git";
 import type { Engine } from "../engine.js";
-import { tempDir } from "../fixtures.js";
+import { removeDir, tempDir } from "../fixtures.js";
 
 const configuredCheckStubEngines = new WeakSet<Engine>();
 
@@ -22,7 +22,7 @@ interface SharedDeliverySeed {
 const sharedDeliverySeeds = new Map<string, Promise<SharedDeliverySeed>>();
 process.once("exit", () => {
   for (const seed of sharedDeliverySeeds.values()) {
-    void seed.then(entry => rmSync(entry.root, { recursive: true, force: true })).catch(() => {});
+    void seed.then(entry => removeDir(entry.root)).catch(() => {});
   }
 });
 

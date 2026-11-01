@@ -12,14 +12,13 @@ import { EngineClient } from "../../client.js";
 
 import { LifecycleStore } from "@petrina/storage/lifecycle-store";
 import { FolderLock, writeConnection } from "../../../src/instance.js";
-import { Fakes, removeDir, tempDir, waitFor, SLOW } from "../../support.js";
-import { childState } from "@petrina/platform/process-tree";
+import { Fakes, removeDir, tempDir, SLOW } from "../../support.js";
 import { describe } from "bun:test";
 
 import { readConnection } from "../../../src/instance.js";
 import { CLI } from "../../support.js";
 import { engineProcessCases } from "../../fixtures/engine-processes.js";
-import { coordinatorStoreAfterSeed } from "../../fixtures/coordinator-lifecycle.js";
+import { coordinatorStoreAfterSeed, stopEngineAndAwaitExit } from "../../fixtures/coordinator-lifecycle.js";
 import { rejectionOf } from "@petrina/test-support/rejections";
 import { removeFixtureRoot } from "../../fixtures/direct-drivers.js";
 const roots: string[] = [];
@@ -97,9 +96,13 @@ it(`starts once with saved paused scheduling after a ${previous} pause lost its 
   });
 
   cleanup = async () => {
-    try { await lifetime.prepare(() => client.call("engine.stop", { requestId: "cleanup", wait: true, timeoutMs: 10000 * SLOW })); }
-    finally { try { await child?.settle(); } finally { try { await closePeer(); } finally { closeStore(); } } }
-
+    try {
+      await stopEngineAndAwaitExit(client, home, {
+        requestId: "cleanup",
+        timeoutMs: 10000 * SLOW,
+        run: (step) => lifetime.prepare(step),
+      });
+    } finally { try { await child?.settle(); } finally { try { await closePeer(); } finally { closeStore(); } } }
   };
     const args = { requestId: "start-once", wait: true, timeoutMs: 30000 * SLOW };
     const started = await client.call("engine.start", args);
@@ -137,12 +140,13 @@ it("keeps the connection key on restart even when its original launch requested 
 
     let replacementPid: number | undefined;
     cleanup = async () => {
-      await lifetime.prepare(() => client.call("engine.stop", { requestId: "stop-fresh-key-test", wait: true, timeoutMs: 30000 * SLOW }));
-      await original.exited(10000 * SLOW);
-      if (replacementPid !== undefined) {
-        const pid = replacementPid;
-        await waitFor(async () => (await childState(pid)) === "ended", "the restarted engine process to exit", 10_000);
-      }
+      await stopEngineAndAwaitExit(client, home, {
+        requestId: "stop-fresh-key-test",
+        timeoutMs: 30000 * SLOW,
+        observePids: () => [replacementPid],
+        run: (step) => lifetime.prepare(step),
+        afterStop: async () => { await original.exited(10000 * SLOW); },
+      });
     };
       expect((await client.call("engine.restart", { requestId: "preserve-fresh-key", wait: true, timeoutMs: 30000 * SLOW })).outcome).toBe("completed");
       const after = readConnection(home)!;

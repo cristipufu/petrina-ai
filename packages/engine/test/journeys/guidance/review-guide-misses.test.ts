@@ -4,13 +4,13 @@ import { afterAll as closeOwnedCases } from "bun:test";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { instructionAgents, type InstructionScript } from "../../fixtures/instruction-agents.js";
 import { describe, expect, it, spyOn } from "bun:test";
-import { cpSync, readFileSync, rmSync } from "node:fs";
+import { cpSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { State, Task } from "@petrina/core";
 import * as gitOps from "@petrina/repositories/git";
 import type { ProductRepository } from "@petrina/test-support/repositories";
 import { Engine } from "../../engine.js";
-import { createProductRepository, tempDir, waitFor } from "../../fixtures.js";
+import { createProductRepository, removeDir, tempDir, waitFor } from "../../fixtures.js";
 import { installPreparedProduct, privateCloneProduct } from "../../fixtures/prepared-product.js";
 import { preparedInstructionTask } from "../../fixtures/prepared-instructions.js";
 import { installSharedWorkflowFastPaths, readWorktreeCommit } from "../../fixtures/shared-preparation.js";
@@ -20,7 +20,7 @@ closeOwnedCases(() => cases.close());
 let cachedGuideRepoPromise: Promise<{ root: string; repository: ProductRepository }> | undefined;
 process.once("exit", () => {
   if (cachedGuideRepoPromise) {
-    void cachedGuideRepoPromise.then(({ root }) => rmSync(root, { recursive: true, force: true })).catch(() => {});
+    void cachedGuideRepoPromise.then(({ root }) => removeDir(root)).catch(() => {});
   }
 });
 function getCachedGuideRepo(): Promise<{ root: string; repository: ProductRepository }> {

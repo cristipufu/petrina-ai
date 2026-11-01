@@ -1,11 +1,12 @@
 import { afterAll, expect, it } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtraValidation } from "@petrina/core";
 import { localFiles } from "@petrina/platform/file-operations";
 import { CLEANUP_MS } from "@petrina/test-support/commands";
 import { FixtureOperations } from "@petrina/test-support/fixture-operations";
 import { registerFixtureRoot } from "@petrina/test-support/fixture-retention";
+import { removeFixtureRoot } from "@petrina/test-support/fixture-roots";
 import { tempDir } from "@petrina/test-support/fixtures";
 import { rejectionOf } from "@petrina/test-support/rejections";
 import { SLOW } from "@petrina/test-support/slow";
@@ -15,7 +16,7 @@ import { scriptedContainerInspection } from "../../fixtures/container-inspection
 const root = tempDir("petrina-container-inspection-");
 registerFixtureRoot(root);
 const owner = new FixtureOperations({ label: `Container metadata at ${root}`, stop() {},
-  dispose: () => rmSync(root, { recursive: true, force: true }), allowanceMs: CLEANUP_MS * SLOW,
+  dispose: () => removeFixtureRoot(root), allowanceMs: CLEANUP_MS * SLOW,
   arm: (expired, ms) => { const timer = setTimeout(expired, ms); return () => clearTimeout(timer); } });
 afterAll(() => owner.close());
 

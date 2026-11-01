@@ -2,6 +2,7 @@ import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { completeAll } from "@petrina/core";
 import { afterEach } from "bun:test";
 import { coordinatorLifetimes } from "../../fixtures/coordinator-lifetime.js";
+import { stopEngineAndAwaitExit } from "../../fixtures/coordinator-lifecycle.js";
 import type { CoordinatorProcess } from "../../fixtures/coordinator-process.js";
 import { afterAll, expect, it } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -67,26 +68,22 @@ await import(${JSON.stringify(HARNESS)});
   let recovery: CoordinatorProcess | undefined;
 
   cleanup = async () => {
-    const activePids = new Set<number>([before.pid]);
-    const recordPids = () => {
-      const connPid = readConnection(home)?.pid;
-      if (connPid !== undefined) activePids.add(connPid);
-      if (existsSync(replacement)) {
-        const repPid = Number(readFileSync(replacement, "utf8").trim());
-        if (Number.isSafeInteger(repPid) && repPid > 0) activePids.add(repPid);
-      }
-    };
     try {
-      recordPids();
       writeFileSync(release, "go");
-      await lifetime.prepare(() => client.call("engine.stop", { requestId: "stop-desktop-test", wait: true, timeoutMs: 10000 * SLOW }));
-      recordPids();
-      await recovery?.exited;
-      await requested?.exited;
-      await original.exited(10000 * SLOW);
-      for (const pid of activePids) {
-        await waitFor(() => !processAlive(pid), "the handoff engine process to exit", 10_000);
-      }
+      await stopEngineAndAwaitExit(client, home, {
+        requestId: "stop-desktop-test",
+        timeoutMs: 10000 * SLOW,
+        observePids: () => [
+          before.pid,
+          existsSync(replacement) ? Number(readFileSync(replacement, "utf8").trim()) : undefined,
+        ],
+        run: (step) => lifetime.prepare(step),
+        afterStop: async () => {
+          await recovery?.exited;
+          await requested?.exited;
+          await original.exited(10000 * SLOW);
+        },
+      });
     } finally {
       await lifetime.close();
     }

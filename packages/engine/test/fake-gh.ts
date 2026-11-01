@@ -4,10 +4,11 @@
 // it is logged in, unless the state says otherwise.
 // bun fake-gh.ts <state.json> <remote folder> <gh arguments…>
 import { createHash } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { deflateSync, inflateSync } from "node:zlib";
 import { writeFixtureJson } from "@petrina/test-support/fixture-json";
+import { removeTreeWithRetries } from "@petrina/test-support/fixture-roots";
 import { commitAt, gitWith } from "@petrina/test-support/commands";
 import { testGitEnv } from "@petrina/test-support/test-git-env";
 
@@ -234,7 +235,7 @@ function lockGitHub(path: string, onWait?: () => void): () => void {
   for (;;) {
     try {
       mkdirSync(lock);
-      return () => rmSync(lock, { recursive: true, force: true, maxRetries: 5, retryDelay: 10 });
+      return () => removeTreeWithRetries(lock, 5, 10);
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
       const contended = code === "EEXIST" || (process.platform === "win32" && (code === "EACCES" || code === "EPERM"));

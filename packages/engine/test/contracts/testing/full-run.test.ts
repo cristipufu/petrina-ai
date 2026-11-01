@@ -8,6 +8,7 @@ import { CommandFailure, type Started } from "@petrina/test-support/commands";
 import { closeControlledRunner, entryFixture as prepareEntry, prepareSuite, installRunFailure, isolatedRunnerEnvironment, PACKAGES, EXAMPLE, NOT_STARTED, type Suite, type StandIn, type BrowserStandIn, type ObservationStandIn } from "../../fixtures/required-suite.js";
 import { coordinatorLifetimes } from "../../fixtures/coordinator-lifetime.js";
 import { removeFixtureRoot } from "../../fixtures/direct-drivers.js";
+import { childState } from "@petrina/platform/process-tree";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 
 const roots: string[] = [];
@@ -290,7 +291,7 @@ for (const [signal, code, scenario] of [["SIGTERM", 143, { core: { hold: true } 
     const pid = Number(readFileSync(join(root, "started"), "utf8")); runner!.kill(signal);
     const result = await running; expect(result.code, result.stderr).toBe(code);
     const { report, summary } = recorded(root, result.stdout);
-    expect(() => process.kill(pid, 0)).toThrow(); expect(report.interrupted).toBe(code); expect(report.scope).toBe("partial"); expect(summary).toEqual([]);
+    expect(await childState(pid)).toBe("ended"); expect(report.interrupted).toBe(code); expect(report.scope).toBe("partial"); expect(summary).toEqual([]);
     expect(existsSync(join(root, ".test-results", "timings"))).toBe(false);
     if (!("engine" in scenario)) expect(report.executions.at(-1)).toHaveProperty("notRun", "the run was interrupted first");
   } finally {

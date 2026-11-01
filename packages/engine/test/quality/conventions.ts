@@ -15,6 +15,11 @@ const ALLOWED_PRODUCTION_ANY: Readonly<Record<string, number>> = {
   "packages/test-support/src/rejections.ts": 1,
 };
 
+/** Contract test whose subject is native `rmSync` behavior on a directory alias (`fixtureFiles.directoryLink`). */
+const ALLOWED_RECURSIVE_RM_SYNC_TESTS = new Set([
+  "packages/test-support/test/contracts/filesystem/aliases.test.ts",
+]);
+
 const countLines = (source: string): number =>
   source === "" ? 0 : source.replace(/\r?\n$/, "").split(/\r?\n/).length;
 
@@ -211,6 +216,28 @@ export function conventions(files: ReadonlyMap<string, string>): string[] {
 
     for (const line of facts.exclusiveTests) {
       errors.push(`${file}:${line}: remove the exclusive test selection before handoff`);
+    }
+
+    for (const line of facts.crossPlatform.discardedOnGone) {
+      errors.push(
+        `${file}:${line}: collect and await the onGone cleanup promise instead of discarding it with a no-op callback`,
+      );
+    }
+
+    if (!ALLOWED_RECURSIVE_RM_SYNC_TESTS.has(file)) {
+      for (const line of facts.crossPlatform.recursiveRmSync) {
+        errors.push(
+          `${file}:${line}: use removeFixtureRoot, removeTreeWithRetries or removeDir from @petrina/test-support instead of recursive rmSync in tests`,
+        );
+      }
+    }
+
+    if (engine) {
+      for (const line of facts.crossPlatform.rawPidZeroKill) {
+        errors.push(
+          `${file}:${line}: use TrackedProcessLease (@petrina/test-support/process-lease), childState (@petrina/platform/process-tree) or browserProcesses.exists instead of raw process.kill(..., 0)`,
+        );
+      }
     }
   }
   return [...errors, ...layerBoundaries(files), ...packageBoundaries(files)].sort();

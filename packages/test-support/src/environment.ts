@@ -1,9 +1,10 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { shortTempParent, testTempParent, TEST_BROWSERS } from "./temp-parent.js";
 import { fixtureFiles } from "./fixture-files.js";
 import { createFixtureJournal, fixtureRetention, FIXTURE_JOURNAL, registerFixtureRoot } from "./fixture-retention.js";
+import { removeTreeWithRetries } from "./fixture-roots.js";
 import { provisionRepositorySeeds, REPOSITORY_SEEDS } from "./repository-seed-environment.js";
 
 export const TEST_GIT_IDENTITY = { name: "Petrina Test Runner", email: "test-runner@example.com" };
@@ -82,9 +83,14 @@ export function createTestRun(): { env: NodeJS.ProcessEnv; close(): boolean } {
   let closed = false;
   const remove = () => {
     const errors: unknown[] = [];
-    for (const root of [folder, browsers]) if (root) {
-      try { rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); }
-      catch (error) { errors.push(error); }
+    for (const root of [folder, browsers]) {
+      if (root) {
+        try {
+          removeTreeWithRetries(root);
+        } catch (error) {
+          errors.push(error);
+        }
+      }
     }
     if (errors.length === 1) throw errors[0];
     if (errors.length) throw new AggregateError(errors, "Private test environment could not be removed");

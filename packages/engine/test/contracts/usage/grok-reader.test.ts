@@ -8,11 +8,11 @@ import { usageActors } from "../../../../agent-runtime/test/fixtures/usage-actor
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { tempDir, waitFor } from "../../fixtures.js";
 import { writeFixtureJson } from "@petrina/test-support/fixture-json";
+import { childState } from "@petrina/platform/process-tree";
 import { billing } from "../../../../agent-runtime/test/fixtures/grok-account-report.js";
 import { server as fixtureServer } from "../../../../agent-runtime/test/fixtures/grok-account.js";
 const actors = usageActors(); afterAll(() => actors.close());
 function server(plan: unknown) { return fixtureServer(plan); }
-const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 
 async function withReader(fake: ReturnType<typeof server>, body: (engine: Engine, child: () => ChildProcess) => Promise<void>) {
   const root = tempDir("petrina-grok-reader-engine-"), owner = directDrivers(root);
@@ -56,7 +56,7 @@ describe("Grok account usage", () => {
       await engine.shutdown();
       expect(child().exitCode !== null || child().signalCode !== null).toBe(true);
       expect(child().stdout!.closed && child().stderr!.closed).toBe(true);
-      await waitFor(() => !alive(pid), "shutdown to stop its account reader", 5000);
+      await waitFor(async () => (await childState(pid)) === "ended", "shutdown to stop its account reader", 5000);
       await reading;
     });
   });

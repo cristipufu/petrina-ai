@@ -2,7 +2,7 @@ import { resolve as testFixturePath } from "node:path";
 const TEST_FIXTURE_ROOT = testFixturePath(import.meta.dir, "..");
 import { acceptanceAgents } from "./acceptance-agents.js";
 import { spyOn } from "bun:test";
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { inflateSync } from "node:zlib";
 import { createHash } from "node:crypto";
@@ -10,7 +10,7 @@ import { applyAcceptanceVersions, completeAll, type DeepMutable, type Product, t
 import { executionFor, ParallelAdmissionGroup, scopesFor, type RepositoryContext } from "@petrina/orchestrator";
 import { checkSetupContract } from "@petrina/repositories/check-environment";
 import * as gitOps from "@petrina/repositories/git";
-import { createProductRepository, tempDir, waitFor } from "../fixtures.js";
+import { createProductRepository, removeDir, tempDir, waitFor } from "../fixtures.js";
 import { privateAgentToolProbe } from "../scripted-probes.js";
 import { directDrivers, closeDirectDrivers } from "./direct-drivers.js";
 import { Coordination } from "../../src/coordination.js";
@@ -39,7 +39,7 @@ interface AcceptanceWorktreeSeed {
 const acceptanceSeeds = new Map<string, Promise<AcceptanceWorktreeSeed>>();
 process.once("exit", () => {
   for (const seed of acceptanceSeeds.values()) {
-    void seed.then(entry => rmSync(entry.root, { recursive: true, force: true })).catch(() => {});
+    void seed.then(entry => removeDir(entry.root)).catch(() => {});
   }
 });
 

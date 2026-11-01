@@ -1,10 +1,11 @@
 import { installPreparedProduct, privateCloneProduct } from "./prepared-product.js";
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { inflateSync } from "node:zlib";
 import { Engine } from "../engine.js";
 import { executionFor } from "@petrina/orchestrator";
 import { git, makeProduct, tempDir } from "../fixtures.js";
+import { removeFixtureRoot } from "@petrina/test-support/fixture-roots";
 import * as commands from "@petrina/test-support/commands";
 import * as gitOps from "@petrina/repositories/git";
 import { addLearnings, Learnings } from "../../src/learnings.js";
@@ -217,7 +218,7 @@ export function learningReconciliationFixtures() {
     ownSeeds.clear();
     mergePreviewCache.clear();
     if (seedRoot) {
-      rmSync(seedRoot, { recursive: true, force: true });
+      removeFixtureRoot(seedRoot);
       seedRoot = undefined;
     }
     await closeDirectDrivers(owners);
@@ -395,7 +396,7 @@ export function learningReconciliationFixtures() {
               if (existsSync(filePath)) cpSync(filePath, join(tmpDir, "AGENTS.md"));
               addLearnings(tmpDir, lessons);
               const nextAgents = readFileSync(join(tmpDir, "AGENTS.md"), "utf8");
-              rmSync(tmpDir, { recursive: true, force: true });
+              removeFixtureRoot(tmpDir);
               const seeded = await repoStepSeedFor(f.repo, currentHead, nextAgents, "Another delivery");
               copyLooseObjects(seeded.objectsDir, join(f.repo, ".git", "objects"));
               cpSync(seeded.indexFile, join(f.repo, ".git", "index"));

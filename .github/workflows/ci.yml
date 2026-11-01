@@ -39,6 +39,31 @@ jobs:
       - run: bun run typecheck
       - run: bun run build
 
+  # Fast (~2-3 min) Windows gate for file-locking, atomic replacement, process-tree, SQLite and
+  # lifecycle teardown contracts so OS-boundary regressions surface before the full 25m suite.
+  windows-contracts:
+    name: Windows OS-boundary contracts
+    needs: web
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.2
+      - name: Bun package cache
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
+      - run: bun install --frozen-lockfile
+      - name: Windows OS-boundary contracts
+        run: bun run test:os-contracts
+
   # The engine's tests start real engine processes (locks, quitting, forced kills), so they run
   # on every system the desktop app supports.
   test:

@@ -8,13 +8,14 @@ import { headNow } from "@petrina/test-support/repository-head";
 import { repositorySeed } from "@petrina/test-support/repositories";
 import { FixtureOperations } from "@petrina/test-support/fixture-operations";
 import { registerFixtureRoot } from "@petrina/test-support/fixture-retention";
+import { removeFixtureRoot } from "@petrina/test-support/fixture-roots";
 import { SLOW } from "@petrina/test-support/slow";
 import { run, tamperCheck } from "../../../src/git.js";
 
 const root = tempDir("petrina-tamper-packets-");
 registerFixtureRoot(root);
 const owner = new FixtureOperations({ label: `Tamper packets at ${root}`, stop() {},
-  dispose: () => rmSync(root, { recursive: true, force: true }), allowanceMs: CLEANUP_MS * SLOW,
+  dispose: () => removeFixtureRoot(root), allowanceMs: CLEANUP_MS * SLOW,
   arm: (expired, ms) => { const timer = setTimeout(expired, ms); return () => clearTimeout(timer); } });
 afterAll(() => owner.close());
 

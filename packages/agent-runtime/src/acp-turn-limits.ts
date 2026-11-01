@@ -1,7 +1,7 @@
 import type { ChildProcess } from "node:child_process";
 import type * as acp from "@agentclientprotocol/sdk";
 import { inFamily, type AgentProfile } from "@petrina/core";
-import { stopAgentPrograms, type StopDiagnostic } from "@petrina/platform/agent-stop";
+import { stopAgentPrograms, stopAgentTree, type StopDiagnostic } from "@petrina/platform/agent-stop";
 import { processHost } from "@petrina/platform/process-host";
 import { readProcessGroups, readProcessList, type ProcessListRead } from "@petrina/platform/process-tree";
 import { FORCE_AFTER_MS, type RunCallbacks, type RunState } from "./acp-protocol.js";
@@ -31,39 +31,36 @@ export async function stopAll(
   if (child.pid === undefined) return true;
   if (processHost.stopTree) {
     const pid = child.pid;
-    const missing = () => {
+    const stopTree = processHost.stopTree;
+    const missing = (target: number) => {
       try {
-        process.kill(pid, 0);
+        process.kill(target, 0);
         return false;
       } catch (error) {
         return (error as NodeJS.ErrnoException).code === "ESRCH";
       }
     };
-    const forceKill = () => {
-      if (!isChildRunning(child)) return;
-      try {
-        child.kill("SIGKILL");
-      } catch {
-        /* Already gone. */
-      }
-      if (isChildRunning(child) && !missing()) {
+    return stopAgentTree({ pid, running: () => isChildRunning(child) }, collectPrograms, {
+      now: () => Date.now(),
+      sleep: (ms) => Bun.sleep(ms),
+      stopTree: (target, timeoutMs) => stopTree(target, timeoutMs),
+      missing,
+      forceKill() {
+        if (!isChildRunning(child)) return;
         try {
-          process.kill(pid, "SIGKILL");
+          child.kill("SIGKILL");
         } catch {
           /* Already gone. */
         }
-      }
-    };
-    if (isChildRunning(child)) {
-      if (collectPrograms) await processHost.stopTree(pid, 2_000);
-      forceKill();
-    }
-    const deadline = Date.now() + 2_000;
-    while ((isChildRunning(child) || !missing()) && Date.now() < deadline) {
-      forceKill();
-      await Bun.sleep(10);
-    }
-    return !isChildRunning(child) && missing();
+        if (isChildRunning(child) && !missing(pid)) {
+          try {
+            process.kill(pid, "SIGKILL");
+          } catch {
+            /* Already gone. */
+          }
+        }
+      },
+    });
   }
   return stopAgentPrograms({ pid: child.pid, running: () => isChildRunning(child) }, graceMs, collectPrograms, {
     now: () => Date.now(),

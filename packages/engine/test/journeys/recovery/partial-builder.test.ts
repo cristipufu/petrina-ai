@@ -11,6 +11,7 @@ import { ScriptedAgents } from "../../scripted-agents.js";
 import { ReleaseEvents } from "../../release-events.js";
 import { executionFor } from "@petrina/orchestrator";
 import * as gitOps from "@petrina/repositories/git";
+import { removeFixtureRoot } from "@petrina/test-support/fixture-roots";
 import { FAKE_AGENT, Fakes, git, createProductRepository, tempDir, waitFor } from "../../fixtures.js";
 const engineCases = engineCaseFixtures();
 const landSeeds = new Map<string, Promise<{ root: string; objects: string; index: string; head: string }>>();
@@ -32,7 +33,7 @@ function getLandSeed(baseSha: string) {
 afterAll(async () => {
   await engineCases.close();
   for (const seed of landSeeds.values()) {
-    await seed.then(entry => rmSync(entry.root, { recursive: true, force: true })).catch(() => {});
+    await seed.then(entry => removeFixtureRoot(entry.root)).catch(() => {});
   }
   landSeeds.clear();
 });

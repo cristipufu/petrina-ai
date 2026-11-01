@@ -1,8 +1,9 @@
 import { expect, it, spyOn } from "bun:test";
-import { cpSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, writeFileSync } from "node:fs";
 import * as files from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { git } from "@petrina/test-support/commands";
+import { removeFixtureRoot } from "@petrina/test-support/fixture-roots";
 import { tempDir } from "@petrina/test-support/fixtures";
 import { repositorySeed } from "@petrina/test-support/repositories";
 import { writeGitProgram } from "@petrina/test-support/git-program";
@@ -33,7 +34,7 @@ for (const format of ["sha1", "sha256"] as const) it(`reads pinned ${format} che
       expect(calls).toBe(1);
     } finally { watch.mockRestore(); }
     expect(await git(repo, "rev-parse", "HEAD^{tree}")).not.toBe(tree);
-  } finally { rmSync(root, { recursive: true, force: true }); }
+  } finally { removeFixtureRoot(root); }
 });
 
 it("resolves a linked working copy's hook paths through its owning repository", async () => {
@@ -46,7 +47,7 @@ it("resolves a linked working copy's hook paths through its owning repository", 
     writeGitProgram(join(repo, ".git", "hooks", "pre-commit"), "exit 99");
     const input = await checkInputFiles(copy, sha);
     expect({ ...input, hooks: input.hooks.map(hook => ({ ...hook, path: resolve(hook.path) })) }).toEqual({ tree, hooks: [{ name: "pre-commit", path: join(repo, ".git", "hooks", "pre-commit") }] });
-  } finally { rmSync(root, { recursive: true, force: true }); }
+  } finally { removeFixtureRoot(root); }
 });
 
 it("keeps an unborn repository without a tree, and rejects unknown or invalid commit inputs", async () => {
@@ -57,7 +58,7 @@ it("keeps an unborn repository without a tree, and rejects unknown or invalid co
     await expectRejection(checkInputFiles(root, "0".repeat(40)), "could not be read");
     await expectRejection(checkInputFiles(root, "HEAD"), "Not a commit");
     await expectRejection(checkInputFiles(join(root, "missing")), "could not be read");
-  } finally { rmSync(root, { recursive: true, force: true }); }
+  } finally { removeFixtureRoot(root); }
 });
 
 it("does not turn an unreadable hook observation into no configured hooks", async () => {
@@ -73,5 +74,5 @@ it("does not turn an unreadable hook observation into no configured hooks", asyn
       return Reflect.apply(native, files, [file, ...args]);
     }) as typeof files.stat);
     expect(await rejectionOf(checkInputFiles(root))).toBe(failure);
-  } finally { watch?.mockRestore(); rmSync(root, { recursive: true, force: true }); }
+  } finally { watch?.mockRestore(); removeFixtureRoot(root); }
 });

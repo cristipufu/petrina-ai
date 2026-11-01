@@ -71,7 +71,7 @@ function getBareSeed() {
       const first = headNow(seedRepo);
       return { files: captureDirectory(seedRepo), base, first };
     } finally {
-      rmSync(seedTemp, { recursive: true, force: true });
+      removeFixtureRoot(seedTemp);
     }
   })();
   return bareSeedPromise;

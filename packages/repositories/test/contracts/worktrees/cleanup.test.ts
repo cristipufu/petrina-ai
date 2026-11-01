@@ -1,11 +1,12 @@
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import * as operations from "../../../src/git.js";
 import { addCopy, ensureWorktree, removeCopies, removeFinishedCopies, removeWorktree } from "../../../src/git.js";
 import { copyFolderName } from "../../../src/copy-name.js";
 import { fixtureFiles } from "@petrina/test-support/fixture-files";
+import { removeTreeWithRetries } from "@petrina/test-support/fixture-roots";
 import { FileFaults } from "@petrina/test-support/file-faults";
 import { expectRejection } from "@petrina/test-support/rejections";
 import { committedRepositoryFixtures } from "../../fixtures/committed-repositories.js";
@@ -37,7 +38,7 @@ describe("Petrina's own git steps", () => {
     await addCopy(repo, old, sha);
     await git(repo, "worktree", "lock", old);
     writeFileSync(join(active, "unsaved.txt"), "Keep my work");
-    rmSync(oldFolder, { recursive: true, force: true });
+    removeTreeWithRetries(oldFolder);
     fixtureFiles.directoryLink(activeFolder, oldFolder);
     expect(await removeFinishedCopies(repo, oldFolder)).toBe(true);
     expect(existsSync(oldFolder)).toBe(false);
@@ -70,7 +71,7 @@ describe("Petrina's own git steps", () => {
     const unrelated = join(temp, "unfinished-review");
     for (const copy of [...copies, unrelated]) await addCopy(repo, copy, sha);
     await git(repo, "worktree", "lock", copies[0]!); await git(repo, "worktree", "lock", copies[1]!);
-    rmSync(copies[1]!, { recursive: true, force: true });
+    removeTreeWithRetries(copies[1]!);
     mkdirSync(join(folder, "unregistered"));
     writeFileSync(join(unrelated, "unsaved.txt"), "Still working\n");
     const listed = spyOn(operations, "linkedWorktrees");
@@ -118,7 +119,7 @@ describe("Petrina's own git steps", () => {
     const kept = join(folder, "screen"), gone = [join(folder, "review-0"), join(folder, "review-1")], unrelated = join(temp, "other-task");
     for (const copy of [kept, ...gone, unrelated]) await addCopy(repo, copy, sha);
     writeFileSync(join(kept, "screen.txt"), "Keep the screen work");
-    rmSync(gone[0]!, { recursive: true, force: true }); // Recover a missing folder's fresh registration too.
+    removeTreeWithRetries(gone[0]!); // Recover a missing folder's fresh registration too.
     await removeCopies(repo, folder, [kept]);
     const registered = await git(repo, "worktree", "list", "--porcelain", "-z");
     expect(readFileSync(join(kept, "screen.txt"), "utf8")).toBe("Keep the screen work");
@@ -172,7 +173,7 @@ describe("Petrina's own git steps", () => {
     const refs = await git(repo, "for-each-ref", "--format=%(refname) %(objectname)");
     for (const target of [active, repo]) {
       await ensureWorktree(repo, finished, "petrina/finished", "main");
-      rmSync(finished, { recursive: true, force: true });
+      removeTreeWithRetries(finished);
       fixtureFiles.directoryLink(target, finished);
       expect(await removeWorktree(repo, finished)).toBe(true);
       expect(existsSync(finished)).toBe(false);
@@ -203,7 +204,7 @@ describe("Petrina's own git steps", () => {
     const refs = await git(repo, "for-each-ref", "--format=%(refname) %(objectname)");
     const registered = async () => (await git(repo, "worktree", "list", "--porcelain", "-z")).split("\0").filter((field) => field.startsWith("worktree "));
     expect(await registered()).toHaveLength(2);
-    if (missing !== "neither") rmSync(missing === "copy" ? copy : copies, { recursive: true, force: true });
+    if (missing !== "neither") removeTreeWithRetries(missing === "copy" ? copy : copies);
     const rootAlias = join(alias, "product");
     const copyAlias = join(alias, "copies", "finished");
     expect(await removeWorktree(rootAlias, copyAlias)).toBe(true);

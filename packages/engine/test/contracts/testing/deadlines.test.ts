@@ -4,6 +4,7 @@ import { completeAll as probes } from "@petrina/core";
 import { afterAll, expect, it } from "bun:test";
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { browserProcesses } from "@petrina/platform/browser-processes";
 import { removeDir, SLOW, tempDir, testGitEnv, waitFor } from "../../fixtures.js";
 import { FALLBACK_TIMEOUT, testCommand, TEST_RUNNER } from "@petrina/test-support/run";
 
@@ -32,7 +33,7 @@ ${tests}`);
   return file;
 }
 
-const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+const alive = (pid: number) => browserProcesses.exists(pid);
 
 /** Each test's outcome by name, with the limit Bun reports for a timeout. */
 function outcomes(report: string, output: string): Record<string, string> {

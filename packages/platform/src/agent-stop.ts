@@ -28,8 +28,18 @@ export interface AgentStopEffects extends StopConfirmationEffects {
   readParents: ProcessListRead;
   incomplete?(facts: StopDiagnostic): void;
 }
+export interface TreeStopEffects {
+  now(): number;
+  sleep(ms: number): Promise<unknown>;
+  stopTree(pid: number, timeoutMs: number): Promise<boolean>;
+  /** True only when the OS process table reports the target absent (ESRCH). */
+  missing(pid: number): boolean;
+  forceKill(): void;
+}
 
 const POLL_INTERVAL_MS = 50;
+const TREE_STOP_TIMEOUT_MS = 2_000;
+const TREE_STOP_POLL_MS = 10;
 const FORCE_STOP_DEADLINE_MS = 6_000;
 const RESCAN_BUDGET_MS = 3_200;
 const INITIAL_COLLECT_BUDGET_MS = 4_800;
@@ -122,4 +132,27 @@ export async function confirmStoppedProcesses(targets: readonly number[], ms: nu
   if (!present.length) return { ended: true, processes: [] };
   listing ??= readObservation(timeout => effects.readGroups(timeout), Math.max(POLL_INTERVAL_MS, end - effects.now()));
   return stoppedProcessStates(await listing, present, effects.selfPid);
+}
+
+/**
+ * Windows tree-termination policy: stop descendants when requested, force-terminate any surviving root,
+ * and wait until both the child handle and the OS process table confirm termination.
+ */
+export async function stopAgentTree(
+  target: AgentStopTarget,
+  collectPrograms: boolean,
+  effects: TreeStopEffects,
+): Promise<boolean> {
+  if (target.pid === undefined) return true;
+  const pid = target.pid;
+  if (target.running()) {
+    if (collectPrograms) await effects.stopTree(pid, TREE_STOP_TIMEOUT_MS);
+    effects.forceKill();
+  }
+  const deadline = effects.now() + TREE_STOP_TIMEOUT_MS;
+  while ((target.running() || !effects.missing(pid)) && effects.now() < deadline) {
+    effects.forceKill();
+    await effects.sleep(TREE_STOP_POLL_MS);
+  }
+  return !target.running() && effects.missing(pid);
 }

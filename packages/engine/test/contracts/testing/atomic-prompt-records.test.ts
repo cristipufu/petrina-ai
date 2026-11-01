@@ -1,6 +1,7 @@
 import { expect, it } from "bun:test";
-import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { removeTreeWithRetries } from "@petrina/test-support/fixture-roots";
 import { Fakes, firstLine, removeDir, tempDir } from "../../fixtures.js";
 import { PromptReader, recordPrompt, type PromptRecord } from "../../prompt-records.js";
 import { expectRejection } from "@petrina/test-support/rejections";
@@ -144,7 +145,7 @@ it("cleans a failed write without losing earlier evidence or reserving a sequenc
     }), "Write interrupted");
     await expectRejection(recordPrompt(root, prompt("unpublished", large), (path, text) => {
       writeFileSync(path, text);
-      rmSync(dirname(path), { recursive: true });
+      removeTreeWithRetries(dirname(path));
     }), "ENOENT");
     await recordPrompt(root, after);
     expect(fakes.received()).toEqual([before, after]);

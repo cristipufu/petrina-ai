@@ -9,7 +9,7 @@ import { join } from "node:path";
 import type { InboxItem, Task } from "@petrina/core";
 import { executionFor } from "@petrina/orchestrator";
 import * as gitOps from "@petrina/repositories/git";
-import { createProductRepository, git, tempDir, waitFor } from "../../fixtures.js";
+import { createProductRepository, git, removeDir, tempDir, waitFor } from "../../fixtures.js";
 import { installPreparedProduct, privateCloneProduct } from "../../fixtures/prepared-product.js";
 import { preparedInstructionTask } from "../../fixtures/prepared-instructions.js";
 import { installSharedWorkflowFastPaths, readLooseCommit, readRef, readWorktreeCommit } from "../../fixtures/shared-preparation.js";
@@ -26,7 +26,7 @@ const KEPT = "Kept both sets of approved learnings";
 let cachedBaseRepoPromise: Promise<{ root: string; repo: string }> | undefined;
 process.once("exit", () => {
   if (cachedBaseRepoPromise) {
-    void cachedBaseRepoPromise.then(({ root }) => rmSync(root, { recursive: true, force: true })).catch(() => {});
+    void cachedBaseRepoPromise.then(({ root }) => removeDir(root)).catch(() => {});
   }
 });
 function getCachedBaseRepo(): Promise<{ root: string; repo: string }> {

@@ -1,7 +1,8 @@
 import { expect, it, spyOn } from "bun:test";
 import * as fs from "node:fs";
 import { join } from "node:path";
-import { removeFixtureRoot } from "../../../src/fixture-roots.js";
+import { assertNoOpenPathsInRoot, findOpenPathsInRoot, removeFixtureRoot } from "../../../src/fixture-roots.js";
+import { fixtureFiles } from "../../../src/fixture-files.js";
 import { tempDir } from "../../../src/fixtures.js";
 import { rejectionOf } from "../../../src/rejections.js";
 import { setupWithCleanup } from "../../../src/setup-with-cleanup.js";
@@ -122,3 +123,42 @@ for (const [label, failure] of [["Error", Object.assign(new Error("Inspection de
     expect(fs.existsSync(root)).toBe(false);
   }));
 }
+
+it("rejects root removal immediately when the worker still holds an open descriptor inside the root", async () => {
+  await withRoot((root) => {
+    const fdDir = tempDir("petrina-fd-links-");
+    try {
+      const dbPath = join(root, "home", "lifecycle.db");
+      fs.mkdirSync(join(root, "home"));
+      fs.writeFileSync(dbPath, "sqlite");
+      fixtureFiles.fileLink(dbPath, join(fdDir, "42"));
+      fixtureFiles.fileLink(`${dbPath} (deleted)`, join(fdDir, "43"));
+      fixtureFiles.fileLink(join(fdDir, "outside"), join(fdDir, "44"));
+      expect(findOpenPathsInRoot(root, fdDir)).toEqual([dbPath]);
+      expect(() => assertNoOpenPathsInRoot(root, fdDir)).toThrow(`Fixture root has open file descriptor(s) before removal: ${dbPath}`);
+      expect(fs.existsSync(dbPath)).toBe(true);
+      fs.rmSync(join(fdDir, "42"));
+      expect(findOpenPathsInRoot(root, fdDir)).toEqual([]);
+      assertNoOpenPathsInRoot(root, fdDir);
+      removeFixtureRoot(root);
+      expect(fs.existsSync(root)).toBe(false);
+    } finally {
+      removeFixtureRoot(fdDir);
+    }
+  });
+
+  if (fs.existsSync("/proc/self/fd")) {
+    await withRoot((root, restore) => {
+      const dbPath = join(root, "lifecycle.db");
+      const fd = fs.openSync(dbPath, "w");
+      let closed = false;
+      restore(() => { if (!closed) fs.closeSync(fd); });
+      expect(() => removeFixtureRoot(root)).toThrow("Fixture root has open file descriptor(s) before removal");
+      expect(fs.existsSync(dbPath)).toBe(true);
+      fs.closeSync(fd);
+      closed = true;
+      removeFixtureRoot(root);
+      expect(fs.existsSync(root)).toBe(false);
+    });
+  }
+});

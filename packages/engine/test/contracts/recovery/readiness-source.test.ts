@@ -6,7 +6,7 @@ import { slotUses, type CheckId } from "@petrina/core";
 
 import { executionFor } from "@petrina/orchestrator";
 import * as gitOps from "@petrina/repositories/git";
-import { FAKE_AGENT, Fakes, createProductRepository, tempDir, waitFor } from "../../fixtures.js";
+import { FAKE_AGENT, Fakes, createProductRepository, removeDir, tempDir, waitFor } from "../../fixtures.js";
 import { fakeAgentSessions } from "../../fixtures/fake-agent-sessions.js";
 import { installSharedWorkflowFastPaths, materializeCleanWorktree, readRef } from "../../fixtures/shared-preparation.js";
 const cases = engineCaseFixtures();
@@ -29,7 +29,7 @@ function getLandSeed(baseSha: string) {
 afterAll(async () => {
   await cases.close();
   for (const seed of landSeeds.values()) {
-    await seed.then((entry) => rmSync(entry.root, { recursive: true, force: true })).catch(() => {});
+    await seed.then((entry) => removeDir(entry.root)).catch(() => {});
   }
   landSeeds.clear();
 });

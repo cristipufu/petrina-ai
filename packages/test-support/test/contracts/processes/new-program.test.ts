@@ -1,9 +1,10 @@
 import { expect, it } from "bun:test";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { CommandFailure, type CommandResult } from "../../../src/commands.js";
 import { FIXTURE_JOURNAL } from "../../../src/fixture-retention.js";
+import { removeFixtureRoot } from "../../../src/fixture-roots.js";
 import { newProgramsStart, startsNewProgram } from "../../../src/new-program.js";
 import { rejectionOf } from "../../../src/rejections.js";
 import { MOST_SLOW } from "../../../src/slow.js";
@@ -35,7 +36,7 @@ for (const code of [0, 7]) it.skipIf(process.platform === "win32")(`disposes the
       expect(((error as Error).cause as Error).message).toBe("The new program exited with code 7.");
     }
     expect(existsSync(root)).toBe(false);
-  } finally { if (root) rmSync(root, { recursive: true, force: true }); }
+  } finally { if (root) removeFixtureRoot(root); }
 });
 
 const failures = [
@@ -58,7 +59,7 @@ for (const { name, error: failure, retained } of failures) it.skipIf(process.pla
     expect(existsSync(root)).toBe(retained);
   } finally {
     // These supplied outcomes start no actors. Independent terminal cleanup discharges retained evidence.
-    if (root) rmSync(root, { recursive: true, force: true });
+    if (root) removeFixtureRoot(root);
   }
 });
 
@@ -72,7 +73,7 @@ it.skipIf(process.platform === "win32")("retains a synchronous unknown runner fa
     }));
     expect((error as Error).cause).toBe(failure);
     expect(existsSync(root)).toBe(true);
-  } finally { if (root) rmSync(root, { recursive: true, force: true }); }
+  } finally { if (root) removeFixtureRoot(root); }
 });
 
 it.skipIf(process.platform === "win32")("keeps the actual new-program files while a supplied command is pending", async () => {
@@ -92,7 +93,7 @@ it.skipIf(process.platform === "win32")("keeps the actual new-program files whil
   } finally {
     result.resolve(completed());
     try { await running; }
-    finally { if (root) rmSync(root, { recursive: true, force: true }); }
+    finally { if (root) removeFixtureRoot(root); }
   }
 });
 

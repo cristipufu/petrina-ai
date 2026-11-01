@@ -76,10 +76,8 @@ function posixRenameWindows(source: string, destination: string): boolean {
   }
 }
 
-/** Publish complete fixture configuration to live child readers, preserving the old file on failure. */
-export function writeFixtureJson(path: string, value: unknown, spaces?: number): void {
-  const body = JSON.stringify(value, null, spaces);
-  if (body === undefined) throw new Error("Fixture configuration must be a JSON value.");
+/** Publish complete fixture text to live child readers, preserving the old file on failure. */
+export function writeFixtureText(path: string, body: string): void {
   const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
   try {
     writeFileSync(temporary, body, { flag: "wx", mode: 0o600 });
@@ -91,5 +89,14 @@ export function writeFixtureJson(path: string, value: unknown, spaces?: number):
         process.platform === "win32" && (code === "EPERM" || code === "EACCES") && !isDirectory(path);
       if (!canPosixReplace || !posixRenameWindows(temporary, path)) throw error;
     }
-  } finally { rmSync(temporary, { force: true }); }
+  } finally {
+    rmSync(temporary, { force: true });
+  }
+}
+
+/** Publish complete fixture configuration to live child readers, preserving the old file on failure. */
+export function writeFixtureJson(path: string, value: unknown, spaces?: number): void {
+  const body = JSON.stringify(value, null, spaces);
+  if (body === undefined) throw new Error("Fixture configuration must be a JSON value.");
+  writeFixtureText(path, body);
 }

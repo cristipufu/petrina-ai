@@ -1,13 +1,13 @@
 import { installPreparedProduct, privateCloneProduct } from "./prepared-product.js";
 import { installSharedWorkflowFastPaths } from "./shared-preparation.js";
 import type { EngineCaseOwner } from "./engine-cases.js";
-import { appendFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { inflateSync } from "node:zlib";
 import { commandInputText } from "../../src/checks.js";
 import { executionFor } from "@petrina/orchestrator";
 import * as gitOps from "@petrina/repositories/git";
-import { git, createProductRepository, tempDir } from "../fixtures.js";
+import { git, createProductRepository, removeDir, tempDir } from "../fixtures.js";
 import { privateAgentToolProbe } from "../scripted-probes.js";
 
 function readLooseCommit(commonDir: string, sha: string): { tree: string; parents: string[] } {
@@ -67,7 +67,7 @@ interface AdmissionSeed {
 let cachedSeed: Promise<AdmissionSeed> | undefined;
 process.once("exit", () => {
   if (!cachedSeed) return;
-  void cachedSeed.then(seed => rmSync(seed.root, { recursive: true, force: true })).catch(() => {});
+  void cachedSeed.then(seed => removeDir(seed.root)).catch(() => {});
 });
 
 function getAdmissionSeed(): Promise<AdmissionSeed> {

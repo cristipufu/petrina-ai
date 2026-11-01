@@ -68,7 +68,6 @@ for (const kind of ["check", "hook"] as const) {
       const launcher = join(dir, "engine.ts");
       writeFileSync(launcher, `process.env.PATH = ${JSON.stringify(bin)} + ":" + process.env.PATH;\nawait import(${JSON.stringify(HARNESS)});\n`);
       let engine: EngineProcess | undefined;
-      const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 
         engine = await owners.harness(home, fakes.dir, undefined, { entry: launcher });
         const productId = await engine.act("addProduct", repo) as string;
@@ -87,7 +86,7 @@ for (const kind of ["check", "hook"] as const) {
           return existsSync(ready);
         }, `the ${kind} to start its detached program`, 90_000);
         const pid = Number(readFileSync(childPid, "utf8"));
-        expect(alive(pid)).toBe(true);
+        expect(await childState(pid)).toBe("running");
         writeFileSync(blind, "");
         await engine.act("cancel", id);
         const state = await waitFor(async () => {
@@ -104,7 +103,7 @@ for (const kind of ["check", "hook"] as const) {
         if (kind === "hook") expect(run.command).toContain("pre-commit");
         expect(task.timeline.some((entry) => entry.text === CLEANUP_INCOMPLETE)).toBe(true);
         expect(task.findings.some((finding) => finding.text.startsWith("Check failed"))).toBe(false);
-        expect(alive(pid)).toBe(true);
+        expect(await childState(pid)).toBe("running");
         // Inspect durable evidence only after its writer has finished saving and released SQLite.
         await engine.quit();
         const store = new Store(join(home, "petrina.db"));

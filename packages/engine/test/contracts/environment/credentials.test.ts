@@ -1,9 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import { agentEnv } from "@petrina/platform/process-environment";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runCommand } from "@petrina/test-support/commands";
+import { removeFixtureRoot } from "@petrina/test-support/fixture-roots";
 import { writeGitProgram } from "@petrina/test-support/git-program";
 
 describe("agent safety", () => {
@@ -30,7 +31,7 @@ it("never runs a password program: a missing login fails at once, a saved one st
       expect(saved.code).toBe(0);
       expect(saved.stdout).toContain("password=saved");
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      removeFixtureRoot(home);
     }
   });
 });

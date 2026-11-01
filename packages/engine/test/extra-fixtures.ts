@@ -3,6 +3,7 @@ import type { EngineCaseOwner } from "./fixtures/engine-cases.js";
 import { createProcessLease, type ProcessLease } from "@petrina/test-support/process-lease";
 import { createHash } from "node:crypto";
 import { CLEANUP_MS, type Started } from "@petrina/test-support/commands";
+import { browserProcesses } from "@petrina/platform/browser-processes";
 import { stopOwnedProcess } from "@petrina/platform/owned-process";
 import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { cp, mkdir } from "node:fs/promises";
@@ -130,17 +131,8 @@ function patchFastClientStop(eng: Engine): Engine {
   installSharedWorkflowFastPaths(eng, { fastCheckCapture: true });
   const container = eng.extraValidations["container"];
   const origStop = container["stopClient"].bind(container);
-  const groupOrPidAlive = (pid: number) => {
-    for (const target of [-pid, pid]) {
-      try {
-        process.kill(target, 0);
-        return true;
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException)?.code === "EPERM") return true;
-      }
-    }
-    return false;
-  };
+  const groupOrPidAlive = (pid: number) =>
+    browserProcesses.exists(-pid) || browserProcesses.exists(pid);
   container["stopClient"] = async (record) => {
     const pid = record.clientPid;
     if (!pid || !groupOrPidAlive(pid)) return true;

@@ -1,9 +1,9 @@
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { git, CLEANUP_MS } from "@petrina/test-support/commands";
 import { FixtureOperations } from "@petrina/test-support/fixture-operations";
 import { registerFixtureRoot } from "@petrina/test-support/fixture-retention";
-import { removeFixtureRoot } from "@petrina/test-support/fixture-roots";
+import { removeFixtureRoot, removeTreeWithRetries } from "@petrina/test-support/fixture-roots";
 import { repositorySeed } from "@petrina/test-support/repositories";
 import { SLOW } from "@petrina/test-support/slow";
 
@@ -36,7 +36,7 @@ export function committedRepositoryFixtures(root: string) {
         const path = mkdtempSync(join(root, ".initial-readme-"));
         cpSync(seed.clone, path, { recursive: true });
         // The source recipe is exactly one committed README, with no version manifest or remote.
-        for (const name of readdirSync(path)) if (name !== ".git") rmSync(join(path, name), { recursive: true, force: true });
+        for (const name of readdirSync(path)) if (name !== ".git") removeTreeWithRetries(join(path, name));
         writeFileSync(join(path, "README.md"), recipe.contents);
         await git(path, "add", "-A"); check();
         await git(path, "commit", "-q", "--amend", "-m", recipe.message); check();
