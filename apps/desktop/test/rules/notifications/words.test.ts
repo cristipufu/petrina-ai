@@ -161,6 +161,62 @@ describe("wording", () => {
     expect(waitingLine(permission, withInbox([permission]))).toBe("Builder needs your permission. Guest checkout");
     expect(waitingLine(item("stuck"), demo)).toBe("Petrina: Guest checkout is stuck");
   });
+
+  it("matches InboxAsk headlines when a review decision or requested proof gap is pending", () => {
+    const outdated = {
+      at: 1,
+      current: false,
+      results: [{ name: "Tests", command: "tests", ms: 1, output: "ok", ok: true, execution: completeCheckExecution(0) }],
+    };
+    const reviewTask = {
+      ...guestCheckout,
+      checks: outdated,
+      reviewDecision: { stageId: "review", round: 3, accepted: false },
+      findings: [
+        {
+          id: "f1",
+          text: "Blocking bug",
+          severity: "blocking" as const,
+          status: "open" as const,
+          raisedBy: "opus-high",
+          confirmedBy: [],
+          round: 3,
+        },
+      ],
+    };
+    const decision = item("delivery");
+    expect(noticeFor(decision, { ...demo, tasks: [reviewTask], inbox: [decision] }).title).toBe(
+      "Petrina: review rounds ran out with blocking findings open, your call",
+    );
+
+    const passing = modernSetup(guestCheckout.productId, {
+      at: 1,
+      current: true,
+      results: [{ name: "Tests", command: "tests", ms: 1, output: "ok", ok: true, execution: completeCheckExecution(0) }],
+    });
+    const proofTask = {
+      ...guestCheckout,
+      ...passing,
+      findings: [],
+      acceptanceUnverified: false,
+      proofRequests: [
+        {
+          id: "p1",
+          text: "Screenshot of checkout",
+          reason: "Visual confirmation",
+          productIds: [guestCheckout.productId],
+          requestedBy: { stageId: "review", round: 1, seat: "reviewer:1", roleId: "code-reviewer", profileId: "opus-high" },
+          reviewedVersions: { [guestCheckout.productId]: "abc1234" },
+          ownerStageId: "test",
+          status: "pending" as const,
+          source: "review:1:0",
+        },
+      ],
+    };
+    expect(noticeFor(decision, { ...demo, tasks: [proofTask], inbox: [decision] }).title).toBe(
+      "Petrina: requested proof needs your call",
+    );
+  });
 });
 
 for (const outcome of ["published-pass", "published-fail", "unfinished-fail"] as const) it(`notifies only the remaining delivery authority for ${outcome}, while raw history stays intact`, () => {

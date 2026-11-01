@@ -13,6 +13,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { EMBEDDED_ACP_TARGETS } from "@petrina/agent-runtime";
 import type { ShellMessage } from "./launch.js";
 import { ReleaseStore } from "./release-store.js";
 
@@ -230,12 +231,7 @@ async function verifyEmbeddedAcpTranslators(binaryPath: string, tempRoot: string
     throw new Error(`Compiled petrina --version failed (exit ${cliCode}): ${cliStderr || cliStdout}`);
   }
 
-  for (const subcommand of [
-    "__internal-claude-acp",
-    "__internal-codex-acp",
-    "__internal-agy-acp",
-    "__internal-pi-acp",
-  ] as const) {
+  for (const { subcommand } of EMBEDDED_ACP_TARGETS) {
     const versionRun = Bun.spawn([binaryPath, subcommand, "--version"], {
       cwd: tempRoot,
       stdin: "ignore",
@@ -254,12 +250,7 @@ async function verifyEmbeddedAcpTranslators(binaryPath: string, tempRoot: string
     }
   }
 
-  for (const [subcommand, cliName] of [
-    ["__internal-claude-acp", "claude"],
-    ["__internal-codex-acp", "codex"],
-    ["__internal-agy-acp", "agy"],
-    ["__internal-pi-acp", "pi"],
-  ] as const) {
+  for (const { subcommand, cli: cliName } of EMBEDDED_ACP_TARGETS) {
     const missingCliRun = Bun.spawn([binaryPath, subcommand], {
       cwd: tempRoot,
       stdin: "ignore",
@@ -392,8 +383,9 @@ export async function runBuildEngineCli(args: readonly string[] = process.argv.s
   console.log(`Built standalone engine binary: ${built.binaryPath}`);
   if (verify) {
     await verifyCompiledEngine(built.outDir);
+    const embeddedNames = EMBEDDED_ACP_TARGETS.map((target) => target.name).join("/");
     console.log(
-      "Verified standalone engine binary boot, embedded Claude/Codex/Antigravity ACP translators, /api/health, ReleaseStore staging, and cooperative shutdown.",
+      `Verified standalone engine binary boot, embedded ${embeddedNames} ACP translators, /api/health, ReleaseStore staging, and cooperative shutdown.`,
     );
   }
   if (releaseDir) {

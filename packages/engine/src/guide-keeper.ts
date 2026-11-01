@@ -19,16 +19,17 @@ import type { Turns } from "./turn.js";
 export class GuideKeeper {
   private readonly proposals: GuideProposals;
   constructor(private readonly k: Kernel, turns: Turns) {
+    const guideRoleId = () => k.s.roles.find((role) => !role.removed && role.result === "guide")?.id ?? "guide-keeper";
     this.proposals = new GuideProposals({
       current: () => k.s, task: id => k.task(id), productOf: target => k.productOf(target), takeItem: id => k.takeItem(id),
       profile: () => k.onUsable(GUIDE_KEEPER_PROFILE), now: () => Date.now(),
       checkpointNow: () => k.commitNow(), checkpoint: task => k.commit(task), releaseScreen: task => k.releaseScreen(task),
       offer: (scope, title, details) => { k.raise(scope, "guide", title, false, details); },
       log: (target, kind, text, roleId, profileId) => k.log(target, kind, text, roleId, profileId),
-      failed: (scope, error, profileId) => k.tracking.failed(scope, error, { roleId: "guide-keeper", profileId }),
+      failed: (scope, error, profileId) => k.tracking.failed(scope, error, { roleId: guideRoleId(), profileId }),
     }, {
       guide: scope => this.reviewGuide(scope),
-      turn: (scope, input, profileId, signal, used) => turns.turn(scope, "guide-keeper", profileId, () => [
+      turn: (scope, input, profileId, signal, used) => turns.turn(scope, guideRoleId(), profileId, () => [
         { title: "The coordinator's note when sending the delivery back", body: input.note },
         { title: `The review guide now (${GUIDE_FILE})`, body: input.guide || "There is none yet." },
         ...(scope.task.findings.length ? [{ title: "What the reviewers did raise", body: formatFindings(scope.task.findings as Task["findings"]) }] : []),

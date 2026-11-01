@@ -11,6 +11,8 @@ import { randomUUID } from "node:crypto";
 import {
   continuingAgentTurn,
   askMomentId,
+  getProviderDescriptor,
+  INBOX_CATALOG,
   turnTokens,
   usageView,
   type AgentProfile,
@@ -257,8 +259,8 @@ export class Tracking {
   asked(target: RuntimeTask | RepositoryContext, item: DeepMutable<InboxItem>, answer?: AskAnswer): void {
     const scope = executionOf(target);
     const { task } = scope;
-    if (!["question", "permission", "plan", "design", "delivery", "disagreement"].includes(item.kind)) return;
-    const ask = item.kind === "question" ? "question" : item.kind === "permission" ? "permission" : "checkpoint";
+    const ask = INBOX_CATALOG[item.kind].worklogAsk;
+    if (!ask) return;
     this.moment(
       scope,
       {
@@ -499,8 +501,10 @@ export class Tracking {
     const finish = (end: "finished" | "interrupted" | "stopped" | "agent-stopped", result?: TurnNotes & Pick<TurnResult, "report">) => {
       const endedAt = Date.now();
       const workMs = Math.max(0, endedAt - startedAt - (waits.of(task.id, endedAt) - waitedBefore));
-      // Claude Code's breakdown already counts its helper agents; only Codex leaves them out (and starts them as spawnAgent).
-      const helpers = profile.toolId === "codex" ? (result?.helpers ?? 0) : 0;
+      // Providers with omitsSpawnedHelpers leave helper agents out of reported turn token figures.
+      const helpers = getProviderDescriptor(profile.toolId)?.tokenAccounting?.omitsSpawnedHelpers
+        ? (result?.helpers ?? 0)
+        : 0;
       const model = result?.report?.model ?? settings.modelName ?? settings.model ?? result?.modelSeen;
       const counted = turnTokens({
         toolId: profile.toolId,

@@ -7,6 +7,7 @@ import { productRows, repositoryView, type RepositoryContext } from "@petrina/or
 
 import {
   builderFindings,
+  DELIVERY_MODE_CATALOG,
   dueAnswers,
   exhaustedAcceptanceFailure,
   followingCall,
@@ -385,7 +386,7 @@ export class ContextInput {
     if (this.k.role(
       roleId,
       scope.task
-    )?.result === "build" && repository.delivery === "pull-request" && repository.report.description) sections.push({
+    )?.result === "build" && DELIVERY_MODE_CATALOG[repository.delivery].wantsBuilderPrDescription && repository.report.description) sections.push({
       title: "The pull request description you wrote last time",
       body: repository.report.description
     });

@@ -3,6 +3,7 @@
 // the running total. Account history has its own bounded summaries in limit-history-view.ts.
 
 import type { Id } from "./model.js";
+import { PROVIDER_CATALOG, VENDOR_CATALOG } from "./providers.js";
 import { lineModelLabel, turnModelLabel, type TokenLine, type WorkTurn } from "./worklog.js";
 
 // ── Providers ──────────────────────────────────────────────────────────────
@@ -13,15 +14,12 @@ export interface Provider {
   label: string;
 }
 
-const PROVIDERS: Readonly<Record<Id, Provider>> = {
-  "claude-code": { id: "anthropic", label: "Anthropic" },
-  codex: { id: "openai", label: "OpenAI" },
-  grok: { id: "xai", label: "xAI" },
-  gemini: { id: "google", label: "Google" },
-  antigravity: { id: "google", label: "Google" },
-};
+const PROVIDERS: Readonly<Record<Id, Provider>> = Object.fromEntries(
+  PROVIDER_CATALOG.flatMap((tool) => ("vendor" in tool && tool.vendor ? [[tool.id, tool.vendor]] : [])),
+);
 
-export const OTHER_PROVIDER: Provider = { id: "other", label: "Other" };
+const OTHER_VENDOR = VENDOR_CATALOG.find((vendor) => vendor.id === "other")!;
+export const OTHER_PROVIDER: Provider = { id: OTHER_VENDOR.id, label: OTHER_VENDOR.label };
 
 /** The provider behind a tool: Anthropic for Claude Code, OpenAI for Codex, xAI for Grok. */
 export function providerOf(toolId: Id): Provider {

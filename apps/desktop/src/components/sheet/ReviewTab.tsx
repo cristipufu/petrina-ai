@@ -5,8 +5,6 @@ import { ShieldCheck } from "lucide-react";
 import { CheckSetupObservations } from "../CheckSetupObservations";
 import {
   checkCounts,
-  checkOutcome,
-  checkOutcomeLabel,
   checkProblemWords,
   checkResult,
   findingCount,
@@ -20,7 +18,7 @@ import {
   type Task,
   type Vote
 } from "@petrina/core";
-import { ago, profileText, type Lookup } from "../../lib";
+import { ago, checkRunBadge, profileText, type Lookup } from "../../lib";
 import { followLink, routeHref } from "../../routes";
 import { openFirst } from "./order";
 
@@ -244,16 +242,12 @@ function ChecksSection({ runs, at, now }: { runs: readonly CheckRun[]; at: numbe
 }
 
 function CheckItem({ run }: { run: CheckRun }) {
-  const outcome = checkOutcome(run);
-  const passed = outcome.kind === "passed";
-  const failed = outcome.kind === "failed";
-  const words = checkOutcomeLabel(outcome);
-  const label = words[0]!.toUpperCase() + words.slice(1);
+  const { label, tone, passed, failed } = checkRunBadge(run);
   const [open, setOpen] = useState(!passed);
   return (
     <li className="issue">
       <div className="issue-status">
-        <span className={`label ${passed ? "ok" : failed ? "bad" : ""}`}>{label}</span>
+        <span className={`label ${tone}`}>{label}</span>
         <span aria-hidden="true">·</span>
         <span className="issue-text">{run.name}</span>
         <span aria-hidden="true">·</span>

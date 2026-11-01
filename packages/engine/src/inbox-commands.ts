@@ -284,7 +284,12 @@ export class InboxCommands {
 
   approve(itemId: Id): void | Promise<void> {
     this.takeover.notDrivingItem(itemId);
-    const kind = this.engine.s.inbox.find((entry) => entry.id === itemId)?.kind;
+    const item = this.engine.s.inbox.find((entry) => entry.id === itemId);
+    const kind = item?.kind;
+    if (kind === "maintenance-settings") {
+      this.engine.resolveMaintenanceSettings(item!.taskId, "keep");
+      return;
+    }
     if (kind === "stuck") return this.engine.retry(itemId);
     if (kind === "shipping") {
       this.shipping.checkShipping(itemId);
@@ -299,7 +304,7 @@ export class InboxCommands {
       return;
     }
     if (kind === "screen") {
-      this.engine.allowScreen(this.engine.s.inbox.find((entry) => entry.id === itemId)!.taskId);
+      this.engine.allowScreen(item!.taskId);
       return;
     }
     this.checkpoints.approve(itemId);

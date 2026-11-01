@@ -2,17 +2,16 @@
 // app share these rules and words, so the button is only enabled when the engine would accept it.
 
 import type { Role, State, Task } from "./model.js";
+import { PROVIDER_CATALOG } from "./providers.js";
 import { roleForTask } from "./roles.js";
 
 /** The tools whose own app Petrina can open on an agent's conversation. */
-export const TAKE_OVER_TOOLS: Readonly<Record<string, string>> = {
-  "claude-code": "Claude Code",
-  codex: "Codex",
-  grok: "Grok",
-  antigravity: "Antigravity",
-  opencode: "OpenCode",
-  pi: "Pi",
-};
+export const TAKE_OVER_TOOLS: Readonly<Record<string, string>> = Object.fromEntries(
+  PROVIDER_CATALOG.filter((provider) => provider.capabilities.terminalTakeover).map((provider) => [
+    provider.id,
+    provider.name,
+  ]),
+);
 
 export const TAKE_OVER_WORDS = {
   noAgent: "No agent is working on this right now",

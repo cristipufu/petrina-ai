@@ -1,5 +1,5 @@
 import { Select } from "./Select";
-import { useEffect, useId, useState } from "react";
+import { useId, useState } from "react";
 import { Plus } from "lucide-react";
 import {
   frequencyText,
@@ -18,21 +18,16 @@ import { profileText, type Lookup } from "../lib";
 import { followLink, routeHref } from "../routes";
 import { ConfirmDialog, RoleAvatar } from "./bits";
 
-export function Routines({ state, find, product, onOpen, onRuns, onDialogChange }: {
+export function Routines({ state, find, product, onOpen, onRuns }: {
   state: State;
   find: Lookup;
   product: string;
   onOpen: (id: string) => void;
   onRuns?: (id: string) => void;
-  onDialogChange?: (open: boolean) => void
 }) {
   const [editor, setEditor] = useState<Routine | "new">();
   const [removing, setRemoving] = useState<Routine>();
   const [error, setError] = useState("");
-  useEffect(() => {
-    onDialogChange?.(!!editor || !!removing);
-    return () => onDialogChange?.(false);
-  }, [editor, removing, onDialogChange]);
   const connected = useEngineStatus().link === "live";
   const routines = (state.routines ?? []).filter(r => product === "all" || r.productId === product);
   const act = async (work: () => unknown | Promise<unknown>) => { try {

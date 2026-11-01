@@ -6,6 +6,7 @@ import {
   mainLine,
   TAKE_OVER_WORDS,
   screenWait,
+  type SheetTab,
   type State,
   type Task
 } from "@petrina/core";
@@ -49,7 +50,7 @@ export interface CardProps {
   drop?: "before" | "after";
 }
 
-export type SheetTab = "overview" | "plan" | "design" | "review" | "session";
+export type { SheetTab } from "@petrina/core";
 
 /**
  * The state a card names next to its product. Working cards say it through their status line,

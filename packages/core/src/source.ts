@@ -1,3 +1,4 @@
+import { DELIVERY_MODE_CATALOG, type DeliveryDestinationKind } from "./delivery-modes.js";
 import type { DeliveryMode, Product, Task } from "./model.js";
 
 export type StartFrom = { kind: "default" } | { kind: "branch"; name: string } | { kind: "pull-request"; value: string };
@@ -23,7 +24,7 @@ export interface TaskSource {
     headRepo: string;
     branch: string;
   };
-  destination: { mode: DeliveryMode; repo: string; branch: string; remote?: string; kind: "branch" | "new-pr" | "update-pr" | "release" };
+  destination: { mode: DeliveryMode; repo: string; branch: string; remote?: string; kind: DeliveryDestinationKind };
   confirmed: boolean;
   /** Set only once, when preparation fetches the approved source. */
   initialSha?: string;
@@ -43,7 +44,7 @@ export function sourceLabel(source: TaskSource | undefined): string {
 export function deliveryLabel(task: Pick<Task, "source" | "delivery">): string {
   const source = task.source;
   if (source?.start.kind === "pull-request") return `Update PR #${source.start.number}`;
-  return task.delivery === "local" ? `Commit to ${source?.destination.branch ?? "main"}` : task.delivery === "release" ? "Publish a release" : "Open a pull request";
+  return task.delivery === "local" ? `Commit to ${source?.destination.branch ?? "main"}` : DELIVERY_MODE_CATALOG[task.delivery].label;
 }
 
 export function workSummary(source: TaskSource): string {

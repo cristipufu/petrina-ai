@@ -21,7 +21,7 @@ export function acceptanceProgressSeed(root: string) {
         const { path: repo, initialSha: base } = await createProductRepository(root, { origin: "none" }); admitted();
         seed = new Engine(home, { admissionsClosed: true, agentCommand: () => undefined, terminals: () => [],
           toolProbe: scriptedToolProbe({ git: { status: "ready" }, gh: { status: "unknown" },
-            "claude-code": { status: "ready" }, codex: { status: "ready" }, grok: { status: "ready" }, antigravity: { status: "ready" }, opencode: { status: "not-installed" }, pi: { status: "not-installed" } }),
+            "claude-code": { status: "ready" }, codex: { status: "ready" }, grok: { status: "ready" }, antigravity: { status: "ready" } }),
         });
         seed.schedule = () => {}; seed.setPoolPaused(true);
         await seed.waitUntilReady(); admitted();

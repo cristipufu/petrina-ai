@@ -1,3 +1,4 @@
+import { DELIVERY_MODE_CATALOG } from "./delivery-modes.js";
 import type { DeepMutable } from "./flow.js";
 import type { Role, Task } from "./model.js";
 import type { ProofDecision, ProofRequest } from "./task-model.js";
@@ -60,7 +61,7 @@ export function sameProofDecision(a: ProofDecision | undefined, b: ProofDecision
 
 export function proofGap(task: Pick<Task, "proofRequests" | "repositories" | "repository" | "delivery" | "proofRefreshBlocked">): string | undefined {
   if (!task.proofRequests?.length) return;
-  const release = (task.repositories ?? (task.repository ? [task.repository] : [task])).some(work => work.delivery === "release") ? "Requested proof does not cover the release version Petrina will create" : undefined;
+  const release = (task.repositories ?? (task.repository ? [task.repository] : [task])).some(work => DELIVERY_MODE_CATALOG[work.delivery].createsVersionCommit) ? "Requested proof does not cover the release version Petrina will create" : undefined;
   const open = openProofs(task);
   const gap = open.some(request => request.status === "unverified") ? "Requested proof could not be verified"
     : open.some(request => request.status === "failed") ? "Requested proof failed"

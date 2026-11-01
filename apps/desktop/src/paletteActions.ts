@@ -2,12 +2,13 @@
 // Their ids carry that task's, so a highlighted row never quietly becomes another task's.
 
 import { queueOf, type Page, type State, type Task } from "@petrina/core";
+import { GLOBAL_COMMANDS, mod, TASK_COMMANDS } from "./commands";
 import type { PaletteAction } from "./components/CommandPalette";
 import { sim } from "./engine";
-import { mod, setSingleKeys } from "./keyboard";
+import { setSingleKeys } from "./keyboard";
+import { PAGE_CATALOG, pageShortcutDisplay, PALETTE_PAGE_ORDER } from "./pageCatalog";
 import type { Theme } from "./theme";
 import { themes } from "./themes";
-import { canMessage, canTogglePause } from "./taskCommands";
 import type { UpdateState } from "./updates";
 
 export interface PaletteUpdateControl {
@@ -24,6 +25,7 @@ export function appActions({
   state,
   singleKeys,
   newTask,
+  switchProduct,
   openInbox,
   go,
   showShortcuts,
@@ -35,6 +37,7 @@ export function appActions({
   state: State;
   singleKeys: boolean;
   newTask: () => void;
+  switchProduct?: () => void;
   openInbox: () => void;
   go: (page: Page) => void;
   showShortcuts: () => void;
@@ -75,45 +78,66 @@ export function appActions({
       ]
     : [];
   return [
-    { id: "new", label: "New task", shortcut: `${mod}N`, run: () => newTask() },
+    {
+      id: "new",
+      label: GLOBAL_COMMANDS["new-task"].paletteLabel!,
+      shortcut: GLOBAL_COMMANDS["new-task"].shortcutDisplay,
+      run: () => newTask(),
+    },
+    ...(state.products.length > 0
+      ? [
+          {
+            id: "switch-product",
+            label: GLOBAL_COMMANDS["switch-product"].paletteLabel!,
+            detail: `${state.products.length} product${state.products.length === 1 ? "" : "s"}`,
+            shortcut: GLOBAL_COMMANDS["switch-product"].shortcutDisplay,
+            run: () => switchProduct?.(),
+          },
+        ]
+      : []),
     {
       id: "pool",
       label: state.pool.paused ? "Resume pool" : "Pause pool",
       shortcut: "↵",
-      run: () => { void sendAction(
-      () => sim.setPoolPaused(!state.pool.paused),
-      state.pool.paused ? "Pool resumed" : "Pool paused",
-      state.pool.paused ? "New stages can start." : "Running stages finish. Nothing new starts."
-    ); }
+      run: () => {
+        void sendAction(
+          () => sim.setPoolPaused(!state.pool.paused),
+          state.pool.paused ? "Pool resumed" : "Pool paused",
+          state.pool.paused ? "New stages can start." : "Running stages finish. Nothing new starts.",
+        );
+      },
     },
-    { id: "limit", label: "Change the pool limit", detail: `Currently ${state.pool.limit} · Lowering never stops anyone`, shortcut: "↵", run: () => {} },
-    { id: "inbox", label: "Open the inbox", shortcut: "I", run: openInbox },
-    ...([
-      "board",
-      "history",
-      "agents",
-      "analytics",
-      "products",
-      "routines",
-      "library",
-      "settings"
-    ] as Page[]).map((page) => ({
+    {
+      id: "limit",
+      label: "Change the pool limit",
+      detail: `Currently ${state.pool.limit} · Lowering never stops anyone`,
+      shortcut: "↵",
+      run: () => {},
+    },
+    {
+      id: "inbox",
+      label: GLOBAL_COMMANDS.inbox.paletteLabel!,
+      shortcut: GLOBAL_COMMANDS.inbox.shortcutDisplay,
+      run: openInbox,
+    },
+    ...PALETTE_PAGE_ORDER.map((page) => ({
       id: page,
-      label: `Go to ${page[0]!.toUpperCase()}${page.slice(1)}`,
-      shortcut: ({
-      board: "B",
-      history: "↵",
-      products: "↵",
-      routines: "↵",
-      agents: "A",
-      analytics: "↵",
-      library: "L",
-      settings: `${mod},`
-    })[page],
-      run: () => go(page)
+      label: `Go to ${PAGE_CATALOG[page].label}`,
+      shortcut: pageShortcutDisplay(page, mod) ?? "↵",
+      run: () => go(page),
     })),
-    { id: "shortcuts", label: "Keyboard shortcuts", shortcut: "?", run: showShortcuts },
-    { id: "toggle-keys", label: `Turn single-key shortcuts ${singleKeys ? "off" : "on"}`, shortcut: "↵", run: () => setSingleKeys(!singleKeys) },
+    {
+      id: "shortcuts",
+      label: GLOBAL_COMMANDS.shortcuts.paletteLabel!,
+      shortcut: GLOBAL_COMMANDS.shortcuts.shortcutDisplay,
+      run: showShortcuts,
+    },
+    {
+      id: "toggle-keys",
+      label: `Turn single-key shortcuts ${singleKeys ? "off" : "on"}`,
+      shortcut: "↵",
+      run: () => setSingleKeys(!singleKeys),
+    },
     ...updateActions,
     ...themes.map((entry) => ({
       id: `theme-${entry.id}`,
@@ -141,38 +165,54 @@ export function taskActions({ task, state, sheetOpen, open, message, focusMessag
   if (!task) return [];
   const queue = queueOf(state.tasks);
   return [
-    { id: `open-task-${task.id}`, label: `Open “${task.title}”`, shortcut: "↵", run: () => { if (!sheetOpen) open(task.id); } },
-    ...(canMessage(task) ? [{
-      id: `message-task-${task.id}`,
-      label: `Message “${task.title}”`,
-      shortcut: "M",
-      run: () => { if (sheetOpen) message(task);
-    else {
-      open(
-      task.id,
-      "session"
-    );
-      focusMessage(task.id);
-    } }
-    }] : []),
-    ...(canTogglePause(task) ? [{
-      id: `pause-task-${task.id}`,
-      label: `${task.state === "queued" ? (task.held ? "Release" : "Hold") : task.state === "paused" ? "Resume" : "Pause"} “${task.title}”`,
-      shortcut: "P",
-      run: () => pause(task)
-    }] : []),
-    ...(task.state === "queued" && queue[0]?.id !== task.id
+    {
+      id: `open-task-${task.id}`,
+      label: TASK_COMMANDS.open.paletteLabel(task),
+      shortcut: TASK_COMMANDS.open.shortcutDisplay,
+      run: () => {
+        if (!sheetOpen) open(task.id);
+      },
+    },
+    ...(TASK_COMMANDS.message.enabled(task)
+      ? [
+          {
+            id: `message-task-${task.id}`,
+            label: TASK_COMMANDS.message.paletteLabel(task),
+            shortcut: TASK_COMMANDS.message.shortcutDisplay,
+            run: () => {
+              if (sheetOpen) message(task);
+              else {
+                open(task.id, "session");
+                focusMessage(task.id);
+              }
+            },
+          },
+        ]
+      : []),
+    ...(TASK_COMMANDS.pause.enabled(task)
+      ? [
+          {
+            id: `pause-task-${task.id}`,
+            label: TASK_COMMANDS.pause.paletteLabel(task),
+            shortcut: TASK_COMMANDS.pause.shortcutDisplay,
+            run: () => pause(task),
+          },
+        ]
+      : []),
+    ...(TASK_COMMANDS["move-top"].enabled(task) && queue[0]?.id !== task.id
       ? [
           {
             id: `top-task-${task.id}`,
-            label: `Move “${task.title}” to top`,
-            shortcut: "↵",
+            label: TASK_COMMANDS["move-top"].paletteLabel(task),
+            shortcut: TASK_COMMANDS["move-top"].shortcutDisplay,
             run: () => {
-              const hidden = queue.slice(0, queue.findIndex((entry) => entry.id === task.id)).filter((entry) => !visible(entry)).length;
+              const hidden = queue
+                .slice(0, queue.findIndex((entry) => entry.id === task.id))
+                .filter((entry) => !visible(entry)).length;
               void sendAction(
                 () => sim.moveToTop(task.id),
                 `“${task.title}” moved to the top`,
-                hidden ? `It passed ${hidden} hidden task${hidden === 1 ? "" : "s"}. Their order stays the same.` : undefined
+                hidden ? `It passed ${hidden} hidden task${hidden === 1 ? "" : "s"}. Their order stays the same.` : undefined,
               );
             },
           },

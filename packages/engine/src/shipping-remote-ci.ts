@@ -1,5 +1,10 @@
 // Pre-publication exact-candidate GitHub check validation for direct branch and release deliveries.
-import { evaluateRemoteCheckGate, REMOTE_CHECK_LIMITS } from "@petrina/core";
+import {
+  effectiveDestinationKind,
+  evaluateRemoteCheckGate,
+  REMOTE_CHECK_LIMITS,
+  type DeliveryDestinationKind,
+} from "@petrina/core";
 import type { RepositoryContext } from "@petrina/orchestrator";
 import * as git from "@petrina/repositories/git";
 import { Unreachable } from "./connection.js";
@@ -10,6 +15,19 @@ const DEFAULT_REMOTE_CHECK_POLL_MS = 5_000;
 const DEFAULT_REMOTE_CHECK_TIMEOUT_MS = 20 * 60_000;
 
 export { REMOTE_CHECK_LIMITS };
+
+export interface RemoteCheckDestinationPolicy {
+  readonly requiresValidation: boolean;
+  readonly needsGitHubAuth: boolean;
+  readonly divergenceIsMovement: boolean;
+}
+
+export const REMOTE_CHECK_DESTINATION_POLICY = {
+  "update-pr": { requiresValidation: false, needsGitHubAuth: false, divergenceIsMovement: false },
+  "new-pr": { requiresValidation: false, needsGitHubAuth: false, divergenceIsMovement: false },
+  branch: { requiresValidation: true, needsGitHubAuth: true, divergenceIsMovement: false },
+  release: { requiresValidation: true, needsGitHubAuth: false, divergenceIsMovement: true },
+} as const satisfies Readonly<Record<DeliveryDestinationKind, RemoteCheckDestinationPolicy>>;
 
 function sanitizeValidationSegment(value: string): string {
   const cleaned = value
@@ -61,8 +79,9 @@ async function checkRemoteDestinationMovement(
     return "current";
   }
   const base = shipping.base;
+  const policy = REMOTE_CHECK_DESTINATION_POLICY[effectiveDestinationKind(scope.work)];
   if (base && tip !== base && !(await git.contains(product.path!, base, tip))) {
-    if (scope.work.delivery === "release" || (await git.contains(product.path!, tip, base))) {
+    if (policy.divergenceIsMovement || (await git.contains(product.path!, tip, base))) {
       return "moved";
     }
     throw new Error(
@@ -82,7 +101,8 @@ export async function verifyRequiredRemoteChecks(
   const product = k.repositoryOf(scope)!;
   const required = product.requiredRemoteChecks ?? [];
   if (!required.length) return "ready";
-  if (repository.source?.start.kind === "pull-request" || repository.delivery === "pull-request") {
+  const policy = REMOTE_CHECK_DESTINATION_POLICY[effectiveDestinationKind(repository)];
+  if (!policy.requiresValidation) {
     return "ready";
   }
   if (product.repo.startsWith("local/")) {
@@ -90,7 +110,7 @@ export async function verifyRequiredRemoteChecks(
       "GitHub checks are configured for this product, but it has no GitHub repository connected. Clear the GitHub checks or connect the repository before delivering.",
     );
   }
-  if (repository.delivery === "local") {
+  if (policy.needsGitHubAuth) {
     await hooks.needGitHub(scope.task);
   }
 

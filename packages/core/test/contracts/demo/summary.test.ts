@@ -127,4 +127,36 @@ describe("the demo", () => {
       expect(nextLine(portfolio, task)).toMatch(/^Next: /);
     }
   });
+
+  it("describes upcoming custom delivery and build roles from RoleResult contracts without undefined", () => {
+    const base = emptyState();
+    const customDelivery = {
+      ...BUILT_IN_ROLES.find((role) => role.result === "delivery")!,
+      id: "custom-publisher",
+      name: "Release Publisher",
+    };
+    const state: State = { ...base, roles: [...base.roles, customDelivery] };
+    const task: Task = {
+      ...createDemoState(1_000_000_000).tasks.find((entry) => entry.state === "running")!,
+      id: "rel-1",
+      productId: "p",
+      title: "Cut v1.2.0",
+      delivery: "release",
+      approveDelivery: false,
+      state: "running",
+      column: "building",
+      stageIndex: 0,
+      plan: {
+        plannerProfileId: "opus-high",
+        rationale: "Build then release",
+        stages: [
+          { id: "rel-1:build", kind: "do", title: "Build", roleId: "builder", profileIds: ["opus-high"] },
+          { id: "rel-1:ship", kind: "do", title: "Publish release", roleId: "custom-publisher", profileIds: ["opus-high"] },
+        ],
+      },
+    };
+    expect(nextLine(state, task)).toBe(
+      "Next: release notes (Claude Code · Opus 5.5), then Petrina publishes the release",
+    );
+  });
 });

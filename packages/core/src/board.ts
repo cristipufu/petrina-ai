@@ -3,8 +3,11 @@
 // waiting, then the queue in priority order, with finished work folded away at the end.
 
 import { checksCurrent } from "./check-activity.js";
+import { BUILT_IN_ROLES } from "./library.js";
 import type { Role, Stage, Task } from "./model.js";
+import { ROLE_RESULT_CATALOG } from "./result-contracts.js";
 import { queueOf } from "./scheduler.js";
+import { STAGE_KIND_CATALOG } from "./stage-kinds.js";
 
 export interface PipelineStep {
   /** A short name, e.g. "Build" or "Your check". */
@@ -17,22 +20,13 @@ export interface PipelineStep {
   before?: string;
 }
 
-const ROLE_STEP: Readonly<Record<string, string>> = {
-  planner: "Plan",
-  researcher: "Research",
-  architect: "Design",
-  "design-reviewer": "Design",
-  "ux-designer": "Screens",
-  builder: "Build",
-  tester: "Test",
-  "code-reviewer": "Review",
-  "release-manager": "Ship",
-};
-
-function stepLabel(stage: Stage): string {
-  if (stage.kind === "converge") return "Design";
-  if (stage.kind === "review-chain") return "Review";
-  return ROLE_STEP[stage.roleId] ?? stage.title;
+function stepLabel(stage: Stage, roles?: readonly Role[]): string {
+  const stageLabel = STAGE_KIND_CATALOG[stage.kind].stepLabel;
+  if (stageLabel) return stageLabel;
+  const role = roles?.find((entry) => entry.id === stage.roleId) ?? BUILT_IN_ROLES.find((entry) => entry.id === stage.roleId);
+  if (!role) return stage.title;
+  if (role.added || role.category === "maintenance") return stage.title;
+  return role.stepLabel ?? ROLE_RESULT_CATALOG[role.result].stepLabel ?? stage.title;
 }
 
 /**
@@ -58,7 +52,7 @@ export function pipelineOf(task: Task, roles?: readonly Role[]): PipelineStep[] 
       steps.push({ label: "Ship", from: index, to: index });
       return;
     }
-    const label = stage.kind === "gate" ? "Your check" : stepLabel(stage);
+    const label = stepLabel(stage, roles);
     if (label === "Ship" && last.label === "Ship") {
       last.to = index;
       return;

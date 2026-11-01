@@ -17,7 +17,7 @@ async function preparePromptApplication(owner: EngineCaseOwner, builderInstructi
   const engine = owner.open(join(root, "data"), {
     startAgentSession: agents.start,
     agentCommand: () => [process.execPath, join(import.meta.dir, "..", "unconfigured-service.ts"), "prompt composition"],
-    toolProbe: scriptedToolProbe({ codex: { status: "ready" }, "claude-code": { status: "not-installed" }, grok: { status: "not-installed" }, antigravity: { status: "not-installed" }, opencode: { status: "not-installed" }, pi: { status: "not-installed" }, gh: { status: "not-installed" }, git: { status: "ready" } }),
+    toolProbe: scriptedToolProbe({ codex: { status: "ready" }, "claude-code": { status: "not-installed" }, gh: { status: "not-installed" }, git: { status: "ready" } }),
   });
   engine.schedule = () => {};
     await engine.waitUntilReady();

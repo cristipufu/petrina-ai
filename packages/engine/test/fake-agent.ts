@@ -5,11 +5,13 @@ import {
   checkFinderPayload,
   defaultConfigOptions,
   designReviewerPayload,
+  dispatchFakeRole,
   DISPUTE_REASON,
   guideKeeperPayload,
   NOTES,
   objectionIds,
   plannerPayload,
+  resultOf,
   roleOf,
   SCREEN_REASON,
   SECURITY_FINDING,
@@ -213,6 +215,7 @@ interface Conversation {
   captures?: string;
   cwd: string;
   role: string;
+  result?: ReturnType<typeof resultOf>;
   turns: number;
   /** How many times it was told Petrina restarted. */
   restarts: number;
@@ -544,6 +547,8 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
   const session = sessions.get(sessionId)!;
   session.turns += 1;
   if (roleOf(text)) session.role = roleOf(text);
+  const parsedResult = resultOf(text);
+  if (parsedResult) session.result = parsedResult;
   const captures = /Browser output belongs only in (.+), outside product files\./.exec(text)?.[1]
     ?? /Browser capture folder for this turn: (.+)\. Earlier pages/.exec(text)?.[1];
   if (captures) session.captures = captures;
@@ -577,7 +582,7 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
         if (plan.unassignedFinding && report.findings.some((finding) => finding.severity === "important")) report.findings.push({ text: "The shared ownership needs a coordinator decision.", severity: "important" });
       }
       // Exact Tester results keep the products they name; the others go to the affected products.
-      if (report.checks && session.role === "tester") report.checks = report.checks.map((check) => ({ ...check, productIds: check.productIds ?? ids, ...(typeof check.pass === "boolean" ? { result: check.pass ? "pass" : "fail", pass: undefined } : {}) }));
+      if (report.checks && (session.role === "tester" || session.result === "checks")) report.checks = report.checks.map((check) => ({ ...check, productIds: check.productIds ?? ids, ...(typeof check.pass === "boolean" ? { result: check.pass ? "pass" : "fail", pass: undefined } : {}) }));
     }
     let result = learned.length && value && typeof value === "object" && !("needsInput" in value) ? { ...value, learnings: learned } : value;
     if (plan.sourcePointers && Object.hasOwn(plan.sourcePointers, session.role) && result && typeof result === "object" && !("needsInput" in result)) result = { ...result, sourcePointers: plan.sourcePointers[session.role] };
@@ -597,7 +602,7 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
     return { text: "could not tell" };
   }
   for (const report of plan.usage ?? []) if (report.model === session.model) await send(client, sessionId, usageUpdate(report.status, report.type ?? "seven_day", report.utilization, report.resetsAt, report.overage, report.paidStatus));
-  if (session.role === "tester") for (const entry of plan.testerFiles ?? []) {
+  if (session.role === "tester" || session.result === "checks") for (const entry of plan.testerFiles ?? []) {
     if (entry.model && entry.model !== session.model) continue;
     writeFileSync(join(entry.dir, entry.file), entry.text);
     if (entry.commit) {
@@ -783,7 +788,7 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
     await new Promise(() => undefined);
   }
 
-  switch (session.role) {
+  switch (dispatchFakeRole(session.role, session.result)) {
     case "planner":
       await say("Sizing the work");
       if (tool === "claude-code" && !plan.controlled) {
@@ -1065,8 +1070,6 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
       }
       return done(verifierVerdictsPayload(plan, text, session.model, notABug));
     }
-    // An added acceptance role under its own name, recognised by Petrina from its checks result.
-    case "quality partner":
     case "tester":
       if (plan.tester === "no-evidence") return done({ summary: "It looks fine.", checks: [{ text: "A greeting file exists", result: "pass" }] });
       if (plan.tester === "omit-once" && !marked("tester-omitted")) {

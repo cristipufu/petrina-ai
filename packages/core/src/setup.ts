@@ -4,12 +4,28 @@
 // tool's official guide.
 
 import type { Id, InboxItem, State } from "./model.js";
+import {
+  EXTRA_PROVIDER_IDS,
+  PROVIDER_CATALOG,
+  PROVIDER_IDS,
+  STARTER_PROVIDER_IDS,
+  type PerPlatform,
+  type Platform,
+  type ProviderId,
+  type StarterProviderId,
+} from "./providers.js";
+
+export type { Platform };
+export type SystemCheckId = "gh" | "git";
+export const SYSTEM_CHECK_IDS = ["gh", "git"] as const satisfies readonly SystemCheckId[];
 
 /** What Petrina checks: the agent tools, the GitHub CLI, and what Petrina itself needs. */
-export type CheckId = "claude-code" | "codex" | "grok" | "antigravity" | "opencode" | "pi" | "gh" | "git";
+export type CheckId = ProviderId | SystemCheckId;
+
+export const CHECK_IDS: readonly CheckId[] = [...PROVIDER_IDS, ...SYSTEM_CHECK_IDS];
 
 /** The two starter tools, in the order the squad prefers them; installed extra tools join once their checks find them (see agentTools). */
-export const AGENT_TOOLS = ["claude-code", "codex"] as const;
+export const AGENT_TOOLS: readonly StarterProviderId[] = STARTER_PROVIDER_IDS;
 
 /**
  * - `unchecked`: no answer yet.
@@ -28,8 +44,6 @@ export interface ToolCheck {
   detail?: string;
   at?: number;
 }
-
-export type Platform = "darwin" | "win32" | "linux";
 
 /** A GitHub clone found on this machine. */
 export interface Clone {
@@ -62,16 +76,44 @@ export interface Setup {
   tipDismissed?: boolean;
 }
 
-export const CHECK_NAMES: Record<CheckId, string> = {
-  "claude-code": "Claude Code",
-  codex: "Codex",
-  grok: "Grok",
-  antigravity: "Antigravity",
-  opencode: "OpenCode",
-  pi: "Pi",
-  gh: "GitHub CLI",
-  git: "Git",
-};
+interface SystemCheckSpec {
+  readonly id: SystemCheckId;
+  readonly name: string;
+  readonly cli: string;
+  readonly guides: { readonly install: string; readonly login?: string };
+  readonly install: PerPlatform;
+  readonly loginCommand?: string;
+}
+
+const SYSTEM_CHECKS: readonly SystemCheckSpec[] = [
+  {
+    id: "gh",
+    name: "GitHub CLI",
+    cli: "gh",
+    guides: {
+      install: "https://github.com/cli/cli#installation",
+      login: "https://cli.github.com/manual/gh_auth_login",
+    },
+    install: { darwin: "brew install gh", win32: "winget install --id GitHub.cli", linux: "sudo apt install gh" },
+    loginCommand: "gh auth login",
+  },
+  {
+    id: "git",
+    name: "Git",
+    cli: "git",
+    guides: { install: "https://git-scm.com/downloads" },
+    install: {
+      darwin: "xcode-select --install",
+      win32: "winget install --id Git.Git -e",
+      linux: "sudo apt install git",
+    },
+  },
+];
+
+export const CHECK_NAMES: Record<CheckId, string> = Object.fromEntries([
+  ...PROVIDER_CATALOG.map((provider) => [provider.id, provider.name]),
+  ...SYSTEM_CHECKS.map((check) => [check.id, check.name]),
+]) as Record<CheckId, string>;
 
 export function isCheckId(id: string): id is CheckId {
   return Object.hasOwn(CHECK_NAMES, id);
@@ -94,47 +136,24 @@ export interface Fix {
   guide: string;
 }
 
-type PerPlatform = string | Readonly<Record<Platform, string>>;
+const GUIDES: Record<CheckId, { install: string; login?: string }> = Object.fromEntries([
+  ...PROVIDER_CATALOG.map((provider) => [provider.id, provider.setup.guides]),
+  ...SYSTEM_CHECKS.map((check) => [check.id, check.guides]),
+]) as Record<CheckId, { install: string; login?: string }>;
 
-const GUIDES: Record<CheckId, { install: string; login?: string }> = {
-  "claude-code": { install: "https://code.claude.com/docs/en/setup", login: "https://code.claude.com/docs/en/setup#authentication" },
-  codex: { install: "https://developers.openai.com/codex/cli", login: "https://developers.openai.com/codex/auth" },
-  grok: { install: "https://docs.x.ai/build/overview", login: "https://docs.x.ai/build/cli/reference" },
-  antigravity: { install: "https://antigravity.google/docs/cli/install/", login: "https://antigravity.google/docs/cli/reference" },
-  opencode: { install: "https://opencode.ai/docs", login: "https://opencode.ai/docs/providers" },
-  pi: { install: "https://pi.dev", login: "https://pi.dev" },
-  gh: { install: "https://github.com/cli/cli#installation", login: "https://cli.github.com/manual/gh_auth_login" },
-  git: { install: "https://git-scm.com/downloads" },
-};
+const INSTALL: Record<CheckId, PerPlatform> = Object.fromEntries([
+  ...PROVIDER_CATALOG.map((provider) => [provider.id, provider.setup.install]),
+  ...SYSTEM_CHECKS.map((check) => [check.id, check.install]),
+]) as Record<CheckId, PerPlatform>;
 
-const INSTALL: Record<CheckId, PerPlatform> = {
-  "claude-code": "npm install -g @anthropic-ai/claude-code",
-  codex: "npm install -g @openai/codex",
-  grok: "npm install -g @xai-official/grok",
-  antigravity: {
-    darwin: "curl -fsSL https://antigravity.google/cli/install.sh | bash",
-    linux: "curl -fsSL https://antigravity.google/cli/install.sh | bash",
-    win32: "irm https://antigravity.google/cli/install.ps1 | iex",
-  },
-  opencode: {
-    darwin: "curl -fsSL https://opencode.ai/install | bash",
-    linux: "curl -fsSL https://opencode.ai/install | bash",
-    win32: "npm install -g opencode-ai",
-  },
-  pi: "npm install -g --ignore-scripts @earendil-works/pi-coding-agent",
-  gh: { darwin: "brew install gh", win32: "winget install --id GitHub.cli", linux: "sudo apt install gh" },
-  git: { darwin: "xcode-select --install", win32: "winget install --id Git.Git -e", linux: "sudo apt install git" },
-};
-
-const LOGIN: Partial<Record<CheckId, string>> = {
-  "claude-code": "claude auth login",
-  codex: "codex login",
-  grok: "grok login",
-  antigravity: "agy",
-  opencode: "opencode auth login",
-  pi: "pi",
-  gh: "gh auth login",
-};
+const LOGIN: Partial<Record<CheckId, string>> = Object.fromEntries([
+  ...PROVIDER_CATALOG.flatMap((provider) =>
+    "loginCommand" in provider.setup && provider.setup.loginCommand
+      ? [[provider.id, provider.setup.loginCommand]]
+      : [],
+  ),
+  ...SYSTEM_CHECKS.flatMap((check) => (check.loginCommand ? [[check.id, check.loginCommand]] : [])),
+]);
 
 /** What Git is for, at the start of the sentence that asks for it. */
 const NEEDED_FOR: Partial<Record<CheckId, string>> = {
@@ -184,16 +203,10 @@ export function fixFor(id: CheckId, status: CheckStatus, platform: Platform): Fi
 }
 
 /** The program behind each check, to see whether it runs at all. */
-const PROGRAM: Record<CheckId, string> = {
-  "claude-code": "claude",
-  codex: "codex",
-  grok: "grok",
-  antigravity: "agy",
-  opencode: "opencode",
-  pi: "pi",
-  gh: "gh",
-  git: "git",
-};
+const PROGRAM: Record<CheckId, string> = Object.fromEntries([
+  ...PROVIDER_CATALOG.map((provider) => [provider.id, provider.cli]),
+  ...SYSTEM_CHECKS.map((check) => [check.id, check.cli]),
+]) as Record<CheckId, string>;
 
 /** The fix shown on a Stuck item for a tool that would not start, when its check found nothing wrong. */
 export function wontStartFix(id: CheckId, platform: Platform): Fix {
@@ -213,11 +226,13 @@ export function checkOf(checks: readonly ToolCheck[] | undefined, id: CheckId): 
 const present = (status: CheckStatus) => status === "ready" || status === "unknown";
 
 /**
- * The agent tools on this machine's list: Claude Code and Codex always, and Grok, Antigravity, OpenCode and Pi
- * once their checks have found them installed. The squad can run a whole task on any one of them.
+ * The agent tools on this machine's list: starter tools always, and optional providers once their
+ * checks have found them installed. The squad can run a whole task on any one of them.
  */
 export function agentTools(checks: readonly ToolCheck[] | undefined): CheckId[] {
-  const extras = (["grok", "antigravity", "opencode", "pi"] as const).filter(id => checks?.some(check => check.id === id && check.status !== "not-installed"));
+  const extras = EXTRA_PROVIDER_IDS.filter((id) =>
+    checks?.some((check) => check.id === id && check.status !== "not-installed"),
+  );
   return [...AGENT_TOOLS, ...extras];
 }
 

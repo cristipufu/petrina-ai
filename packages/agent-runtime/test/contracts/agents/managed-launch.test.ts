@@ -1,6 +1,7 @@
 import { expectRejection } from "@petrina/test-support/rejections";
 import { afterAll, expect, it } from "bun:test";
 import { join } from "node:path";
+import { PROVIDER_IDS } from "@petrina/core";
 import { ADAPTERS } from "@petrina/agent-runtime/tools";
 import { ownSession } from "@petrina/platform/process-environment";
 import { AgentRun } from "@petrina/agent-runtime/acp-run";
@@ -39,7 +40,7 @@ it("respects the user's native plan-tool setting, including its disabled default
   }
 });
 
-for (const id of ["claude-code", "codex", "grok", "antigravity", "opencode", "pi"]) {
+for (const id of PROVIDER_IDS) {
   it(`${id}: restores inherited managed settings before a nested launch, including another clone`, () => {
     for (const target of [undefined, "/custom/codex"]) {
       const parent: NodeJS.ProcessEnv = {
@@ -99,7 +100,7 @@ it("refuses a self-referencing Codex command and resolves installed agent CLIs s
   expect(() => resolveInstalledPiCli({ PATH: emptyBinDir })).toThrow("no `pi` on PATH");
 });
 
-for (const toolId of ["claude-code", "codex", "grok", "antigravity", "opencode", "pi"]) it(`${toolId}: the actual connector receives an independent environment`, async () => {
+for (const toolId of PROVIDER_IDS) it(`${toolId}: the actual connector receives an independent environment`, async () => {
   const cwd = join(root, toolId);
   mkdirSync(cwd);
   const file = join(cwd, "received.json"), command = join(cwd, "capture.ts");
@@ -131,7 +132,7 @@ it.skipIf(process.platform === "win32")("retains the startup error and reports i
   process.env.PATH = join(root, "no-programs");
   try {
     expect(await readProcessList(100)).toBeUndefined();
-    for (const toolId of ["claude-code", "codex", "grok", "antigravity", "opencode", "pi"]) {
+    for (const toolId of PROVIDER_IDS) {
       let incomplete = 0;
       let failure: unknown;
       try {

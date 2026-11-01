@@ -1,7 +1,7 @@
 import { NOW, MIN, HOUR } from "../../fixtures/analytics.js";
 import { describe, expect, it } from "vitest";
 
-import { agoText, atLeastLine, codexLimits, durationText, figureText, limitWords, nearestLimit, tokensText } from "../../../src/numbers.js";
+import { agoText, atLeastLine, durationText, figureText, limitWords, nearestLimit, tokensText } from "../../../src/numbers.js";
 
 describe("Words", () => {
   it("reads numbers in plain language", () => {
@@ -38,23 +38,5 @@ describe("Words", () => {
     expect(limitWords({ toolId: "codex", kind: "primary", status: "allowed", at: NOW }, NOW).used).toBe("not reported");
     expect(limitWords({ ...limit, kind: "five_hour", status: "rejected" }, NOW)).toMatchObject({ label: "5-hour", status: "reached", used: "83% used · limit reached" });
     expect(agoText(NOW - 3 * HOUR, NOW)).toBe("3h ago");
-  });
-
-  it("reads Codex's limits, keeping only percentages, lengths and resets", () => {
-    const limits = codexLimits(
-      {
-        rateLimits: { limitId: "codex", primary: { usedPercent: 16, windowDurationMins: 10_080, resetsAt: 1_792_673_339 } },
-        rateLimitsByLimitId: { codex: { limitId: "codex", limitName: null, primary: { usedPercent: 16, windowDurationMins: 10_080, resetsAt: 1_792_673_339 }, secondary: { usedPercent: 91, windowDurationMins: 300, resetsAt: Math.round(NOW / 1000) + 3600 }, planType: "pro" } },
-        accountId: "secret-account",
-      },
-      NOW,
-    );
-    expect(limits).toEqual([
-      { toolId: "codex", kind: "codex:primary", windowMinutes: 10_080, at: NOW, utilization: 0.16, status: "allowed", resetsAt: 1_792_673_339_000 },
-      { toolId: "codex", kind: "codex:secondary", windowMinutes: 300, at: NOW, utilization: 0.91, status: "allowed_warning", resetsAt: (Math.round(NOW / 1000) + 3600) * 1000 },
-    ]);
-    expect(JSON.stringify(limits)).not.toContain("secret");
-    expect(nearestLimit(limits, "codex", NOW)?.kind).toBe("codex:secondary");
-    expect(codexLimits(undefined, NOW)).toEqual([]);
   });
 });

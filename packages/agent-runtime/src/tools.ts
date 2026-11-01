@@ -1,32 +1,9 @@
 import type { AgentProfile, Tool } from "@petrina/core";
+import { ADAPTERS as CATALOG_ADAPTERS } from "./providers/index.js";
 import type { ToolAdapter } from "./tool-adapter.js";
 export type { ToolAdapter } from "./tool-adapter.js";
-import { CLAUDE_USAGE_COMMAND, ClaudeUsage } from "./claude-usage.js";
-import { CODEX_USAGE_COMMAND, CodexUsage } from "./codex-usage.js";
-import { GrokUsage } from "./grok-usage.js";
-import { AntigravityUsage } from "./antigravity-usage.js";
-import { ADAPTERS as CATALOG_ADAPTERS } from "./tool-catalog.js";
-import { adapterLaunchCommand, GROK_AGENT_COMMAND } from "./tool-entry.js";
+import { adapterLaunchCommand } from "./tool-entry.js";
 export { adapterEntry, adapterLaunchCommand } from "./tool-entry.js";
-
-CATALOG_ADAPTERS["claude-code"]!.usageReader ??= {
-  command: () => CLAUDE_USAGE_COMMAND,
-  create: options => new ClaudeUsage(options),
-};
-CATALOG_ADAPTERS.codex!.usageReader ??= {
-  command: () => CODEX_USAGE_COMMAND,
-  create: options => new CodexUsage(options),
-  startGapMs: 0,
-};
-CATALOG_ADAPTERS.grok!.usageReader ??= {
-  command: () => GROK_AGENT_COMMAND,
-  create: options => new GrokUsage(options),
-};
-CATALOG_ADAPTERS.antigravity!.usageReader ??= {
-  command: () => adapterLaunchCommand(CATALOG_ADAPTERS.antigravity!),
-  create: options => new AntigravityUsage(options),
-  liveSession: true,
-};
 
 export const ADAPTERS: Readonly<Record<string, ToolAdapter>> = CATALOG_ADAPTERS;
 
@@ -51,9 +28,16 @@ export interface AgentLaunchOptions {
   requireAgentCommand?: boolean;
 }
 
-export function agentCommandFor(options: AgentLaunchOptions, profile: AgentProfile): readonly string[] | undefined {
+export function agentCommandFor(
+  options: AgentLaunchOptions,
+  profile: AgentProfile,
+): readonly string[] | undefined {
   const command = options.agentCommand?.(profile);
-  if (options.requireAgentCommand && !command?.length) throw new Error(`This test must supply a scripted agent command for ${profile.toolId}; native agent fallback is disabled.`);
+  if (options.requireAgentCommand && !command?.length) {
+    throw new Error(
+      `This test must supply a scripted agent command for ${profile.toolId}; native agent fallback is disabled.`,
+    );
+  }
   return command;
 }
 
@@ -67,9 +51,7 @@ export function detectTools(available?: (toolId: string) => boolean): Tool[] {
       launchCommand = undefined;
     }
     const resolved = launchCommand !== undefined;
-    const installed = available
-      ? available(adapter.id)
-      : resolved && findProgram(adapter.cli) !== null;
+    const installed = available ? available(adapter.id) : resolved && findProgram(adapter.cli) !== null;
     return {
       id: adapter.id,
       name: adapter.name,

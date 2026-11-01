@@ -1,30 +1,25 @@
 import type { AgentProfile, State } from "./model.js";
+import { getProviderDescriptor, PROVIDER_DESCRIPTORS } from "./providers.js";
 
-export const DEFAULT_PROFILES: readonly AgentProfile[] = [
-  { id: "opus-xhigh", toolId: "claude-code", model: "Opus 5.5", modelId: "opus", effort: "xhigh" },
-  { id: "opus-high", toolId: "claude-code", model: "Opus 5.5", modelId: "opus", effort: "high" },
-  { id: "sol-xhigh", toolId: "codex", model: "sol", modelId: "gpt-6.1-sol", effort: "xhigh" },
-  { id: "sol-high", toolId: "codex", model: "sol", modelId: "gpt-6.1-sol", effort: "high" },
-  { id: "grok-xhigh", toolId: "grok", model: "Grok 4.7", modelId: "grok-4.7", effort: "xhigh" },
-  { id: "grok-high", toolId: "grok", model: "Grok 4.7", modelId: "grok-4.7", effort: "high" },
-  { id: "argon-high", toolId: "antigravity", model: "Gemini 4 Argon", modelId: "gemini-4-argon", effort: "high" },
-  { id: "argon-medium", toolId: "antigravity", model: "Gemini 4 Argon", modelId: "gemini-4-argon", effort: "medium" },
-  { id: "flash-high", toolId: "antigravity", model: "Gemini 3.8 Flash", modelId: "gemini-3.8-flash", effort: "high" },
-  { id: "flash-medium", toolId: "antigravity", model: "Gemini 3.8 Flash", modelId: "gemini-3.8-flash", effort: "medium" },
-  { id: "fable-xhigh", toolId: "claude-code", model: "Fable 5.1", modelId: "fable", effort: "xhigh" },
-  { id: "astra-xhigh", toolId: "codex", model: "astra", modelId: "gpt-6-astra", effort: "xhigh" },
-  // Works only when Opus is out of usage and Claude Code is not (its weekly Opus limit); never planned.
-  { id: "sonnet-high", toolId: "claude-code", model: "Sonnet 5.5", modelId: "sonnet", effort: "high", standby: true },
-  // Keep the engine's existing stand-in preferences ahead of profiles retained from the demos.
-  { id: "sonnet-medium", toolId: "claude-code", model: "Sonnet 5.5", modelId: "sonnet", effort: "medium" },
-  { id: "astra-ultra", toolId: "codex", model: "GPT-6 Astra", modelId: "gpt-6-astra", effort: "ultra" },
-  { id: "sol-ultra", toolId: "codex", model: "GPT-6.1 Sol", modelId: "gpt-6.1-sol", effort: "ultra" },
-  { id: "sol-medium", toolId: "codex", model: "GPT-6.1 Sol", modelId: "gpt-6.1-sol", effort: "medium" },
-  { id: "opencode-sonnet-high", toolId: "opencode", model: "Claude Sonnet 4.5", modelId: "anthropic/claude-sonnet-4-5", effort: "high" },
-  { id: "opencode-gpt5-high", toolId: "opencode", model: "GPT-5", modelId: "openai/gpt-5", effort: "high" },
-  { id: "pi-sonnet-high", toolId: "pi", model: "Claude Sonnet 4.5", modelId: "anthropic/claude-sonnet-4-5", effort: "high" },
-  { id: "pi-gpt5-high", toolId: "pi", model: "GPT-5", modelId: "openai/gpt-5", effort: "high" },
-];
+export const DEFAULT_PROFILES: readonly AgentProfile[] = ([0, 1, 2] as const).flatMap((tier) =>
+  PROVIDER_DESCRIPTORS.flatMap((provider) =>
+    provider.profiles
+      .filter((seed) => (seed.rank ?? 0) === tier)
+      .map(
+        (seed): AgentProfile => ({
+          id: seed.id,
+          toolId: provider.id,
+          model: seed.model,
+          ...(seed.modelId !== undefined ? { modelId: seed.modelId } : {}),
+          effort: seed.effort,
+          ...(seed.standby ? { standby: true } : {}),
+        }),
+      ),
+  ),
+);
+
+export const DEFAULT_PLANNER_PROFILE = "opus-high";
+export const DEMO_PLANNER_PROFILE = "sonnet-medium";
 
 /** Native launch settings, independent of display names and profile IDs. */
 export const profileConfiguration = (profile: AgentProfile): string => JSON.stringify([profile.toolId, profile.modelId ?? profile.model, profile.effort]);
@@ -74,11 +69,8 @@ export interface ProfileChoices {
 export interface ProfileDraft { toolId: string; modelId: string; effort: AgentProfile["effort"]; standby?: boolean }
 
 export function profileModelName(profile: Pick<AgentProfile, "toolId" | "modelId" | "model">): string {
-  if (profile.toolId === "codex") {
-    if (profile.modelId === "gpt-6.1-sol") return "GPT-6.1 Sol";
-    if (profile.modelId === "gpt-6-astra") return "GPT-6 Astra";
-  }
-  return profile.model;
+  const mapped = profile.modelId ? getProviderDescriptor(profile.toolId)?.modelDisplayNames?.[profile.modelId] : undefined;
+  return mapped ?? profile.model;
 }
 
 /** Protect future repair paths as well as currently running seats. History keeps its own definition. */
@@ -170,9 +162,11 @@ export function demoProfileChoices(toolId: string, modelId?: string): ProfileCho
     toolId,
     models,
     modelId: selected,
-    efforts: [...new Set([
-    ...profiles.filter(profile => profile.modelId === selected).map(profile => profile.effort),
-    ...(toolId === "claude-code" ? ["medium" as const] : [])
-  ])]
+    efforts: [
+      ...new Set([
+        ...profiles.filter((profile) => profile.modelId === selected).map((profile) => profile.effort),
+        ...(getProviderDescriptor(toolId)?.extraDemoEfforts ?? []),
+      ]),
+    ],
   };
 }

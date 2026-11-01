@@ -2,7 +2,10 @@
 // the simulator and the window all read the same answers.
 
 import type { AgentProfile, Id, Pool, State, UsageLimit, UsageReport } from "./model.js";
+import { getProviderDescriptor } from "./providers.js";
 import type { ReadinessRecheck } from "./readiness.js";
+import { kindWords } from "./usage-windows.js";
+export { kindWords } from "./usage-windows.js";
 
 /** From this much of a limit used, new agents prefer a tool that is further from its own. */
 export const NEAR_LIMIT = 0.9;
@@ -27,34 +30,14 @@ const LEAST_HOURS = 0.25;
 /** When a tool does not say when it is back: try again after this long. */
 export const UNKNOWN_LIMIT_MS = 30 * 60_000;
 
-const KIND_WORDS: Readonly<Record<string, string>> = {
-  five_hour: "5-hour",
-  seven_day: "weekly",
-  seven_day_opus: "weekly Opus",
-  seven_day_sonnet: "weekly Sonnet",
-  seven_day_overage_included: "weekly",
-  overage: "extra usage",
-  monthly: "monthly",
-};
-
-/** A limit's name in plain words: "weekly Opus". */
-export function kindWords(kind: string, minutes?: number, name?: string): string {
-  let label = KIND_WORDS[kind] ?? "usage";
-  if (minutes !== undefined && Number.isFinite(minutes) && minutes > 0) {
-    label = minutes === 10_080 ? "weekly" : minutes === 1440 ? "daily" : minutes < 60 ? `${Math.round(minutes)}-minute` : minutes < 1440 ? `${Math.round(minutes / 60)}-hour` : `${Math.round(minutes / 1440)}-day`;
-  }
-  return name ? `${label}, ${name}` : label;
-}
-
-const CLAUDE_FAMILY_OF_KIND: Readonly<Record<string, string>> = { seven_day_opus: "opus", seven_day_sonnet: "sonnet", seven_day_overage_included: "fable" };
-const CLAUDE_KIND_OF_FAMILY = Object.fromEntries(Object.entries(CLAUDE_FAMILY_OF_KIND).map(([kind, family]) => [family, kind]));
-
-/** Account names and native kinds identify the same Claude model windows, including saved aliases. */
+/** Account names and native kinds identify the same model windows, including saved aliases. */
 export function claudeWindow<T extends Omit<UsageReport, "at">>(report: T): T {
-  if (report.toolId !== "claude-code") return report;
-  const family = CLAUDE_FAMILY_OF_KIND[report.kind] ?? (report.kind === "seven_day_model" ? report.model?.trim().toLowerCase() : undefined);
+  const kinds = getProviderDescriptor(report.toolId)?.usageReporting?.modelWindowKinds;
+  if (!kinds) return report;
+  const family = kinds[report.kind] ?? (report.kind === "seven_day_model" ? report.model?.trim().toLowerCase() : undefined);
   if (!family) return report;
-  const normalized = { ...report, kind: CLAUDE_KIND_OF_FAMILY[family] ?? "seven_day_model", model: family };
+  const kindForFamily = Object.entries(kinds).find(([, value]) => value === family)?.[0] ?? "seven_day_model";
+  const normalized = { ...report, kind: kindForFamily, model: family };
   if (family === "opus" || family === "sonnet") {
     delete normalized.name;
     delete normalized.windowMinutes;
@@ -426,7 +409,15 @@ export function usageLines(state: Pick<State, "tools" | "pool">, now: number): U
       line: {
       toolId: tool.id,
       name: tool.name,
-      text: parts.length ? parts.join(" · ") : reports.some((report) => report.toolId !== "codex" || measuredUsage(report) !== undefined) ? "fine" : "not reported",
+      text: parts.length
+        ? parts.join(" · ")
+        : reports.some(
+              (report) =>
+                !getProviderDescriptor(report.toolId)?.usageReporting?.requiresMeasuredPercentage
+                || measuredUsage(report) !== undefined,
+            )
+          ? "fine"
+          : "not reported",
       tone: (out.length ? "out" : holding ? "near" : "fine") as UsageLine["tone"]
     },
       shown: tool.status === "ready" || parts.length > 0

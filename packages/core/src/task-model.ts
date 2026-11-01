@@ -165,7 +165,10 @@ export const REPOSITORY_FIELDS = [
   "lessons", "hooking", "tamper", "builderSession", "report", "pr", "release", "landed", "localUpdate", "shipping",
   "cleanup", "conversation", "sideStep", "stepAttempts", "editAttempt", "acceptanceReturns", "releasePreview", "confirmedDelivery", "proofRelease"
 ] as const;
-export type RepositoryField = typeof REPOSITORY_FIELDS[number];
+export type RepositoryField = (typeof REPOSITORY_FIELDS)[number];
+type MissingRepositoryField = Exclude<keyof RepositoryState, RepositoryField>;
+const EVERY_REPOSITORY_FIELD_LISTED: MissingRepositoryField extends never ? true : MissingRepositoryField = true;
+void EVERY_REPOSITORY_FIELD_LISTED;
 export type TaskRepository = RepositoryState & {
   completedStages: readonly Id[];
   preparation?: "waiting" | "ready";

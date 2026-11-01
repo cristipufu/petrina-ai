@@ -1,4 +1,4 @@
-import { productName, deliveryLabel, prNumber, workSummary, type WorkChoice } from "@petrina/core";
+import { deliveryLabel, prNumber, productName, resolveDestinationKind, workSummary, type WorkChoice } from "@petrina/core";
 import { detachRepositoryState, executionFor } from "./repository-context.js";
 import type { RuntimeTask } from "./model.js";
 import type { SourceSelectionEffects, SourceSelectionHost } from "./ports/source.js";
@@ -137,7 +137,7 @@ export class SourceSelections {
           },
             destination: {
             mode: choice.delivery,
-            kind: choice.delivery === "release" ? "release" : choice.delivery === "local" ? "branch" : "new-pr",
+            kind: resolveDestinationKind("default", choice.delivery),
             repo,
             branch: candidate.defaultBranch,
             remote: candidate.remote

@@ -1,7 +1,8 @@
 import { afterAll } from "bun:test";
 import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
 import { expectRejection } from "@petrina/test-support/rejections";
-import { codexLimits, limitBuckets, limitsOverTime, type ReadingsView } from "@petrina/core";
+import { limitBuckets, limitsOverTime, type ReadingsView } from "@petrina/core";
+import { codexLimits } from "@petrina/agent-runtime/codex-report";
 import { grokReports } from "@petrina/agent-runtime/grok-report";
 import { expect, it, spyOn } from "bun:test";
 import { dispatch } from "../../../src/server.js";

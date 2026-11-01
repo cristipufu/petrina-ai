@@ -2,6 +2,7 @@
 
 import { addAsk, AFTER_WORDS, beginAgentStep, syncWait } from "./journey.js";
 import type { ActiveAgent, Id, State, Task } from "./model.js";
+import { getProviderDescriptor } from "./providers.js";
 import * as library from "./roles.js";
 import { admitRoutines, prepareMaintenanceTask } from "./routines.js";
 import { balanced, extraSlot, pickStarts, queueOf, slotUses, slotWait, type Candidate } from "./scheduler.js";
@@ -53,15 +54,12 @@ export function simStartAgent(rt: SimRuntime, d: Draft, task: DraftTask): void {
     d.roles,
     current?.kind === "review-chain" ? current.profileIds : undefined
   );
-  // Claude Code and Codex have known sandbox states; other tools keep their own setup.
+  // Providers that report sandbox state get a known sandbox setting; other tools keep their own setup.
   const agent: ActiveAgent = {
     ...next,
     since: d.now,
     step: screen?.step ?? 0,
-    ...([
-    "claude-code",
-    "codex"
-  ].includes(toolId) ? { sandbox: { on: true as const } } : {})
+    ...(getProviderDescriptor(toolId)?.capabilities.reportsSandbox ? { sandbox: { on: true as const } } : {})
   };
   task.agent = agent;
   // Reviewers look at the change together, as the engine's do: the ones still to report work beside this

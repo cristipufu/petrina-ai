@@ -1,6 +1,8 @@
 import { exhaustedAcceptanceFailure, owedAcceptanceTest } from "./acceptance.js";
 import { followingCall } from "./call.js";
 import { evidenceFor, reusedCheckWords } from "./check-evidence.js";
+import { DELIVERY_MODE_CATALOG } from "./delivery-modes.js";
+import { INBOX_CATALOG } from "./inbox-catalog.js";
 import {
   dependencyLanding,
   JOURNEY_WORDS,
@@ -12,7 +14,6 @@ import {
 import type {
   Id,
   InboxItem,
-  InboxKind,
   JourneyAsk,
   JourneyStep,
   JourneyTone,
@@ -421,15 +422,6 @@ export function isDelivery(stage: Pick<Stage, "kind" | "roleId">, roles: RoleSum
   return stage.kind === "do" && roles.find((role) => role.id === stage.roleId)?.result === "delivery";
 }
 
-const LEGACY_WAITS: Partial<Record<InboxKind, JourneyWait>> = {
-  plan: "plan",
-  design: "design",
-  delivery: "delivery",
-  disagreement: "call",
-  stuck: "stuck",
-  shipping: "shipping",
-};
-
 /**
  * For a task that ran before journeys were recorded: one step per finished plan stage, without times
  * or rounds, then the step under way now: the agent at work or waiting on its question (with the
@@ -458,7 +450,7 @@ export function legacyJourney(task: Task, inbox: readonly InboxItem[], roles: Ro
     if (stage.kind === "gate") add({ kind: "you", stageId: stage.id, waitsFor: stage.gate ?? "delivery", ...ended });
     else if (isDelivery(stage, roles)) {
       // Petrina publishes; only a release has the Release Manager's notes first.
-      if (task.delivery === "release") add(agent);
+      if (DELIVERY_MODE_CATALOG[task.delivery].requiresAgentPrepNotes) add(agent);
       add({ kind: "petrina", stageId: stage.id, work: "delivery", ...ended });
     } else add({ ...agent, ...(stage.kind === "review-chain" && stage.profileIds.length > 1 ? { team: [...stage.profileIds] } : {}) });
   }
@@ -468,7 +460,7 @@ export function legacyJourney(task: Task, inbox: readonly InboxItem[], roles: Ro
     : [];
   const roleId = task.agent?.roleId ?? asked[0]?.roleId;
   const item = live ? inbox.find((entry) => entry.taskId === task.id && !entry.blocking) : undefined;
-  const waits = item && LEGACY_WAITS[item.kind];
+  const waits = item && INBOX_CATALOG[item.kind].legacyWait;
   const stage = task.stageIndex >= 0 ? stages[task.stageIndex] : undefined;
   // Delivering before the update, with no agent of its own now: Petrina's delivery was under way.
   if (roleId && stage && isDelivery(stage, roles) && task.delivery !== "release") {

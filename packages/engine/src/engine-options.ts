@@ -3,6 +3,7 @@
 import type { FileOperations } from "@petrina/platform/file-operations";
 import {
   CHECK_NAMES,
+  DEFAULT_PLANNER_PROFILE,
   isCheckId,
   MAX_SESSION_LINES,
   openStep,
@@ -39,10 +40,10 @@ export type { RuntimeTask };
 export type RuntimeState = Omit<DeepMutable<State>, "tasks"> & { tasks: RuntimeTask[] };
 export type MutableStage = DeepMutable<Stage>;
 
-export const PLANNER_PROFILE = "opus-high";
-export const RELEASE_MANAGER_PROFILE = "opus-high";
-export const CHECK_FINDER_PROFILE = "opus-high";
-export const GUIDE_KEEPER_PROFILE = "opus-high";
+export const PLANNER_PROFILE = DEFAULT_PLANNER_PROFILE;
+export const RELEASE_MANAGER_PROFILE = DEFAULT_PLANNER_PROFILE;
+export const CHECK_FINDER_PROFILE = DEFAULT_PLANNER_PROFILE;
+export const GUIDE_KEEPER_PROFILE = DEFAULT_PLANNER_PROFILE;
 
 export const TONES: readonly Tone[] = [
   "blue",

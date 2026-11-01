@@ -6,7 +6,7 @@ const state: Pick<State, "profiles" | "tools"> = {
   profiles: [
     { id: "opus-high", toolId: "claude-code", model: "Opus 5.5", modelId: "opus", effort: "high" },
     { id: "sol-high", toolId: "codex", model: "sol", modelId: "gpt-6.1-sol", effort: "high" },
-    { id: "gem", toolId: "gemini", model: "Gemini", effort: "high" },
+    { id: "custom", toolId: "custom-tool", model: "Custom", effort: "high" },
     { id: "grok-high", toolId: "grok", model: "Grok 4.7", modelId: "grok-4.7", effort: "high" },
     { id: "flash-medium", toolId: "antigravity", model: "Gemini 3.8 Flash", modelId: "gemini-3.8-flash", effort: "medium" },
     { id: "opencode-sonnet-high", toolId: "opencode", model: "Claude Sonnet 4.5", modelId: "anthropic/claude-sonnet-4-5", effort: "high" },
@@ -15,7 +15,7 @@ const state: Pick<State, "profiles" | "tools"> = {
   tools: [
     { id: "claude-code", name: "Claude Code", command: [], status: "ready", models: [] },
     { id: "codex", name: "Codex", command: [], status: "not-installed", models: [] },
-    { id: "gemini", name: "Gemini CLI", command: [], status: "ready", models: [] },
+    { id: "custom-tool", name: "Custom CLI", command: [], status: "ready", models: [] },
     { id: "grok", name: "Grok", command: [], status: "ready", models: [] },
     { id: "antigravity", name: "Antigravity", command: [], status: "ready", models: [] },
     { id: "opencode", name: "OpenCode", command: [], status: "ready", models: [] },
@@ -122,7 +122,7 @@ describe("whether the coordinator can take over", () => {
     expect(takeOverBlock(task({ agent: { roleId: "release-manager", profileId: "opus-high", since: 0, step: 0 } }), state)).toBe(TAKE_OVER_WORDS.releaseManager);
     expect(takeOverBlock(task({ conversation: undefined }), state)).toBe(TAKE_OVER_WORDS.starting);
     expect(takeOverBlock(task({ conversation: { ...task().conversation!, briefed: false } }), state)).toBe(TAKE_OVER_WORDS.starting);
-    expect(takeOverBlock(task({ agent: { roleId: "builder", profileId: "gem", since: 0, step: 0 } }), state)).toBe(TAKE_OVER_WORDS.unsupported);
+    expect(takeOverBlock(task({ agent: { roleId: "builder", profileId: "custom", since: 0, step: 0 } }), state)).toBe(TAKE_OVER_WORDS.unsupported);
     expect(takeOverBlock(task({ agent: { roleId: "builder", profileId: "sol-high", since: 0, step: 0 } }), state)).toBe("Codex isn't installed on this machine");
     expect(takeOverBlock(task({ driving: { since: 0, roleId: "builder", profileId: "opus-high", toolId: "claude-code", head: "abc" } }), state)).toBe(TAKE_OVER_WORDS.driving);
   });

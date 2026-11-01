@@ -1,5 +1,7 @@
+import { DEMO_PLANNER_PROFILE } from "./profiles.js";
+import { CATALOG_TOOLS, PROVIDER_BY_ID } from "./providers.js";
 import { deliveryLabel } from "./source.js";
-import type { DeliveryMode, Plan, Role, Stage, Task, Tool } from "./model.js";
+import type { Plan, Role, Stage, Task, Tool } from "./model.js";
 
 /** Acceptance evidence is the same requirement in the role library and the engine contract. */
 export const ACCEPTANCE_EVIDENCE_RULE = `For every pass or failure, include short "evidence": the specific scenario, expected and observed result, with the relevant failure/recovery variant and a nearby passing control when needed. Distinguish what you executed from what you only inspected. A passing suite, test name or demo picture does not prove an untried concurrency, interruption or restart condition. Reuse Petrina's current checks when they cover the item; several items may cite one applicable result or focused probe, without rerunning a full suite or repeating logs.`;
@@ -70,6 +72,11 @@ ${NOTES_HANDOFF_RULE}`,
     handsBack: "Research notes with sources.",
     result: "notes",
     column: "designing",
+    stepLabel: "Research",
+    upcomingVerb: "research",
+    analyticsLabel: "Research",
+    analyticsOrder: 2,
+    simVariant: "research",
   },
   {
     id: "architect",
@@ -115,6 +122,12 @@ ${NOTES_HANDOFF_RULE}`,
     handsBack: "UI notes and screen sketches.",
     result: "notes",
     column: "designing",
+    stepLabel: "Screens",
+    upcomingVerb: "screens",
+    analyticsLabel: "Screens",
+    analyticsOrder: 4,
+    simVariant: "screens",
+    exampleNotes: { summary: "The screens and words you propose", note: "One note per line" },
   },
   {
     id: "builder",
@@ -159,6 +172,11 @@ You may run a command to confirm it works, but keep it quick, and do not change 
     handsBack: "Security findings, each tagged Important, Nit or Pre-existing, with evidence.",
     column: "reviewing",
     awayFromBuilder: true,
+    fullReview: true,
+    fullReviewSummary:
+      "Review for security problems only: who can reach what (access checks, sign-in, permissions), secrets and credentials, input from outside (injection, paths, URLs), data that could be exposed or lost, and unsafe defaults.",
+    upcomingVerb: "security review",
+    exampleFinding: { text: "What is unsafe, in plain language", evidence: "How someone could misuse it" },
     internal: true,
     result: "findings",
     instructions: `Review the change for security problems only: who can reach what (access checks, sign-in, permissions), secrets and credentials, input from outside (injection, paths, URLs), data that could be exposed or lost, and unsafe defaults. Other reviewers cover everything else.
@@ -235,38 +253,18 @@ Do not change any files.`,
     handsBack: "Findings, each pass or fail with where it is and the evidence.",
     result: "findings",
     column: "reviewing",
+    upcomingVerb: "code review",
   },
 ];
 
 /** Tools Petrina knows how to start through their ACP adapters. */
-export const KNOWN_TOOLS: readonly Tool[] = [
-  {
-    id: "claude-code",
-    name: "Claude Code",
-    command: ["npx", "-y", "@agentclientprotocol/claude-agent-acp"],
-    status: "ready",
-    models: ["Opus 5.5", "Sonnet 5.5", "Haiku 5.5"],
-  },
-  {
-    id: "codex",
-    name: "Codex",
-    command: ["npx", "-y", "@agentclientprotocol/codex-acp"],
-    status: "ready",
-    models: ["sol"],
-  },
-  {
-    id: "gemini",
-    name: "Gemini CLI",
-    command: ["gemini", "--experimental-acp"],
-    status: "not-installed",
-    models: [],
-  },
-];
+export const KNOWN_TOOLS: readonly Tool[] = CATALOG_TOOLS.filter(
+  (tool) => PROVIDER_BY_ID[tool.id as keyof typeof PROVIDER_BY_ID]?.starter,
+);
 
 export { DEFAULT_PROFILES } from "./profiles.js";
 
-
-const PLANNER_PROFILE = "sonnet-medium";
+const PLANNER_PROFILE = DEMO_PLANNER_PROFILE;
 
 const designStages = (taskId: string): Stage[] => [
   {
@@ -282,11 +280,8 @@ const designStages = (taskId: string): Stage[] => [
   { id: `${taskId}:design-ok`, kind: "gate", title: "Your design check", roleId: "planner", profileIds: [], gate: "design" },
 ];
 
-export const DELIVERY_LABEL: Record<DeliveryMode, string> = {
-  "pull-request": "Open a pull request",
-  release: "Publish a release",
-  local: "Commit to main",
-};
+import { DELIVERY_LABEL } from "./delivery-modes.js";
+export { DELIVERY_LABEL };
 
 /** The end of every plan: the coordinator's check (when asked for), then the delivery step. The Release Manager only writes a release's notes. */
 export function deliveryStages(task: Pick<Task, "id" | "delivery" | "approveDelivery" | "source">, releaseManagerProfileId: string = "opus-high"): Stage[] {

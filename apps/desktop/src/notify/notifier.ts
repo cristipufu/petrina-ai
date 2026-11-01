@@ -4,7 +4,7 @@
 // notification goes out at once, then nothing for ten seconds; what arrived meanwhile goes out
 // when the pause ends, alone or as one summary. Nothing already shown is ever taken back.
 
-import type { InboxItem, State } from "@petrina/core";
+import { notifiableInboxItem, type InboxItem, type State } from "@petrina/core";
 import { noticeFor, summaryOf, type Notice } from "./words";
 
 /** At most one notification this often. */
@@ -26,7 +26,7 @@ export class InboxWatch {
     if (!synced) return [];
     // "You're driving" follows the coordinator's own take-over: it needs no notification. A screen request is
     // quiet: it waits in the inbox with no notification or in-app message.
-    const fresh = this.ready ? inbox.filter((item) => !this.known.has(item.id) && item.kind !== "driving" && item.kind !== "screen") : [];
+    const fresh = this.ready ? inbox.filter((item) => !this.known.has(item.id) && notifiableInboxItem(item)) : [];
     for (const item of inbox) this.known.add(item.id);
     this.ready = true;
     return fresh;

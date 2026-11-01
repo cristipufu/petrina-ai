@@ -34,10 +34,11 @@ export class Planning {
           const read = await Promise.all(products.map((product) => this.orientation.read(product)));
           return read.filter((section) => section !== undefined);
         },
-        runTurn: (scope, request, signal) =>
-          turns.turn(
+        runTurn: (scope, request, signal) => {
+          const plannerRoleId = k.s.roles.find((role) => !role.removed && role.result === "plan")?.id ?? "planner";
+          return turns.turn(
             scope,
-            "planner",
+            plannerRoleId,
             request.plannerProfileId,
             request.sections,
             PlanResult,
@@ -47,7 +48,8 @@ export class Planning {
               ...(request.selectionReason ? { selectionReason: request.selectionReason } : {}),
               used: request.used,
             },
-          ),
+          );
+        },
         proposeSources: (task, worksOn) => sources.propose(task, worksOn ? [...worksOn] : undefined),
       },
     );

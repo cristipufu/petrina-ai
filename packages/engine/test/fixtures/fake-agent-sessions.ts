@@ -25,11 +25,13 @@ import {
   checkFinderPayload,
   defaultConfigOptions as defaultOptions,
   designReviewerPayload,
+  dispatchFakeRole,
   DISPUTE_REASON,
   guideKeeperPayload,
   NOTES,
   objectionIds,
   plannerPayload,
+  resultOf,
   roleOf,
   SCREEN_REASON,
   SECURITY_FINDING,
@@ -45,6 +47,7 @@ interface Conversation {
   captures?: string;
   cwd: string;
   role: string;
+  result?: ReturnType<typeof resultOf>;
   turns: number;
   restarts: number;
   history: acp.SessionNotification["update"][];
@@ -726,6 +729,8 @@ class InProcessFakeSession implements AgentSession {
     const dir = this.h.dir;
     session.turns += 1;
     if (roleOf(text)) session.role = roleOf(text);
+    const parsedResult = resultOf(text);
+    if (parsedResult) session.result = parsedResult;
     const captures =
       /Browser output belongs only in (.+), outside product files\./.exec(text)?.[1] ??
       /Browser capture folder for this turn: (.+)\. Earlier pages/.exec(text)?.[1];
@@ -766,7 +771,7 @@ class InProcessFakeSession implements AgentSession {
             report.findings.push({ text: "The shared ownership needs a coordinator decision.", severity: "important" });
           }
         }
-        if (report.checks && session.role === "tester") {
+        if (report.checks && (session.role === "tester" || session.result === "checks")) {
           report.checks = report.checks.map((entry) => ({
             ...entry,
             productIds: entry.productIds ?? ids,
@@ -864,7 +869,7 @@ class InProcessFakeSession implements AgentSession {
       }
     }
 
-    if (session.role === "tester") {
+    if (session.role === "tester" || session.result === "checks") {
       for (const entry of plan.testerFiles ?? []) {
         if (entry.model && entry.model !== session.model) continue;
         writeFileSync(join(entry.dir, entry.file), entry.text);
@@ -1053,7 +1058,7 @@ class InProcessFakeSession implements AgentSession {
       await waitWhileFile(hold.file, this.stopped.signal);
     };
 
-    switch (session.role) {
+    switch (dispatchFakeRole(session.role, session.result)) {
       case "planner":
         await say("Sizing the work");
         return done(plannerPayload(plan, text));
@@ -1430,7 +1435,6 @@ class InProcessFakeSession implements AgentSession {
         return done(verifierVerdictsPayload(plan, text, session.model, notABug));
       }
 
-      case "quality partner":
       case "tester":
         if (plan.tester === "no-evidence") return done({ summary: "It looks fine.", checks: [{ text: "A greeting file exists", result: "pass" }] });
         if (plan.tester === "omit-once" && !this.h.marked("tester-omitted")) {

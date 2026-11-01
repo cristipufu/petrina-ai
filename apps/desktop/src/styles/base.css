@@ -76,17 +76,6 @@
   --badge: #8f5600;
   --on-badge: #ffffff;
 
-  --t-indigo: #4652cc;   --t-indigo-soft: #ebedfd;
-  --t-orange: #b85a10;   --t-orange-soft: #fdefe2;
-  --t-violet: #6c40d8;   --t-violet-soft: #f1ebfd;
-  --t-purple: #9035b8;   --t-purple-soft: #f7eafb;
-  --t-pink: #bf2f78;     --t-pink-soft: #fce8f2;
-  --t-blue: #2a63d4;     --t-blue-soft: #e8f0fe;
-  --t-green: #1d7f48;    --t-green-soft: #e3f5ea;
-  --t-teal: #0d7a76;     --t-teal-soft: #dff4f2;
-  --t-slate: #646870;    --t-slate-soft: #f0f2f6;
-  --t-amber: #9c6100;    --t-amber-soft: #fdf2d8;
-
   --shadow-card: 0 1px 2px rgba(23, 32, 46, 0.04);
   --shadow-lift: 0 4px 14px rgba(23, 32, 46, 0.07), 0 1px 2px rgba(23, 32, 46, 0.05);
   --shadow-pop: 0 16px 44px rgba(23, 32, 46, 0.16), 0 2px 8px rgba(23, 32, 46, 0.07);
@@ -116,20 +105,7 @@
   --inbox: max(360px, 22.5rem);
   --card-min: min(17rem, 100%);
 
-  /* Tool colours in charts: the app's tool colours, with their own steps for dark mode. */
-  --tool-claude-code: #d97757;
-  --tool-codex: #10a37f;
-  --tool-grok: #5b6cff;
-  --tool-antigravity: var(--t-teal);
-  --tool-gemini: #4285f4;
-  --tool-opencode: #6b7079;
-  --tool-pi: #7c5ce6;
-  /* Provider colours in charts: the tool's colour where one tool stands for the provider. */
-  --provider-anthropic: #d97757;
-  --provider-openai: #10a37f;
-  --provider-xai: #3f434b;
-  --provider-google: #4285f4;
-  --provider-other: #7a766e;
+  /* Tool and provider colours in charts come from PROVIDER_CATALOG and VENDOR_CATALOG via theme sync (src/themes/css.ts). */
 
   color-scheme: light;
 }
@@ -181,32 +157,11 @@
   --badge: #f0b03c;
   --on-badge: #1b1404;
 
-  --t-indigo: #949cff;   --t-indigo-soft: rgba(143, 152, 255, 0.16);
-  --t-orange: #f3a15b;   --t-orange-soft: rgba(243, 161, 91, 0.16);
-  --t-violet: #b49aff;   --t-violet-soft: rgba(178, 148, 255, 0.16);
-  --t-purple: #d690f0;   --t-purple-soft: rgba(212, 139, 240, 0.16);
-  --t-pink: #f589be;     --t-pink-soft: rgba(243, 131, 187, 0.16);
-  --t-blue: #76a5ff;     --t-blue-soft: rgba(107, 157, 255, 0.16);
-  --t-green: #56cb8a;    --t-green-soft: rgba(76, 198, 131, 0.16);
-  --t-teal: #4ccac3;     --t-teal-soft: rgba(63, 198, 191, 0.16);
-  --t-slate: #a4a8b0;    --t-slate-soft: rgba(154, 158, 166, 0.16);
-  --t-amber: #f0b03c;    --t-amber-soft: rgba(240, 176, 60, 0.16);
-
   --shadow-card: 0 1px 0 rgba(0, 0, 0, 0.35);
   --shadow-lift: 0 6px 20px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.35);
   --shadow-pop: 0 20px 56px rgba(0, 0, 0, 0.55), 0 3px 10px rgba(0, 0, 0, 0.4);
   --you-fill: #2a2416;
   --scrim: rgba(0, 0, 0, 0.5);
-
-  --tool-claude-code: #d4704f;
-  --tool-codex: #10a37f;
-  --tool-opencode: #9a9ea6;
-  --tool-pi: #a78bfa;
-  --provider-anthropic: #d4704f;
-  --provider-openai: #10a37f;
-  --provider-xai: #c9ccd2;
-  --provider-google: #6ea1ff;
-  --provider-other: #9a9ea6;
 
   color-scheme: dark;
 }

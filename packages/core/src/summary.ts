@@ -6,11 +6,13 @@
 import { owedAcceptanceTest, requiredUnverified } from "./acceptance.js";
 import { CALL_WORDS, followingCall } from "./call.js";
 import { checksCurrent } from "./check-activity.js";
+import { DELIVERY_MODE_CATALOG } from "./delivery-modes.js";
 import { allowsReviewFix, coveredByDecision, reviewRoundEnd } from "./flow.js";
 import { portReviewerIndex } from "./journey-recording.js";
 import { proofDecision, proofTestNeeded, sameProofDecision, sameVersions } from "./proof-requests.js";
+import { ROLE_RESULT_CATALOG } from "./result-contracts.js";
 import { reviewerAt, roleForTask } from "./roles.js";
-import type { DeliveryMode, GateKind, Id, Stage, State, StepClock, StepRecord, Task } from "./model.js";
+import type { GateKind, Id, Role, Stage, State, StepClock, StepRecord, Task } from "./model.js";
 
 /** How long a to-do item may be on the board, in characters. */
 export const TODO_MAX = 100;
@@ -157,25 +159,12 @@ export function timeLeft(state: Pick<State, "tasks" | "now" | "history">, task: 
 
 // ── What's next ──────────────────────────────────────────────────────────
 
-const WORK: Readonly<Record<string, string>> = {
-  planner: "planning",
-  researcher: "research",
-  architect: "design",
-  "design-reviewer": "design review",
-  "ux-designer": "screens",
-  builder: "build",
-  tester: "testing",
-  "code-reviewer": "code review",
-  "security-reviewer": "security review",
-  "release-manager": "release notes",
-};
-
-/** Petrina publishes by itself; only a release has an agent first, for its notes. */
-const PUBLISH: Readonly<Record<DeliveryMode, string>> = {
-  "pull-request": "Petrina opens the pull request",
-  local: "Petrina commits to main",
-  release: "Petrina publishes the release",
-};
+function upcomingRoleVerb(role: Role | undefined, fallback?: string): string {
+  if (!role) return fallback ?? "";
+  if (role.added || role.category === "maintenance") return fallback ?? role.name.toLowerCase();
+  if (role.upcomingVerb) return role.upcomingVerb;
+  return ROLE_RESULT_CATALOG[role.result].upcomingVerb ?? fallback ?? role.name.toLowerCase();
+}
 
 /** The coordinator's checks are named as theirs. */
 const CHECKS: Readonly<Record<GateKind, string>> = {
@@ -350,7 +339,8 @@ function upcoming(state: People, task: Task, index: number, sub: number, limit =
         const port = reviewers.length === 1 && task.portReview !== undefined && stage.profileIds.length > 1;
         const roles = [...new Set(reviewers.map((reviewer) => reviewer.roleId))];
         const roleId = roles[0];
-        const name = roles.length > 1 ? "review" : roleId && (WORK[roleId] ?? roleForTask(state.roles, roleId, task)?.name.toLowerCase());
+        const roleObj = roleId ? roleForTask(state.roles, roleId, task) : undefined;
+        const name = roles.length > 1 ? "review" : roleObj ? upcomingRoleVerb(roleObj, roleObj.name.toLowerCase()) : undefined;
         if (reviewers.length) steps.push(`${port ? "a review of the port" : `${name || stage.title.toLowerCase()}${again}`}${by(
           state,
           ...reviewers.map((reviewer) => reviewer.profileId)
@@ -361,7 +351,8 @@ function upcoming(state: People, task: Task, index: number, sub: number, limit =
       case "do": {
         // Testing still owed here: checking an acceptance repair, then the rest of the plan; final testing, and a repair of
         // what it found, then straight to the delivery check.
-        const checks = roleForTask(state.roles, stage.roleId, task)?.result === "checks";
+        const stageRole = roleForTask(state.roles, stage.roleId, task);
+        const checks = stageRole?.result === "checks";
         if (checks && owed?.stage === at) {
           steps.push(`${owed.final ? "final acceptance testing" : "acceptance testing of the repair"}${by(state, stage.profileIds[0])}`);
           const gate = owed.final ? stages.findIndex((entry) => entry.kind === "gate" && entry.gate === "delivery") : -1;
@@ -370,14 +361,17 @@ function upcoming(state: People, task: Task, index: number, sub: number, limit =
         }
         // After the first acceptance pass, the engine skips this stage in fix rounds and decides on a final pass at the delivery check.
         if (checks && task.testedPatch !== undefined) break;
-        if (roleForTask(state.roles, stage.roleId, task)?.result === "delivery") {
-          // Petrina publishes by itself: a release's notes come from the Release Manager first.
-          if (task.delivery === "release") steps.push(`${WORK[stage.roleId]}${by(state, stage.profileIds[0])}`);
-          steps.push(PUBLISH[task.delivery]);
+        if (stageRole?.result === "delivery") {
+          const deliverySpec = DELIVERY_MODE_CATALOG[task.delivery];
+          // Petrina publishes by itself: a release's notes come from the delivery role first.
+          if (deliverySpec.requiresAgentPrepNotes) {
+            steps.push(`${upcomingRoleVerb(stageRole, stage.title.toLowerCase())}${by(state, stage.profileIds[0])}`);
+          }
+          steps.push(deliverySpec.publishSummary);
           break;
         }
-        const fixing = at === task.stageIndex && task.fixing && roleForTask(state.roles, stage.roleId, task)?.result === "build";
-        steps.push(`${fixing ? "fixes by the builder" : (WORK[stage.roleId] ?? stage.title.toLowerCase())}${by(state, stage.profileIds[0])}`);
+        const fixing = at === task.stageIndex && task.fixing && stageRole?.result === "build";
+        steps.push(`${fixing ? "fixes by the builder" : upcomingRoleVerb(stageRole, stage.title.toLowerCase())}${by(state, stage.profileIds[0])}`);
         break;
       }
     }
@@ -481,7 +475,10 @@ export function nextSteps(state: People & Pick<State, "inbox">, task: Task): Nex
         }
       }
       // The Release Manager writing a release's notes: Petrina publishes it next.
-      if (roleForTask(state.roles, stage.roleId, task)?.result === "delivery") return task.delivery === "release" ? { steps: [PUBLISH.release] } : undefined;
+      if (roleForTask(state.roles, stage.roleId, task)?.result === "delivery") {
+        const deliverySpec = DELIVERY_MODE_CATALOG[task.delivery];
+        return deliverySpec.requiresAgentPrepNotes ? { steps: [deliverySpec.publishSummary] } : undefined;
+      }
       return shaped(upcoming(state, task, task.stageIndex + 1, 0));
   }
 }

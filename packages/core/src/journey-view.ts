@@ -1,6 +1,7 @@
 import { owedAcceptanceTest } from "./acceptance.js";
 import { callOn, followingCall } from "./call.js";
 import { decisionEvidence, incompleteCheckOutcome, latestCheckResults } from "./check-evidence.js";
+import { DELIVERY_MODE_CATALOG } from "./delivery-modes.js";
 import { isDelivery, legacyJourney, openStep, portReviewerIndex } from "./journey-recording.js";
 import { flowStepMarks, landingOf, stepName, type Named } from "./journey-words.js";
 import type {
@@ -132,7 +133,7 @@ function stageSteps(task: Task, stage: Stage, index: number, ctx: Pick<JourneyCo
           : [];
       }
       // The release notes are written once: an interrupted delivery only publishes again.
-      const notes = task.delivery === "release" && !(index === task.stageIndex && task.shipping?.prepared);
+      const notes = DELIVERY_MODE_CATALOG[task.delivery].requiresAgentPrepNotes && !(index === task.stageIndex && task.shipping?.prepared);
       return [...(notes ? [agent] : []), { ...base, kind: "petrina" as const, work: "delivery" as const }].slice(from);
     }
     case "converge": {

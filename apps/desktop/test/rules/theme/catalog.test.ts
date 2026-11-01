@@ -1,6 +1,8 @@
 // @vitest-environment node
+import { PROVIDER_DESCRIPTORS, TONES, VENDOR_CATALOG } from "@petrina/core";
 import { describe, expect, it } from "vitest";
-import { cssVars, themes } from "../../../src/themes";
+import { TONE_NAME } from "../../../src/lib";
+import { cssVars, themes, TONE_CATALOG, toneRulesCss } from "../../../src/themes";
 
 function channel(hex: string, shift: number): number {
   const value = parseInt(hex.slice(shift, shift + 2), 16) / 255;
@@ -53,5 +55,23 @@ describe("themes", () => {
     if (!first) throw new Error("no themes");
     for (const keys of lists.slice(1)) expect(keys).toEqual(first);
     expect(first).toEqual(expect.arrayContaining(["--bg", "--accent", "--on-accent", "--canvas", "--you-fill", "--font", "--font-display", "--sheet-radius", "--logo-from", "--scrim"]));
+    for (const theme of themes) {
+      const vars = cssVars(theme);
+      for (const provider of PROVIDER_DESCRIPTORS) {
+        expect(vars[`--tool-${provider.id}`]).toBe(provider.theme[theme.mode]);
+      }
+      for (const vendor of VENDOR_CATALOG) {
+        expect(vars[`--provider-${vendor.id}`]).toBe(vendor.theme[theme.mode]);
+      }
+      for (const tone of TONES) {
+        expect(vars[`--t-${tone}`]).toBe(TONE_CATALOG[tone][theme.mode].fg);
+        expect(vars[`--t-${tone}-soft`]).toBe(TONE_CATALOG[tone][theme.mode].soft);
+      }
+    }
+    const rules = toneRulesCss();
+    for (const tone of TONES) {
+      expect(TONE_NAME[tone]).toBe(TONE_CATALOG[tone].name);
+      expect(rules).toContain(`.tone-${tone} { --tone: var(--t-${tone}); --tone-soft: var(--t-${tone}-soft); }`);
+    }
   });
 });

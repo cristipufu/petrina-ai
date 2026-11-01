@@ -1,8 +1,9 @@
 import type { InboxItem, keyArea, Page, State, Task, TaskList } from "@petrina/core";
+import type { ReactNode } from "react";
 import { AddProductDialog } from "./components/AddProduct";
 import { AnalyticsPage } from "./components/Analytics";
 import { Board } from "./components/Board";
-import { CommandPalette, KeyboardShortcuts, taskState, type PaletteAction } from "./components/CommandPalette";
+import { CommandPalette, KeyboardShortcuts, taskState, type PaletteAction, type PaletteMode } from "./components/CommandPalette";
 import { CouldNotStart } from "./components/EngineState";
 import { History, TaskLoading, type HistoryPosition, type useHistoryPage } from "./components/History";
 import { NewTaskDialog } from "./components/NewTask";
@@ -68,7 +69,6 @@ export interface WorkspaceMainActions {
   onAboutSeen: () => void;
   onRunPosition: (position: HistoryPosition) => void;
   onOpenRoutineRuns: (id: string) => void;
-  onRoutineDialog: (open: boolean) => void;
   onRolePanel: (target: RolePanelTarget | undefined) => void;
   onLibraryView: (libraryView: NonNullable<AppRoute["libraryView"]>) => void;
   onShowShortcuts: () => void;
@@ -90,48 +90,81 @@ export function WorkspaceMain({
   const { area, boardKeyboard, currentBoardId } = selection;
   const { history, runs, currentRuns, runHistory } = historyData;
   const { view, product, productSettings } = route;
-  return (
-    <main className="main" aria-label={missing ?? PAGE_NAMES[view]}>
-      {missing && (
-        <div className="page route-missing">
-          <p>This link is unavailable. It may have been removed or the address may be incomplete.</p>
-          <button className="btn outline" onClick={() => actions.onGo("board")}>
-            Go to Board
-          </button>
-        </div>
-      )}
-      {!missing && view === "board" && (
-        <Board
+  const pageRenderers: Readonly<Record<Page, () => ReactNode>> = {
+    board: () => (
+      <Board
+        state={state}
+        find={find}
+        visible={visible}
+        selectedId={area === "board" && boardKeyboard ? currentBoardId : undefined}
+        onOpen={actions.onOpenBoard}
+        onDependencies={actions.onSetDependencyTask}
+        onFocus={(id) => {
+          actions.onSetOwnerBoard();
+          if (id) actions.onSetBoardId(id);
+        }}
+        drafts={drafts}
+        onPlace={actions.onPlace}
+        onNewTask={actions.onNewTask}
+        onShowInbox={actions.onShowInbox}
+        {...(canAddProduct ? { onAddProduct: actions.onAddProduct } : {})}
+      />
+    ),
+    history: () => (
+      <History
+        page={history.page}
+        error={history.error}
+        reload={history.reload}
+        position={route.history}
+        onPosition={actions.onHistoryPosition}
+        find={find}
+        selectedId={area === "board" ? currentBoardId : undefined}
+        onFocus={(id) => {
+          actions.onSetOwnerBoard();
+          if (id) actions.onSetBoardId(id);
+        }}
+        onOpen={actions.onOpenBoard}
+        hrefFor={(id) =>
+          routeHref({
+            ...route,
+            sheet: { taskId: id, tab: "overview", list: "history" },
+          })
+        }
+        drafts={drafts}
+      />
+    ),
+    products: () => (
+      <ProductsPage
+        state={state}
+        settings={productSettings}
+        onSettings={actions.onProductSettings}
+        {...(canAddProduct ? { onAdd: actions.onAddProduct } : {})}
+        onPick={actions.onPickProduct}
+      />
+    ),
+    agents: () => <AgentsPage state={state} find={find} onOpen={actions.onOpen} />,
+    analytics: () => (
+      <AnalyticsPage
+        state={state}
+        find={find}
+        product={product}
+        about={aboutNumbers}
+        onAboutSeen={actions.onAboutSeen}
+        onOpen={(taskId) => actions.onOpen(taskId)}
+      />
+    ),
+    routines: () =>
+      runs ? (
+        <RoutineRuns
+          id={runs.id}
           state={state}
+          product={product}
           find={find}
-          visible={visible}
-          selectedId={area === "board" && boardKeyboard ? currentBoardId : undefined}
-          onOpen={actions.onOpenBoard}
-          onDependencies={actions.onSetDependencyTask}
-          onFocus={(id) => {
-            actions.onSetOwnerBoard();
-            if (id) actions.onSetBoardId(id);
-          }}
-          drafts={drafts}
-          onPlace={actions.onPlace}
-          onNewTask={actions.onNewTask}
-          onShowInbox={actions.onShowInbox}
-          {...(canAddProduct ? { onAddProduct: actions.onAddProduct } : {})}
-        />
-      )}
-      {!missing && view === "history" && (
-        <History
-          page={history.page}
-          error={history.error}
-          reload={history.reload}
-          position={route.history}
-          onPosition={actions.onHistoryPosition}
-          find={find}
-          selectedId={area === "board" ? currentBoardId : undefined}
-          onFocus={(id) => {
-            actions.onSetOwnerBoard();
-            if (id) actions.onSetBoardId(id);
-          }}
+          current={currentRuns}
+          history={runHistory}
+          position={runs.history}
+          onPosition={actions.onRunPosition}
+          onBack={() => actions.onGo("routines")}
           onOpen={actions.onOpenBoard}
           hrefFor={(id) =>
             routeHref({
@@ -141,73 +174,40 @@ export function WorkspaceMain({
           }
           drafts={drafts}
         />
-      )}
-      {!missing && view === "products" && (
-        <ProductsPage
-          state={state}
-          settings={productSettings}
-          onSettings={actions.onProductSettings}
-          {...(canAddProduct ? { onAdd: actions.onAddProduct } : {})}
-          onPick={actions.onPickProduct}
-        />
-      )}
-      {!missing && view === "agents" && <AgentsPage state={state} find={find} onOpen={actions.onOpen} />}
-      {!missing && view === "analytics" && (
-        <AnalyticsPage
-          state={state}
-          find={find}
-          product={product}
-          about={aboutNumbers}
-          onAboutSeen={actions.onAboutSeen}
-          onOpen={(taskId) => actions.onOpen(taskId)}
-        />
-      )}
-      {!missing
-        && view === "routines"
-        && (runs ? (
-          <RoutineRuns
-            id={runs.id}
+      ) : (
+        <div className="page">
+          <Routines
             state={state}
-            product={product}
             find={find}
-            current={currentRuns}
-            history={runHistory}
-            position={runs.history}
-            onPosition={actions.onRunPosition}
-            onBack={() => actions.onGo("routines")}
-            onOpen={actions.onOpenBoard}
-            hrefFor={(id) =>
-              routeHref({
-                ...route,
-                sheet: { taskId: id, tab: "overview", list: "history" },
-              })
-            }
-            drafts={drafts}
+            product={product}
+            onOpen={actions.onOpen}
+            onRuns={actions.onOpenRoutineRuns}
           />
-        ) : (
-          <div className="page">
-            <Routines
-              state={state}
-              find={find}
-              product={product}
-              onOpen={actions.onOpen}
-              onRuns={actions.onOpenRoutineRuns}
-              onDialogChange={actions.onRoutineDialog}
-            />
-          </div>
-        ))}
-      {!missing && view === "library" && (
-        <LibraryPage
-          state={state}
-          onRole={actions.onRolePanel}
-          onEditorDialog={actions.onRoutineDialog}
-          product={product}
-          view={route.libraryView ?? "roles"}
-          onView={actions.onLibraryView}
-        />
-      )}
-      {!missing && view === "settings" && (
-        <SettingsPage onShortcuts={actions.onShowShortcuts} theme={theme} onTheme={actions.onTheme} />
+        </div>
+      ),
+    library: () => (
+      <LibraryPage
+        state={state}
+        onRole={actions.onRolePanel}
+        product={product}
+        view={route.libraryView ?? "roles"}
+        onView={actions.onLibraryView}
+      />
+    ),
+    settings: () => <SettingsPage onShortcuts={actions.onShowShortcuts} theme={theme} onTheme={actions.onTheme} />,
+  };
+
+  return (
+    <main className="main" aria-label={missing ?? PAGE_NAMES[view]}>
+      {missing ? (
+        <div className="page route-missing">
+          <p>This link is unavailable. It may have been removed or the address may be incomplete.</p>
+          <button className="btn outline" onClick={() => actions.onGo("board")}>
+            Go to Board
+          </button>
+        </div>
+      ) : (
+        pageRenderers[view]()
       )}
     </main>
   );
@@ -245,6 +245,7 @@ export interface WorkspaceOverlaysDialogs {
   creating: boolean;
   newTitle: string;
   palette: boolean;
+  paletteMode?: PaletteMode;
   actions: PaletteAction[];
   forTask: PaletteAction[];
   shortcuts: boolean;
@@ -304,7 +305,7 @@ export function WorkspaceOverlays({
     jump,
   } = workspace;
   const { sheet, sheetTask, sheetTasks, loadingDetails, detailsError, drafts, draftStore, messageFocus } = sheetView;
-  const { rolePanel, addingProduct, creating, newTitle, palette, actions, forTask, shortcuts, dependencyTask } =
+  const { rolePanel, addingProduct, creating, newTitle, palette, paletteMode, actions, forTask, shortcuts, dependencyTask } =
     dialogs;
 
   return (
@@ -369,6 +370,8 @@ export function WorkspaceOverlays({
           state={state}
           actions={actions}
           taskActions={forTask}
+          currentProduct={product}
+          {...(paletteMode ? { initialMode: paletteMode } : {})}
           onClose={handlers.onClosePalette}
           onTask={handlers.onOpenTask}
           onProduct={handlers.onPickProduct}

@@ -1,4 +1,12 @@
-import { messageDeliveryText, messageRemovalText, type QueuedMessage } from "@petrina/core";
+import {
+  getProviderDescriptor,
+  INBOX_CATALOG,
+  messageDeliveryText,
+  messageRemovalText,
+  providerSandboxTip,
+  supportsLiveGuidance,
+  type QueuedMessage,
+} from "@petrina/core";
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from "react";
 import { ArrowRight, ChevronDown, Send, ShieldCheck, ShieldOff, User } from "lucide-react";
 import type { ActiveAgent, Id, MessageMode, ReportImage, SessionLine, State, Task } from "@petrina/core";
@@ -161,15 +169,12 @@ export function StepConversation({ lines, find, now, live = false, taskId, repos
   </section>;
 }
 
-const SANDBOX_TIPS: Readonly<Record<string, string>> = {
-  "claude-code":
-    "Claude Code's own sandbox: its commands can change only the working copy, temporary folders, package download caches and sign-in caches. Also the product's shared git history, and whatever your or the product's Claude Code settings allow. Reading, websites and your logins stay open, and Auto mode can let a command run outside it (on a Mac, SSH and headless browsers). On a Mac, process-list checks can fail; Petrina's own checks run the full test suite.",
-  codex: "Sandboxed by Codex's own workspace sandbox, as Codex sets it.",
-};
-
 /** Whether the agent's commands run in its tool's own sandbox; hover or focus says what that covers, or why it is off. */
 function Sandbox({ sandbox, toolId }: { sandbox: NonNullable<ActiveAgent["sandbox"]>; toolId: Id }) {
-  const tip = sandbox.on ? (SANDBOX_TIPS[toolId] ?? "The tool's own sandbox.") : `Running without Claude Code's sandbox: ${sandbox.reason}. Auto mode still reviews each command.`;
+  const toolLabel = getProviderDescriptor(toolId)?.name ?? "Claude Code";
+  const tip = sandbox.on
+    ? (providerSandboxTip(toolId) ?? "The tool's own sandbox.")
+    : `Running without ${toolLabel}'s sandbox: ${sandbox.reason}. Auto mode still reviews each command.`;
   const label = sandbox.on ? "Sandboxed" : "Not sandboxed";
   return (
     <span className={`sandbox ${sandbox.on ? "on" : "off"}`} tabIndex={0} data-tip={tip} aria-label={`${label}. ${tip}`}>
@@ -185,7 +190,7 @@ function Log({ task, state, find, scroller, onTab, step, onStepDone, active = tr
   const profile = find.profile(task.agent?.profileId);
   const live = task.state === "running" && !task.driving;
   // "You're driving" has its own controls in the footer.
-  const asks = state.inbox.filter((item) => item.taskId === task.id && item.kind !== "driving");
+  const asks = state.inbox.filter((item) => item.taskId === task.id && INBOX_CATALOG[item.kind].visibility.showInSession);
   // Answers to something still waiting show with it below; the rest show here, in the conversation.
   const unsent = useUnsent().filter((entry) => entry.taskId === task.id && !(entry.itemId && asks.some((item) => item.id === entry.itemId)));
   const connected = useEngineStatus().link === "live";
@@ -488,8 +493,8 @@ function Composer({ task, find, drafts, focusRequest, onFocused }: {
           ? mode === "queue"
             ? "Waits until the current turn finishes. Enter sends, Shift+Enter starts a new line."
             : mode === "interrupt" ? "Stops the current turn, then sends your message."
-            : tool === "antigravity" || tool === "opencode"
-              ? `${tool === "opencode" ? "OpenCode" : "Antigravity"} cannot take live guidance. Your message waits until the turn finishes.`
+            : !supportsLiveGuidance(tool)
+              ? `${getProviderDescriptor(tool)?.name ?? "This tool"} cannot take live guidance. Your message waits until the turn finishes.`
             : "Tries to reach every agent still working in this step. Enter sends, Shift+Enter starts a new line."
           : task.driving
             ? "You're driving in your terminal. Delivered when you hand back."

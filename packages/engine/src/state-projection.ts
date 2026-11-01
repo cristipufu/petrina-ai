@@ -5,6 +5,9 @@ import {
   finishedTask,
   historyPageUsage,
   involvesProduct,
+  omittedTaskDetailsPayload,
+  sessionLineSignature,
+  stripTaskDetailsSummary,
   type HistoryDependency,
   type Id,
   type State,
@@ -81,42 +84,24 @@ export class StateProjection {
   }
 
   private summaryWithoutRevision(task: RuntimeTask): Task {
+    const summary = stripTaskDetailsSummary(taskView(task));
     return {
-      ...taskView(task),
+      ...summary,
       detailsOmitted: true,
       detailsRevision: "",
       session: [],
       timeline: [],
-      journey: undefined,
-      designSessions: undefined,
-      reviewSessions: undefined,
-      handedBack: undefined,
-      hunt: task.hunt ? { ...task.hunt, findingChecks: undefined } : undefined,
-    } as Task;
+    };
   }
 
   private signatureOf(task: RuntimeTask, summary: Task = this.summaryWithoutRevision(task)): string {
     const summaryHash = String(Bun.hash(JSON.stringify(summary)));
     let sessionParts = `${task.session.length}`;
     for (const line of task.session) {
-      const recording = line.recording
-        ? `${line.recording.revision}:${line.recording.state}:${line.recording.recordedLength}:${line.recording.originalLength ?? ""}:${line.recording.reason ?? ""}:${line.recording.complete ?? ""}`
-        : "";
-      sessionParts += `|${line.id}:${line.at}:${line.from}:${String(Bun.hash(line.text))}:${recording}:${line.roleId ?? ""}:${line.profileId ?? ""}:${line.productId ?? ""}:${line.coordinatorMessageId ?? ""}:${line.step ?? ""}:${line.toolInvocationId ?? ""}:${line.inputIndex ?? ""}:${line.images ? JSON.stringify(line.images) : ""}`;
+      sessionParts += `|${sessionLineSignature(line, (text) => String(Bun.hash(text)))}`;
     }
     const sessionHash = String(Bun.hash(sessionParts));
-    const omittedHash = String(
-      Bun.hash(
-        JSON.stringify([
-          task.timeline,
-          task.journey,
-          task.designSessions,
-          task.reviewSessions,
-          task.handedBack,
-          task.hunt?.findingChecks,
-        ]),
-      ),
-    );
+    const omittedHash = String(Bun.hash(JSON.stringify(omittedTaskDetailsPayload(task))));
     return `${summaryHash}:${sessionHash}:${omittedHash}`;
   }
 

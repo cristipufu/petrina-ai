@@ -1,6 +1,18 @@
 import { Select } from "./Select";
 import { useEffect, useRef, useState } from "react";
-import { profileModelName, deliveryLabel, sourceLabel, workSummary, type StartFrom, type State, type Task, type WorkChoice } from "@petrina/core";
+import {
+  DELIVERY_MODE_CATALOG,
+  DELIVERY_SELECT_MODES,
+  deliveryLabel,
+  deliverySelectLabel,
+  profileModelName,
+  sourceLabel,
+  workSummary,
+  type StartFrom,
+  type State,
+  type Task,
+  type WorkChoice,
+} from "@petrina/core";
 import { sim } from "../engine";
 
 export function StartFromFields({ value, onChange, product }: { value: StartFrom; onChange: (value: StartFrom) => void; product?: string }) {
@@ -96,7 +108,7 @@ function SingleTaskStart({ task, state }: { task: Task; state: State }) {
         delivery: event.target.value as WorkChoice["delivery"]
       })}
       >
-        <option value="pull-request">{choice.startFrom.kind === "pull-request" ? "Update the pull request" : "Open a pull request"}</option><option value="local">Commit and push to the starting branch</option><option value="release">Publish a release</option>
+        {DELIVERY_SELECT_MODES.map((mode) => <option key={mode} value={mode}>{deliverySelectLabel(mode, choice.startFrom.kind, { definitePr: true })}</option>)}
       </Select></label>
       {error && <p role="alert" className="note bad">{error}</p>}
       <button
@@ -152,7 +164,7 @@ function ManyTaskStart({ task, state }: { task: Task; state: State }) {
         <h3>{label}</h3><p className="note">{product?.repo ?? row.choice.repo}</p>
         {row.change && <p className="note">{row.change === "omitted" ? "Left out by planner · Your earlier choice is retained" : row.change === "added" ? "Added by planner" : "Starting point or delivery changed"}</p>}
         {row.choice.reason && <p className="prose">{row.choice.reason}</p>}
-        {row.previous && <p className="note">Earlier choice: {row.previous.startFrom.kind === "branch" ? row.previous.startFrom.name : row.previous.startFrom.kind === "pull-request" ? `PR ${row.previous.startFrom.value}` : "Default branch"} · {row.previous.delivery === "release" ? "Release" : row.previous.delivery === "local" ? "Commit locally" : "Pull request"}</p>}
+        {row.previous && <p className="note">Earlier choice: {row.previous.startFrom.kind === "branch" ? row.previous.startFrom.name : row.previous.startFrom.kind === "pull-request" ? `PR ${row.previous.startFrom.value}` : "Default branch"} · {DELIVERY_MODE_CATALOG[row.previous.delivery].previousLabel}</p>}
         {row.source && <p className="prose">{workSummary(row.source).split("\n").slice(1).join("\n")} · {sourceLabel(row.source)}</p>}
         {row.error && <p className="note bad">{row.error}</p>}
         {row.addition && <p className="note">{row.addition.ready ? "Added" : "Will be added"} · {row.addition.path}</p>}
@@ -206,7 +218,7 @@ function ManyTaskStart({ task, state }: { task: Task; state: State }) {
             ...choice,
             delivery: event.target.value as WorkChoice["delivery"]
           })}
-          ><option value="pull-request">{choice.startFrom.kind === "pull-request" ? "Update pull request" : "Open a pull request"}</option><option value="local">Commit and push to the starting branch</option><option value="release">Publish a release</option></Select></label>
+          >{DELIVERY_SELECT_MODES.map((mode) => <option key={mode} value={mode}>{deliverySelectLabel(mode, choice.startFrom.kind)}</option>)}</Select></label>
           <label>Builder for {label}<Select
             className="select"
             value={choice.builderProfileId ?? task.plan?.products?.find((owner) => owner.productId === key)?.builderProfileId ?? task.plan?.stages.find((stage) => state.roles.find(role => role.id === stage.roleId)?.result === "build")?.profileIds[0]}
@@ -250,7 +262,7 @@ function ManyTaskStart({ task, state }: { task: Task; state: State }) {
             ...choice,
             delivery: event.target.value as WorkChoice["delivery"]
           })}
-          ><option value="pull-request">{choice.startFrom.kind === "pull-request" ? "Update pull request" : "Open a pull request"}</option><option value="local">Commit and push to the starting branch</option><option value="release">Publish a release</option></Select></label>}
+          >{DELIVERY_SELECT_MODES.map((mode) => <option key={mode} value={mode}>{deliverySelectLabel(mode, choice.startFrom.kind)}</option>)}</Select></label>}
           <button
             className="btn"
             disabled={saving || task.workValidating || !folder.trim() || !name.trim()}

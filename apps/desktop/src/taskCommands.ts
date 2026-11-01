@@ -2,8 +2,11 @@
 // each confirmed with a short message once the engine has it.
 
 import { queueOf, TAKE_OVER_WORDS, type State, type Task } from "@petrina/core";
+import { canMessage, canTogglePause } from "./commands";
 import { sim } from "./engine";
 import type { Lookup } from "./lib";
+
+export { canMessage, canTogglePause };
 
 interface Context {
   state: State;
@@ -14,9 +17,6 @@ interface Context {
   visible: (task: Task) => boolean;
   toast: (title: string, detail?: string) => void;
 }
-
-export const canTogglePause = (task: Task): boolean => !task.driving && ["queued", "paused", "running", "needs-you", "waiting"].includes(task.state);
-export const canMessage = (task: Task): boolean => task.state !== "done" && task.state !== "cancelled";
 
 export function taskCommands({ state, find, live, visible, toast }: Context) {
   /** Send an action and say so once the engine confirms it; false when it could not be sent. */

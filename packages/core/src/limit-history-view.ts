@@ -1,7 +1,9 @@
 // Bounded account-history views, shared by the engine and simulator. Source reports stay intact.
 import type { UsageReport } from "./model.js";
 import type { Bucket } from "./charts.js";
-import { claudeWindow, kindWords } from "./usage.js";
+import { getProviderDescriptor } from "./providers.js";
+import { claudeWindow } from "./usage.js";
+import { getUsageWindowDescriptor, inferUsageWindowMinutes, kindWords } from "./usage-windows.js";
 
 const HOUR = 3_600_000;
 const MINUTE = 60_000;
@@ -73,7 +75,13 @@ export const percentWords = (value: number): string => `${Math.round(value * 100
 export function reportedUsage(report: UsageReport): string {
   const level = reportedLevel(report);
   if (level !== undefined) return percentWords(level);
-  if (report.toolId === "claude-code" && report.kind === "overage" && report.status === "rejected") return "Extra usage unavailable · percentage not reported";
+  if (
+    getProviderDescriptor(report.toolId)?.usageReporting?.supportsOverageAllowances
+    && report.kind === "overage"
+    && report.status === "rejected"
+  ) {
+    return "Extra usage unavailable · percentage not reported";
+  }
   if (report.status === "allowed_warning") return "Provider warning · percentage not reported";
   return report.status === "rejected" ? "Limit reached (reported) · no percentage" : "No percentage";
 }
@@ -158,11 +166,10 @@ function mergedReports(history: readonly UsageReport[], current: readonly UsageR
 }
 
 function allowanceLabel(report: UsageReport): string {
-  const minutes = report.windowMinutes ?? (report.kind === "five_hour" ? 300 : report.kind.startsWith("seven_day") ? 10080 : undefined);
+  const minutes = inferUsageWindowMinutes(report.kind, report.windowMinutes);
   const window = kindWords(report.kind, minutes);
   const group = report.name ?? report.model ?? "All models";
-  // Native Claude kinds already name their family in kindWords.
-  const base = report.kind === "seven_day_opus" || report.kind === "seven_day_sonnet" ? "Weekly" : window.charAt(0).toUpperCase() + window.slice(1);
+  const base = getUsageWindowDescriptor(report.kind)?.allowanceBase ?? (window.charAt(0).toUpperCase() + window.slice(1));
   return `${base} · ${group.charAt(0).toUpperCase()}${group.slice(1)}`;
 }
 
@@ -177,7 +184,7 @@ export function limitsOverTime(history: readonly UsageReport[], current: readonl
     let group = groups.get(key);
     if (!group) {
       group = { key, label: allowanceLabel(report), current: currentKeys.has(key), latest: report, firstAt: report.at,
-        windowMinutes: report.windowMinutes ?? (report.kind === "five_hour" ? 300 : report.kind.startsWith("seven_day") ? 10080 : Number.MAX_SAFE_INTEGER),
+        windowMinutes: inferUsageWindowMinutes(report.kind, report.windowMinutes) ?? Number.MAX_SAFE_INTEGER,
         buckets: buckets.map(bucket => ({ ...bucket, reports: 0, numericCount: 0, possibleResets: 0, statuses: [], future: bucket.start > now })) };
       groups.set(key, group);
     }

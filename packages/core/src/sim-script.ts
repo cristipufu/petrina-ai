@@ -1,10 +1,14 @@
 // Scripted responses and believable tool reports for the offline demos. No engine bookkeeping.
 import { callOn } from "./call.js";
 import type { DeepMutable } from "./flow.js";
+import { BUILT_IN_ROLES } from "./library.js";
 import type { CheckExecutorFacts, CheckRun, DesignBrief, Id, Product, Role, Task, TaskKind } from "./model.js";
+import { ROLE_RESULT_CATALOG, type RoleResult } from "./result-contracts.js";
 import type { TaskSource, WorkChoice } from "./source.js";
 import type { TurnReport } from "./worklog.js";
 import type { SimQuirk } from "./sim-types.js";
+import { getProviderDescriptor } from "./providers.js";
+import { resolveDestinationKind } from "./delivery-modes.js";
 import { taskProductIds } from "./repositories.js";
 import { commandText } from "./check-commands.js";
 export { callAnswers, readCall } from "./sim-call-reader.js";
@@ -156,276 +160,129 @@ type Item = readonly [todo: string, ...actions: string[]];
 /** One moment of a scripted agent: it starts the next item of its to-do list, or takes an action under it. */
 type Moment = { todo: string } | { action: string };
 
+const DEFAULT_SIM_ITEMS: Item[] = [["Working", "Reading the task", "Thinking it through"]];
+
+const ROLE_RESULT_SIM_SCRIPTS: Readonly<Record<RoleResult, (role: Role, ctx: ScriptContext) => Item[]>> = {
+  plan: (_role, { product }) => [
+    [`Looking at how ${product} is organised`, "Reading the code", "Searching the code"],
+    ["Choosing who should work on this", "Reading the available roles", "Thinking it through"],
+    ["Writing the plan", "Writing up the stages", "Plan ready"],
+  ],
+  notes: (role, { area }) => {
+    if (role.added) {
+      return [
+        [`Reading what the task needs from the ${role.name.toLowerCase()}`, "Reading the task", "Reading the brief"],
+        [`Working on ${area}`, "Reading the code", "Thinking it through"],
+        ["Writing notes for the squad", "Writing up the notes", "Notes ready"],
+      ];
+    }
+    if (role.simVariant === "screens") {
+      return [
+        [`Sketching the ${area} screens`, "Reading the code", "Drawing 3 screens"],
+        ["Checking contrast, spacing and wording", "Reading the brief", "Thinking it through"],
+        ["Writing UI notes", "Writing up the screens", "UI notes ready"],
+      ];
+    }
+    return [
+      [`Looking at how other products handle ${area}`, "Looking something up", "Reading 4 articles"],
+      [`Collecting what users expect from ${area}`, "Reading the research", "Thinking it through"],
+      ["Writing research notes", "Writing up the findings", "Research notes ready"],
+    ];
+  },
+  brief: (_role, { area, product, round, following }) => {
+    if (following) {
+      return [
+        ["Reading your call", "Reading the brief", "Reading the objections"],
+        [
+          `Updating the ${area} flow to follow it`,
+          "Thinking it through",
+          "Writing the brief",
+        ],
+        ["Answering each open objection", "Writing up the answers", "Brief follows your call"],
+      ];
+    }
+    return round === 1
+      ? [
+          [`Reading the parts of ${product} this touches`, "Reading the code", "Searching the code"],
+          [`Sketching the ${area} flow`, "Reading the brief", "Thinking it through"],
+          ["Writing the acceptance checklist", "Checking the task", "Writing the brief"],
+          ["Getting the brief ready for review", "Checking the brief", "Design brief ready for review"],
+        ]
+      : [
+          ["Reading the objections", "Reading the brief", "Reading the code"],
+          [`Reworking the ${area} flow`, "Thinking it through", "Writing the brief"],
+          ["Answering each objection", "Writing up the answers", "Updated brief ready"],
+        ];
+  },
+  objections: (_role, { area, round, objecting }) =>
+    round === 1
+      ? [
+          ["Reading the design brief", "Reading the task", "Reading the brief"],
+          [`Looking for gaps in the ${area} flow`, "Reading the code", "Thinking it through"],
+          ["Writing objections", "Writing up the findings", "Objections ready"],
+        ]
+      : [
+          ["Reading the updated brief", "Reading the brief", "Reading the objections"],
+          ["Checking the answer to each objection", "Reading the code", "Thinking it through"],
+          objecting
+            ? ["Writing objections", "Writing up the findings", "Objections ready"]
+            : ["Wrapping up the review", "Checking the answers", "Nothing blocking left"],
+        ],
+  build: (_role, { area, fixing }) =>
+    fixing
+      ? [
+          ["Reading the review findings", "Reading the brief", "Reading the code"],
+          ["Fixing the blocking issue", "Editing files", "Running the tests"],
+          ["Checking the fixes", "Ran the tests: 44 passed", "Fixes ready for review"],
+        ]
+      : [
+          ["Setting up a fresh working copy", "Reading the task", "Running a command"],
+          [`Updating the ${area} screens`, "Reading the code", "Editing 3 files"],
+          [`Connecting ${area} to the backend`, "Searching the code", "Editing files"],
+          [`Writing tests for ${area}`, "Editing files", "Ran the tests: 42 passed"],
+          ["Writing up the change for review", "Reading the changes", "Change ready for review"],
+        ],
+  checks: (_role, { area }) => [
+    ["Starting the app", "Reading the brief", "Running a command"],
+    [`Going through ${area} like a user would`, "Checking the screens", "Took 4 screenshots"],
+    ["Checking every acceptance item", "Running the checks", "Every acceptance check passes"],
+  ],
+  findings: (role, { area, round }) => {
+    if (role.added) {
+      return [
+        ["Reading the design and the acceptance checklist", "Reading the task", "Reading the brief"],
+        [`Going through the change to ${area}`, "Reading the code", "Searching the code"],
+        ["Writing findings", "Writing up the review", "Findings ready"],
+      ];
+    }
+    if (role.fullReview) return DEFAULT_SIM_ITEMS;
+    return round === 1
+      ? [
+          ["Reading the design and the acceptance checklist", "Reading the task", "Reading the brief"],
+          ["Trying to prove “done” wrong", "Reading the code", "Running the tests"],
+          ["Checking no test was weakened or skipped", "Reading the changes", "Searching the code"],
+          ["Writing findings", "Writing up the review", "Findings ready"],
+        ]
+      : [
+          ["Checking the fixes", "Reading the changes", "Reading the code"],
+          ["Re-running the acceptance checks", "Running the tests", "Passed"],
+        ];
+  },
+  // Only a release has one: Petrina sets the version and publishes it (see `ship`).
+  delivery: () => [
+    ["Reading every commit since the previous release", "Reading the release history", "Reading the changes"],
+    ["Grouping the changes: new, improved, fixed", "Thinking it through", "Sorting 12 changes"],
+    ["Writing the release notes", "Writing up the changes", "Release notes ready"],
+  ],
+  "check-discovery": () => DEFAULT_SIM_ITEMS,
+  guide: () => DEFAULT_SIM_ITEMS,
+  votes: () => DEFAULT_SIM_ITEMS,
+};
+
 /** What each role works on, as its own to-do list in plain language, and what it does under each item. */
 function itemsFor(role: Role | undefined, ctx: ScriptContext): Item[] {
-  const { area, product, round, fixing, following, objecting } = ctx;
-  if (role?.added) return role.result === "findings"
-    ? [
-      [
-      "Reading the design and the acceptance checklist",
-      "Reading the task",
-      "Reading the brief"
-    ],
-      [
-      `Going through the change to ${area}`,
-      "Reading the code",
-      "Searching the code"
-    ],
-      [
-      "Writing findings",
-      "Writing up the review",
-      "Findings ready"
-    ]
-    ]
-    : [
-      [
-      `Reading what the task needs from the ${role.name.toLowerCase()}`,
-      "Reading the task",
-      "Reading the brief"
-    ],
-      [
-      `Working on ${area}`,
-      "Reading the code",
-      "Thinking it through"
-    ],
-      [
-      "Writing notes for the squad",
-      "Writing up the notes",
-      "Notes ready"
-    ]
-    ];
-  switch (role?.id) {
-    // Only a release has one: Petrina sets the version and publishes it (see `ship`).
-    case "release-manager":
-      return [
-        ["Reading every commit since the previous release", "Reading the release history", "Reading the changes"],
-        ["Grouping the changes: new, improved, fixed", "Thinking it through", "Sorting 12 changes"],
-        ["Writing the release notes", "Writing up the changes", "Release notes ready"],
-      ];
-    case "planner":
-      return [
-        [
-        `Looking at how ${product} is organised`,
-        "Reading the code",
-        "Searching the code"
-      ],
-        [
-        "Choosing who should work on this",
-        "Reading the available roles",
-        "Thinking it through"
-      ],
-        [
-        "Writing the plan",
-        "Writing up the stages",
-        "Plan ready"
-      ]
-      ];
-    case "researcher":
-      return [
-        [
-        `Looking at how other products handle ${area}`,
-        "Looking something up",
-        "Reading 4 articles"
-      ],
-        [
-        `Collecting what users expect from ${area}`,
-        "Reading the research",
-        "Thinking it through"
-      ],
-        [
-        "Writing research notes",
-        "Writing up the findings",
-        "Research notes ready"
-      ]
-      ];
-    case "architect":
-      if (following) return [
-        [
-        "Reading your call",
-        "Reading the brief",
-        "Reading the objections"
-      ],
-        [
-        `Updating the ${area} flow to follow it`,
-        "Thinking it through",
-        "Writing the brief"
-      ],
-        [
-        "Answering each open objection",
-        "Writing up the answers",
-        "Brief follows your call"
-      ]
-      ];
-      return round === 1
-        ? [
-          [
-          `Reading the parts of ${product} this touches`,
-          "Reading the code",
-          "Searching the code"
-        ],
-          [
-          `Sketching the ${area} flow`,
-          "Reading the brief",
-          "Thinking it through"
-        ],
-          [
-          "Writing the acceptance checklist",
-          "Checking the task",
-          "Writing the brief"
-        ],
-          [
-          "Getting the brief ready for review",
-          "Checking the brief",
-          "Design brief ready for review"
-        ]
-        ]
-        : [
-          [
-          "Reading the objections",
-          "Reading the brief",
-          "Reading the code"
-        ],
-          [
-          `Reworking the ${area} flow`,
-          "Thinking it through",
-          "Writing the brief"
-        ],
-          [
-          "Answering each objection",
-          "Writing up the answers",
-          "Updated brief ready"
-        ]
-        ];
-    case "design-reviewer":
-      return round === 1
-        ? [
-          [
-          "Reading the design brief",
-          "Reading the task",
-          "Reading the brief"
-        ],
-          [
-          `Looking for gaps in the ${area} flow`,
-          "Reading the code",
-          "Thinking it through"
-        ],
-          [
-          "Writing objections",
-          "Writing up the findings",
-          "Objections ready"
-        ]
-        ]
-        : [
-          [
-          "Reading the updated brief",
-          "Reading the brief",
-          "Reading the objections"
-        ],
-          [
-          "Checking the answer to each objection",
-          "Reading the code",
-          "Thinking it through"
-        ],
-          objecting ? [
-          "Writing objections",
-          "Writing up the findings",
-          "Objections ready"
-        ] : [
-          "Wrapping up the review",
-          "Checking the answers",
-          "Nothing blocking left"
-        ]
-        ];
-    case "ux-designer":
-      return [
-        [
-        `Sketching the ${area} screens`,
-        "Reading the code",
-        "Drawing 3 screens"
-      ],
-        [
-        "Checking contrast, spacing and wording",
-        "Reading the brief",
-        "Thinking it through"
-      ],
-        [
-        "Writing UI notes",
-        "Writing up the screens",
-        "UI notes ready"
-      ]
-      ];
-    case "builder":
-      return fixing
-        ? [
-          [
-          "Reading the review findings",
-          "Reading the brief",
-          "Reading the code"
-        ],
-          [
-          "Fixing the blocking issue",
-          "Editing files",
-          "Running the tests"
-        ],
-          [
-          "Checking the fixes",
-          "Ran the tests: 44 passed",
-          "Fixes ready for review"
-        ]
-        ]
-        : [
-            ["Setting up a fresh working copy", "Reading the task", "Running a command"],
-            [`Updating the ${area} screens`, "Reading the code", "Editing 3 files"],
-            [`Connecting ${area} to the backend`, "Searching the code", "Editing files"],
-            [`Writing tests for ${area}`, "Editing files", "Ran the tests: 42 passed"],
-            ["Writing up the change for review", "Reading the changes", "Change ready for review"],
-          ];
-    case "tester":
-      return [
-        [
-        "Starting the app",
-        "Reading the brief",
-        "Running a command"
-      ],
-        [
-        `Going through ${area} like a user would`,
-        "Checking the screens",
-        "Took 4 screenshots"
-      ],
-        [
-        "Checking every acceptance item",
-        "Running the checks",
-        "Every acceptance check passes"
-      ]
-      ];
-    case "code-reviewer":
-      return round === 1
-        ? [
-          [
-          "Reading the design and the acceptance checklist",
-          "Reading the task",
-          "Reading the brief"
-        ],
-          [
-          "Trying to prove “done” wrong",
-          "Reading the code",
-          "Running the tests"
-        ],
-          [
-          "Checking no test was weakened or skipped",
-          "Reading the changes",
-          "Searching the code"
-        ],
-          [
-          "Writing findings",
-          "Writing up the review",
-          "Findings ready"
-        ]
-        ]
-        : [["Checking the fixes", "Reading the changes", "Reading the code"], ["Re-running the acceptance checks", "Running the tests", "Passed"]];
-    default:
-      return [["Working", "Reading the task", "Thinking it through"]];
-  }
+  if (!role) return DEFAULT_SIM_ITEMS;
+  return ROLE_RESULT_SIM_SCRIPTS[role.result](role, ctx);
 }
 
 /** Every moment of a scripted agent's step, in order. */
@@ -484,12 +341,21 @@ function hash(text: string): number {
 const FULL_MODEL: Record<string, string> = { opus: "claude-opus-5-5", sonnet: "claude-sonnet-5-5", haiku: "claude-haiku-5-5", fable: "claude-fable-5-1" };
 
 /** Believable token figures for a simulated turn: mostly input reused from the cache, as with the real tools. */
-export function simReport(seed: string, toolId: Id, model: string, roleId: Id, workMs: number, quirk: SimQuirk): TurnReport {
+export function simReport(
+  seed: string,
+  toolId: Id,
+  model: string,
+  roleId: Id,
+  workMs: number,
+  quirk: SimQuirk,
+  roleResult?: RoleResult,
+): TurnReport {
   const minutes = Math.max(0.3, workMs / 60_000);
   const jitter = (salt: string) => 0.6 + (hash(`${seed}|${salt}`) % 800) / 1000;
-  const heavy = roleId === "builder" ? 1.6 : roleId === "code-reviewer" ? 1.1 : roleId === "planner" ? 0.5 : 0.8;
+  const result = roleResult ?? BUILT_IN_ROLES.find((role) => role.id === roleId)?.result;
+  const heavy = result ? ROLE_RESULT_CATALOG[result].simTokenWeight : 0.8;
   const scale = minutes * heavy;
-  if (toolId === "codex") {
+  if (getProviderDescriptor(toolId)?.simTokenProfile === "reasoning-single") {
     const output = Math.round(1000 * scale * jitter("out"));
     const counts = {
       input: Math.round(2800 * scale * jitter("in")),
@@ -508,7 +374,7 @@ export function simReport(seed: string, toolId: Id, model: string, roleId: Id, w
   };
   if (quirk.noBreakdown) return { main: counts };
   const main = FULL_MODEL[model] ?? model;
-  const helper = quirk.extraModel ?? (roleId === "builder" && hash(seed) % 3 === 0 ? "claude-haiku-5-5" : undefined);
+  const helper = quirk.extraModel ?? (result === "build" && hash(seed) % 3 === 0 ? "claude-haiku-5-5" : undefined);
   const models = [{ model: main, counts }];
   if (helper) {
     const share = 0.08 + (hash(`${seed}|helper`) % 100) / 1000;
@@ -545,7 +411,7 @@ export function demoSource(product: TaskSource["product"], choice: WorkChoice): 
     start,
     destination: {
     mode: choice.delivery,
-    kind: start.kind === "pull-request" ? "update-pr" : choice.delivery === "local" ? "branch" : choice.delivery === "release" ? "release" : "new-pr",
+    kind: resolveDestinationKind(start.kind, choice.delivery),
     repo: product.repo,
     branch,
     remote: product.remote

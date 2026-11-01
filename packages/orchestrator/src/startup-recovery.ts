@@ -1,4 +1,4 @@
-import { withdrawAsks, type DeepMutable, type Id, type InboxItem } from "@petrina/core";
+import { INBOX_CATALOG, withdrawAsks, type DeepMutable, type Id, type InboxItem } from "@petrina/core";
 import type { RuntimeTask } from "./model.js";
 import { executionFor } from "./repository-context.js";
 
@@ -12,7 +12,7 @@ export function keepRecoveredInboxItem(
   item: DeepMutable<InboxItem>,
   findTask: (taskId: Id) => RuntimeTask | undefined,
 ): boolean {
-  if (!item.blocking || item.kind === "maintenance-settings") return true;
+  if (!item.blocking || INBOX_CATALOG[item.kind].survivesAgentStop) return true;
   const task = findTask(item.taskId);
   return (
     item.kind === "question"

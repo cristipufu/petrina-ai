@@ -3,6 +3,7 @@
 // or file paths. The engine keeps it in SQLite; the simulator keeps it in memory.
 
 import type { Id, StageKind, UsageReport } from "./model.js";
+import { getProviderDescriptor } from "./providers.js";
 import { readingsIn, recordReading, type UsageHistoryFilter } from "./usage-history.js";
 
 /** Why a turn happened. */
@@ -354,13 +355,18 @@ export function turnTokens(input: {
   mainOnly: boolean
 } {
   const { toolId, report, model, rerouted = false, helpers = 0 } = input;
-  const claude = toolId === "claude-code";
-  // Claude bills thinking inside output and never breaks it out, so it reports no reasoning figure.
+  const accounting = getProviderDescriptor(toolId)?.tokenAccounting;
+  const foldsReasoning = Boolean(accounting?.foldsReasoningIntoOutput);
+  const breakdownIncludesHelpers = Boolean(accounting?.breakdownIncludesHelpers);
+  const marksReroute = accounting?.marksReroutedLine ?? !breakdownIncludesHelpers;
+  // Providers with foldsReasoningIntoOutput bill thinking inside output and omit a separate reasoning figure.
   const clean = (counts: TokenCounts): TokenCounts => {
     const kept: TokenCounts = {};
     for (const key of ["input", "cacheRead", "cacheWrite", "output", "reasoning", "total"] as const) {
       const value = counts[key];
-      if (typeof value === "number" && Number.isFinite(value) && value >= 0 && !(claude && key === "reasoning")) kept[key] = Math.round(value);
+      if (typeof value === "number" && Number.isFinite(value) && value >= 0 && !(foldsReasoning && key === "reasoning")) {
+        kept[key] = Math.round(value);
+      }
     }
     return withTotal(kept);
   };
@@ -368,16 +374,16 @@ export function turnTokens(input: {
     model: row.model,
     counts: clean(row.counts)
   })).filter((row) => row.counts.total !== undefined && row.counts.total > 0);
-  const mainOnlyForTool = !claude && helpers > 0;
+  const mainOnlyForTool = !breakdownIncludesHelpers && helpers > 0;
   if (rows.length > 0) {
-    const lines = rows.map((row) => ({ model: row.model, ...row.counts, ...(rerouted && !claude ? { changed: true } : {}) }));
+    const lines = rows.map((row) => ({ model: row.model, ...row.counts, ...(rerouted && marksReroute ? { changed: true } : {}) }));
     return { tokens: sumCounts(rows.map((row) => row.counts)), lines, mainOnly: mainOnlyForTool };
   }
   const main = report?.main ? clean(report.main) : undefined;
   if (!main || main.total === undefined) return { lines: [], mainOnly: mainOnlyForTool };
   if (main.total === 0) return { tokens: main, lines: [], mainOnly: mainOnlyForTool };
-  const line = { model: model ?? "", ...main, ...(rerouted && !claude ? { changed: true } : {}) };
-  return { tokens: main, lines: [line], mainOnly: claude || mainOnlyForTool };
+  const line = { model: model ?? "", ...main, ...(rerouted && marksReroute ? { changed: true } : {}) };
+  return { tokens: main, lines: [line], mainOnly: breakdownIncludesHelpers || mainOnlyForTool };
 }
 
 // ── Model names ───────────────────────────────────────────────────────────
@@ -391,7 +397,10 @@ const GROK_47 = new Set(["grok-4.7", "grok-4.7-build"]);
 
 /** Resolve only a verified alias; unknown names and variants stay distinct. */
 export function sameModel(toolId: Id, asked: string | undefined, ran: string | undefined): boolean {
-  return asked === ran || (toolId === "grok" && asked !== undefined && ran !== undefined && GROK_47.has(asked) && GROK_47.has(ran));
+  if (asked === ran) return true;
+  if (asked === undefined || ran === undefined) return false;
+  const groups = getProviderDescriptor(toolId)?.tokenAccounting?.modelAliasGroups ?? [];
+  return groups.some((group) => group.includes(asked) && group.includes(ran));
 }
 
 /**

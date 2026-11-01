@@ -6,13 +6,13 @@ import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import * as library from "@petrina/core";
 import {
+  applyProductSettings,
   fixFor,
   isGuide,
   productHistory,
   productName,
   SETUP_STEPS,
   suggestProductName,
-  validateProductSettings,
   type Clone,
   type DeliveryMode,
   type Id,
@@ -274,8 +274,7 @@ export class CatalogCommands {
   updateProduct(productId: Id, settings: ProductSettings): void {
     const product = this.engine.s.products.find((entry) => entry.id === productId);
     if (!product) throw new Error("This product is no longer in Petrina.");
-    const validated = validateProductSettings(settings, this.engine.s.products, productId);
-    Object.assign(product, validated);
+    applyProductSettings(product, settings, this.engine.s.products);
     // The permanent list keeps the latest name, so a removed product shows under the name it last had.
     this.engine.tracking.product(product);
     this.engine.commit();

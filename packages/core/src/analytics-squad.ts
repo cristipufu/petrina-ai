@@ -5,6 +5,9 @@ import type { LimitsOverTime, ReadingsRequest, ReadingsView } from "./limit-hist
 import type { AgentProfile, Id, State, Task, UsageReport } from "./model.js";
 import type { NodeUsage } from "./node-usage.js";
 import { atLeastLine, count, durationText, listWords, type Figure } from "./numbers.js";
+import { getProviderDescriptor } from "./providers.js";
+import { ROLE_RESULT_CATALOG } from "./result-contracts.js";
+import { STAGE_KIND_CATALOG } from "./stage-kinds.js";
 import {
   addTurn, emptyTally, modelLabel, sameModel, sessionModelLabel,
   type Tally, type WorkLogReader, type WorkMoment, type WorkTurn,
@@ -192,14 +195,6 @@ export type UsageViewFor<R extends UsageRequest> = R extends { view: "readings" 
           ? TodayUsage
           : AnalyticsUsage;
 
-const TOOL_NAMES: Record<Id, string> = {
-  "claude-code": "Claude Code",
-  codex: "Codex",
-  grok: "Grok",
-  antigravity: "Antigravity",
-  opencode: "OpenCode",
-  pi: "Pi",
-};
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 /** Today; today and the 6 days before; today and the 29 days before. Counted from local midnight. */
@@ -273,8 +268,9 @@ export function names(state: State, log: WorkLogReader, task?: UsageContext["tas
   const tools = new Map(state.tools.map((tool) => [tool.id, tool]));
   const profiles = new Map([...(state.retiredProfiles ?? []), ...state.profiles].map((profile) => [profile.id, profile]));
   return {
-    tool: (id: Id) => tools.get(id)?.name ?? TOOL_NAMES[id] ?? id,
+    tool: (id: Id) => tools.get(id)?.name ?? getProviderDescriptor(id)?.name ?? id,
     role: (id: Id) => roles.get(id)?.name ?? id,
+    roleObject: (id: Id) => roles.get(id),
     roleResult: (id: Id) => roles.get(id)?.result,
     product: (id: Id): { label: string; removed: boolean } => {
       const current = products.get(id);
@@ -290,7 +286,10 @@ export function names(state: State, log: WorkLogReader, task?: UsageContext["tas
 export type Names = ReturnType<typeof names>;
 
 const askedName = (turn: WorkTurn) => turn.modelAskedName ?? turn.modelAsked ?? "the default";
-const ranName = (turn: WorkTurn) => (turn.toolId === "grok" ? modelLabel(turn.modelRan) : (turn.modelRanName ?? turn.modelRan ?? ""));
+const ranName = (turn: WorkTurn) =>
+  getProviderDescriptor(turn.toolId)?.tokenAccounting?.normalizeRanModelName
+    ? modelLabel(turn.modelRan)
+    : (turn.modelRanName ?? turn.modelRan ?? "");
 const finalEffort = (turn: WorkTurn) => turn.effortChangedTo ?? turn.effortRan;
 
 /** The turn ran on exactly the model and effort that were asked for, start to end. */
@@ -330,21 +329,28 @@ export function settingsWords(turns: readonly WorkTurn[]): { text: string; diffe
   return { text: `${distinct.length > 1 ? ranText : distinct[0]}${switched}`, differs: change !== undefined, notConfirmed };
 }
 
-const STAGE_KIND_LABEL: Record<string, string> = {
-  researcher: "Research",
-  "ux-designer": "Screens",
-  builder: "Build",
-  tester: "Testing",
-  "release-manager": "Delivery",
-};
-
-function stageKindOf(moment: WorkMoment, lookup: Names): { key: string; label: string } {
-  if (moment.stageKind === "plan") return { key: "plan", label: "Planning" };
-  if (moment.stageKind === "converge") return { key: "design", label: "Design" };
-  if (moment.stageKind === "review-chain") return { key: "review", label: "Review" };
-  if (moment.roleId && lookup.roleResult(moment.roleId) === "build" && (moment.round ?? 1) > 1) return { key: "fixes", label: "Fixes after review" };
-  const role = moment.roleId ?? "other";
-  return { key: role, label: STAGE_KIND_LABEL[role] ?? lookup.role(role) };
+function stageKindOf(moment: WorkMoment, lookup: Names): { key: string; label: string; order: number } {
+  if (moment.stageKind === "plan") {
+    return {
+      key: "plan",
+      label: ROLE_RESULT_CATALOG.plan.analytics.defaultLabel!,
+      order: ROLE_RESULT_CATALOG.plan.analytics.order,
+    };
+  }
+  const stageMeta = moment.stageKind ? STAGE_KIND_CATALOG[moment.stageKind]?.analytics : undefined;
+  if (stageMeta) return stageMeta;
+  const roleId = moment.roleId ?? "other";
+  const role = moment.roleId ? lookup.roleObject(moment.roleId) : undefined;
+  if (role?.result === "build" && (moment.round ?? 1) > 1) return { key: "fixes", label: "Fixes after review", order: 8 };
+  if (!role) return { key: roleId, label: lookup.role(roleId), order: 99 };
+  const resultSpec = ROLE_RESULT_CATALOG[role.result];
+  const custom = role.added || role.category === "maintenance";
+  const label = (custom ? role.name : role.analyticsLabel ?? resultSpec.analytics.defaultLabel) ?? lookup.role(roleId);
+  const order =
+    role.added && role.result === "notes"
+      ? (role.canEdit ? 5.5 : 4.5)
+      : (custom ? resultSpec.analytics.order : role.analyticsOrder ?? resultSpec.analytics.order);
+  return { key: roleId, label, order };
 }
 
 const median = (values: readonly number[]): number => {
@@ -378,31 +384,26 @@ export function squadView(
   }
   ) => list.filter((moment) => moment.at >= bucket.start && moment.at < bucket.end).length;
 
-  const kinds = [...group(
+  const kindEntries = [...group(
     stageEnds.filter((moment) => moment.outcome !== "cancelled" && moment.durationMs !== undefined),
-    (moment) => stageKindOf(
-    moment,
-    lookup
-  ).key
+    (moment) => stageKindOf(moment, lookup).key,
   ).entries()].map(([key, list]) => {
     const total = list.reduce((sum, moment) => sum + (moment.durationMs ?? 0), 0);
     const work = list.reduce((sum, moment) => sum + (moment.workMs ?? 0), 0);
+    const meta = stageKindOf(list[0]!, lookup);
     return {
-      key,
-      label: stageKindOf(
-      list[0]!,
-      lookup
-    ).label,
-      runs: list.length,
-      typicalMs: median(list.map((moment) => moment.durationMs ?? 0)),
-      ...(total > 0 ? { agentShare: Math.min(
-      1,
-      work / total
-    ) } : {})
+      order: meta.order,
+      item: {
+        key,
+        label: meta.label,
+        runs: list.length,
+        typicalMs: median(list.map((moment) => moment.durationMs ?? 0)),
+        ...(total > 0 ? { agentShare: Math.min(1, work / total) } : {}),
+      },
     };
   });
-  const kindOrder = ["plan", "researcher", "design", "ux-designer", "builder", "tester", "review", "fixes", "release-manager"];
-  kinds.sort((a, b) => (kindOrder.indexOf(a.key) + 1 || 99) - (kindOrder.indexOf(b.key) + 1 || 99));
+  kindEntries.sort((a, b) => a.order - b.order || a.item.label.localeCompare(b.item.label));
+  const kinds = kindEntries.map((entry) => entry.item);
 
   const reviewEnds = of("review-end");
   const sent = reviewEnds.filter((moment) => moment.outcome === "sent-back").length;

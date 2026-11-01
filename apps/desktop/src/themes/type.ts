@@ -50,8 +50,6 @@ export interface Theme {
    * The accent is New task. Keep it off those four, and off the other accent hues.
    */
   colors: ThemeColors;
-  /** Role chip colours. Omit them to use the shared colours for this light or dark mode. */
-  tones?: Record<string, string>;
 }
 
 export interface ThemeColors {

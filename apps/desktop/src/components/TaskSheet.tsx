@@ -18,11 +18,12 @@ import {
   Pause,
   Play,
   TriangleAlert,
-  X
+  X,
+  type LucideIcon
 } from "lucide-react";
-import { canEditTaskDependencies, mainLine, openStep, sourceLabel, TAKE_OVER_WORDS, type State, type Task } from "@petrina/core";
+import { canEditTaskDependencies, INBOX_CATALOG, mainLine, openStep, sourceLabel, TAKE_OVER_WORDS, type RunState, type State, type Task } from "@petrina/core";
 import { sim } from "../engine";
-import { duration, safeUrl, STATE_LABEL, stateLabel, type Lookup } from "../lib";
+import { duration, RUN_STATE_META, safeUrl, STATE_LABEL, stateLabel, type Lookup } from "../lib";
 import { ProductName, useDismiss, useFocusTrap, useViewport, WaitingLine } from "./bits";
 import { Journey } from "./Journey";
 import { Ask } from "./Inbox";
@@ -72,16 +73,23 @@ const TABS: readonly { id: SheetTab; label: string }[] = [
   { id: "session", label: "Session" },
 ];
 
+const RUN_STATE_ICONS: Readonly<Record<RunState, LucideIcon>> = {
+  backlog: ListOrdered,
+  queued: ListOrdered,
+  waiting: Clock3,
+  running: LoaderCircle,
+  "needs-you": Hand,
+  paused: Pause,
+  failed: TriangleAlert,
+  "pr-open": GitPullRequest,
+  done: CheckCircle2,
+  cancelled: Ban,
+};
+
 function TaskActivity({ task }: { task: TaskListEntry }) {
-  const [Icon, label] = task.state === "running" ? [LoaderCircle, "Working"] as const
-    : task.state === "needs-you" ? [Hand, "Needs you"] as const
-    : task.state === "waiting" ? [Clock3, "Waiting"] as const
-    : task.state === "queued" ? task.held ? [Hand, "On hold"] as const : [ListOrdered, "Queued"] as const
-    : task.state === "backlog" ? [ListOrdered, "Backlog"] as const
-    : task.state === "paused" ? [Pause, "Paused"] as const
-    : task.state === "done" ? [CheckCircle2, "Done"] as const
-    : task.state === "cancelled" ? [Ban, "Cancelled"] as const
-    : task.state === "pr-open" ? [GitPullRequest, "Awaiting merge"] as const : [TriangleAlert, "Stuck"] as const;
+  const heldQueued = task.state === "queued" && task.held;
+  const Icon = heldQueued ? Hand : RUN_STATE_ICONS[task.state];
+  const label = heldQueued ? "On hold" : RUN_STATE_META[task.state].activityLabel;
   return <span className={`task-list-activity ${task.state}`}><Icon size={13} aria-hidden="true" /><span>{label}</span></span>;
 }
 
@@ -102,7 +110,8 @@ export function TaskSheet({ task, tasks, onTask, state, find, tab, onTab, select
   useFocusTrap(
     sheet,
     onClose,
-    () => document.querySelector<HTMLElement>(`.card-open[aria-describedby~="status-${task.id}"], .history-card[data-task-id="${task.id}"]`)
+    () => document.querySelector<HTMLElement>(`.card-open[aria-describedby~="status-${task.id}"], .history-card[data-task-id="${task.id}"]`),
+    "sheet",
   );
   const viewport = useViewport();
   // Narrow or short sheets keep the one-line title in the bar from the start.
@@ -140,7 +149,7 @@ export function TaskSheet({ task, tasks, onTask, state, find, tab, onTab, select
     setPane("details");
   };
   const listed = tasks.some((entry) => entry.id === task.id) ? tasks : [task, ...tasks];
-  const asks = state.inbox.filter((item) => item.taskId === task.id);
+  const asks = state.inbox.filter((item) => item.taskId === task.id && INBOX_CATALOG[item.kind].visibility.showInOverview);
   const activeStep = openStep(task);
   const showAgentControls = selectedStep ? activeStep?.id === selectedStep && activeStep.kind === "agent" : tab === "session";
 

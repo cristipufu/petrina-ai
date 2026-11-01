@@ -1,15 +1,52 @@
-import { expect, it } from "bun:test";
-import { codexReports } from "../../../src/codex-report.js";
-const soon = Math.floor(Date.now() / 1000) + 3600;
+import { describe, expect, it } from "bun:test";
+import { nearestLimit } from "@petrina/core";
+import { codexLimits } from "../../../src/codex-report.js";
 
-  it("maps each window by its length, with the reset time in milliseconds, and the status by how much is used", () => {
-    const result = { rateLimits: { primary: { usedPercent: 88, windowDurationMins: 10080, resetsAt: soon }, secondary: { usedPercent: 12.5, windowDurationMins: 300, resetsAt: null } } };
-    expect(codexReports(result)).toEqual([
-      { toolId: "codex", kind: "codex:primary", windowMinutes: 10080, status: "allowed", utilization: 0.88, resetsAt: soon * 1000 },
-      { toolId: "codex", kind: "codex:secondary", windowMinutes: 300, status: "allowed", utilization: 0.125 },
+const NOW = new Date(2026, 9, 17, 15, 0, 0).getTime();
+
+describe("codexLimits", () => {
+  it("reads Codex's limits, keeping only percentages, lengths and resets", () => {
+    const limits = codexLimits(
+      {
+        rateLimits: {
+          limitId: "codex",
+          primary: { usedPercent: 16, windowDurationMins: 10_080, resetsAt: 1_792_673_339 },
+        },
+        rateLimitsByLimitId: {
+          codex: {
+            limitId: "codex",
+            limitName: null,
+            primary: { usedPercent: 16, windowDurationMins: 10_080, resetsAt: 1_792_673_339 },
+            secondary: { usedPercent: 91, windowDurationMins: 300, resetsAt: Math.round(NOW / 1000) + 3600 },
+            planType: "pro",
+          },
+        },
+        accountId: "secret-account",
+      },
+      NOW,
+    );
+    expect(limits).toEqual([
+      {
+        toolId: "codex",
+        kind: "codex:primary",
+        windowMinutes: 10_080,
+        at: NOW,
+        utilization: 0.16,
+        status: "allowed",
+        resetsAt: 1_792_673_339_000,
+      },
+      {
+        toolId: "codex",
+        kind: "codex:secondary",
+        windowMinutes: 300,
+        at: NOW,
+        utilization: 0.91,
+        status: "allowed_warning",
+        resetsAt: (Math.round(NOW / 1000) + 3600) * 1000,
+      },
     ]);
-    expect(codexReports({ rateLimits: { primary: { usedPercent: 90, windowDurationMins: 10080, resetsAt: soon }, secondary: null } })[0]).toMatchObject({ status: "allowed_warning" });
-    expect(codexReports({ rateLimits: { primary: { usedPercent: 100, windowDurationMins: 10080, resetsAt: soon } } })[0]).toMatchObject({ status: "rejected", utilization: 1 });
-    expect(codexReports({})).toEqual([]);
-    expect(codexReports(undefined)).toEqual([]);
+    expect(JSON.stringify(limits)).not.toContain("secret");
+    expect(nearestLimit(limits, "codex", NOW)?.kind).toBe("codex:secondary");
+    expect(codexLimits(undefined, NOW)).toEqual([]);
   });
+});

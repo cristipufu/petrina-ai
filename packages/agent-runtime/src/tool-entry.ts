@@ -9,23 +9,6 @@ import {
 } from "@petrina/platform/compiled-runtime";
 import type { ToolAdapter } from "./tool-adapter.js";
 
-export const CLAUDE_AGENT_ENTRY = "@agentclientprotocol/claude-agent-acp/dist/index.js";
-export const CODEX_AGENT_ENTRY = "@agentclientprotocol/codex-acp/dist/index.js";
-export const GROK_AGENT_COMMAND = ["grok", "--permission-mode", "auto", "agent", "stdio"] as const;
-export const OPENCODE_AGENT_COMMAND = ["opencode", "acp"] as const;
-
-const INTERNAL_SUBCOMMAND_SOURCE: Record<NonNullable<ToolAdapter["internalSubcommand"]>, string> = {
-  "__internal-claude-acp": "claude-acp.ts",
-  "__internal-codex-acp": "codex-acp.ts",
-  "__internal-agy-acp": "agy-acp.ts",
-  "__internal-pi-acp": "pi-acp.ts",
-};
-
-const INTERNAL_SUBCOMMAND_ENTRY: Partial<Record<NonNullable<ToolAdapter["internalSubcommand"]>, string>> = {
-  "__internal-claude-acp": CLAUDE_AGENT_ENTRY,
-  "__internal-codex-acp": CODEX_AGENT_ENTRY,
-};
-
 let cachedSourceRequire: NodeRequire | undefined;
 
 function getSourceRequire(): NodeRequire {
@@ -64,9 +47,11 @@ export function adapterLaunchCommand(
     if (isCompiledBinary(metaDir)) {
       return [execPath, adapter.internalSubcommand];
     }
-    const entry = adapter.entry ?? INTERNAL_SUBCOMMAND_ENTRY[adapter.internalSubcommand];
-    if (entry) resolveAdapterEntry(entry, execPath, metaDir);
-    return [findBunRuntime(execPath, metaDir), join(metaDir, INTERNAL_SUBCOMMAND_SOURCE[adapter.internalSubcommand])];
+    if (adapter.entry) resolveAdapterEntry(adapter.entry, execPath, metaDir);
+    if (!adapter.internalSourceFile) {
+      throw new Error(`Missing internal source module for ${adapter.internalSubcommand}`);
+    }
+    return [findBunRuntime(execPath, metaDir), join(metaDir, adapter.internalSourceFile)];
   }
   return [findJsRuntime(execPath, metaDir), resolveAdapterEntry(adapter.entry ?? "", execPath, metaDir)];
 }

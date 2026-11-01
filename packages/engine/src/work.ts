@@ -5,7 +5,7 @@ import { versionsOf, committedCodeOf, acceptanceVersion, invalidateAcceptance } 
 // request's description, and Petrina keeps its work as one commit; the tester checks acceptance, and any other
 // role hands back notes. The delivery step is Petrina's own (shipping.ts).
 
-import { builderFindings, endAgentStep, JOURNEY_WORDS, type Task } from "@petrina/core";
+import { builderFindings, endAgentStep, JOURNEY_WORDS, type Role, type Task } from "@petrina/core";
 import * as git from "@petrina/repositories/git";
 import { formatFindings } from "./prompts.js";
 import { BuildResult, freshBuilderRethink, NotesResult, TestResult, TEXT_LIMITS } from "./roles.js";
@@ -24,12 +24,35 @@ function tooLong(value: { description?: string | undefined }): string | undefine
   return undefined;
 }
 
+type DoStageResult = "build" | "checks" | "notes";
+
+interface DoStageRunContext {
+  readonly scope: RepositoryContext;
+  readonly stage: MutableStage;
+  readonly signal: AbortSignal;
+  readonly roleId: string;
+  readonly role: Role | undefined;
+  readonly profileId: string;
+  readonly used: (id: string) => void;
+  readonly actualProfileId: () => string;
+  readonly sections: () => ReturnType<Context["sectionsFor"]>;
+  readonly maintenance: RepositoryContext["task"]["maintenance"];
+  readonly savedResult: unknown;
+}
+
+type DoStageOutcome = { readonly next?: "continue" | "stop"; readonly testedVersions?: Record<string, string> };
+
+function resolveDoStageResult(result: Role["result"] | undefined): DoStageResult {
+  return result === "build" || result === "checks" ? result : "notes";
+}
+
 export class Work {
   private readonly acceptanceStep: AcceptanceStep;
   private readonly acceptanceHost: AcceptanceRoutingHost;
   private readonly acceptanceResults: AcceptanceResults;
   private readonly completion: WorkCompletion;
   private readonly buildCompletion: BuildCompletion;
+  private readonly doHandlers: Readonly<Record<DoStageResult, (run: DoStageRunContext) => Promise<DoStageOutcome>>>;
   constructor(private readonly k: Kernel, private readonly turns: Pick<Turns, "turn">, private readonly context: Pick<Context, "sectionsFor">, private readonly guide: Pick<GuideKeeper, "proposeGuideLine">, private readonly updates: Pick<Updates, "reopen" | "fold" | "message" | "patch">, learnings: Pick<Learnings, "note">, checks: Pick<ProductChecks, "repairVersion">) {
     this.buildCompletion = new BuildCompletion({
       now: () => Date.now(), checkpoint: task => k.commitNow(task),
@@ -82,6 +105,153 @@ export class Work {
         });
       },
     }, this.acceptanceResults, this.acceptanceHost);
+    this.doHandlers = {
+      build: (run) => this.runBuildDo(run),
+      checks: (run) => this.runChecksDo(run),
+      notes: (run) => this.runNotesDo(run),
+    } satisfies Readonly<Record<DoStageResult, (run: DoStageRunContext) => Promise<DoStageOutcome>>>;
+  }
+
+  private async runBuildDo(run: DoStageRunContext): Promise<DoStageOutcome> {
+    const { scope, stage, signal, roleId, profileId, used, actualProfileId, sections, maintenance, savedResult } = run;
+    const { task, work: repository } = scope;
+    if (task.miss) await this.guide.proposeGuideLine(scope, signal);
+    const updating = repository.updating;
+    const sourceName =
+      repository.source?.start.kind === "pull-request"
+        ? `PR #${repository.source.start.number}`
+        : (repository.source?.start.branch ?? "main");
+    if (updating) await this.updates.reopen(scope);
+    const starting =
+      repository.conversation?.roleId === roleId && repository.conversation.head
+        ? { head: repository.conversation.head, tree: repository.conversation.builderTree }
+        : await git.observeContentTree(repository.worktree!, repository.savedVersion).catch(() => ({
+            head: undefined,
+            tree: undefined,
+          }));
+    const startingTree = starting.tree;
+    // In a fix round the builder answers every finding it was given, by id. Acceptance failures whose returns are used up
+    // wait for the coordinator: no repair of another finding hands them over.
+    const given = task.fixing ? builderFindings(task, repository.productId) : [];
+    // Bind to the failure attempt now; mutable finding ids can be reused by a later check run.
+    const checkFailures = assignedCheckFailures(scope);
+    // Fix rounds and updates go back to its own conversation, except when it is asked to step back and rethink.
+    const own = repository.builderSession;
+    const rethink = freshBuilderRethink(task as Task, own, stage.id, profileId);
+    const back =
+      (task.fixing || updating)
+      && own?.stageId === stage.id
+      && (own.plannedProfileId ?? own.profileId) === profileId
+      && !rethink
+        ? own
+        : undefined;
+    const result =
+      savedResult !== undefined
+        ? BuildResult.parse(savedResult)
+        : await this.turns.turn(scope, roleId, profileId, sections, BuildResult, signal, {
+            builderTree: startingTree,
+            initialHead: starting.head,
+            used,
+            check: async (value) => {
+              if (maintenance && typeof value.complete !== "boolean") {
+                return 'Return "complete": true for a completed investigation, or false and explain why it is incomplete.';
+              }
+              const missing = given.filter((finding) => !value.answers.some((answer) => answer.id === finding.id));
+              if (missing.length) {
+                return `answer every finding by id in "answers" (fixed, or not fixed and why), and these have none:\n${formatFindings(missing as Task["findings"])}`;
+              }
+              const marked = updating ? await git.withMarkers(repository.worktree!, updating.files) : [];
+              if (marked.length) {
+                return `these files still have git's conflict markers: ${marked.join(", ")}. Resolve them, run the checks again, then end with the result block.`;
+              }
+              return tooLong(value);
+            },
+            ...(back ? { resume: back } : {}),
+            ...(rethink
+              ? {
+                  freshReason:
+                    "A deliberate fresh rethink after three review rounds; later repairs can keep this replacement conversation.",
+                }
+              : {}),
+          });
+    await this.buildCompletion.complete(scope, {
+      stageId: stage.id,
+      roleId,
+      plannedProfileId: profileId,
+      actualProfileId: actualProfileId(),
+      result,
+      maintenance: !!maintenance,
+      updating,
+      sourceName,
+      startingTree,
+      given,
+      checkFailures,
+      rethought: rethink || back?.rethought,
+    });
+    return {};
+  }
+
+  private async runChecksDo(run: DoStageRunContext): Promise<DoStageOutcome> {
+    const { scope, signal, roleId, role, profileId, used } = run;
+    const accepted = await this.acceptanceStep.run(
+      scope,
+      { roleId, profileId, canEdit: () => !!role?.canEdit, used },
+      signal,
+    );
+    return {
+      ...(accepted.next ? { next: accepted.next } : {}),
+      ...(accepted.testedVersions ? { testedVersions: accepted.testedVersions } : {}),
+    };
+  }
+
+  private async runNotesDo(run: DoStageRunContext): Promise<DoStageOutcome> {
+    const { scope, stage, signal, roleId, role, profileId, used, actualProfileId, sections, maintenance, savedResult } =
+      run;
+    const { task, work: repository } = scope;
+    const result =
+      savedResult !== undefined
+        ? NotesResult.parse(savedResult)
+        : await this.turns.turn(scope, roleId, profileId, sections, NotesResult, signal, {
+            used,
+            check: (value) =>
+              maintenance && typeof value.complete !== "boolean"
+                ? 'Return "complete": true for a completed investigation, or false and explain why it is incomplete.'
+                : undefined,
+          });
+    const by = actualProfileId();
+    const handed = {
+      ...(task.repositories && role?.canEdit ? { productId: repository.productId } : {}),
+      at: Date.now(),
+      profileId: by,
+      stageId: stage.id,
+      roleId,
+      roleName: repository.conversation?.role?.name ?? role?.name ?? roleId,
+      title: stage.title,
+      summary: result.summary,
+      notes: result.notes,
+    };
+    task.handedBack = [
+      ...(task.handedBack ?? []).filter(
+        (entry) => entry.stageId !== stage.id || entry.productId !== handed.productId,
+      ),
+      handed,
+    ];
+    this.k.participantSay(
+      scope,
+      "agent",
+      [result.summary, ...result.notes.map((note) => `• ${note}`)].join("\n"),
+      roleId,
+      by,
+      undefined,
+    );
+    this.k.log(scope, "done", `${role?.name ?? roleId} done: ${result.summary}`, roleId, by);
+    if (maintenance && !result.complete) {
+      this.k.commitNow(task);
+      throw new Error(`Maintenance investigation is incomplete: ${result.summary}`);
+    }
+    endAgentStep(task, { outcome: JOURNEY_WORDS.wroteNotes, reason: JOURNEY_WORDS.notesReady }, Date.now());
+    await this.k.saveRoleEdits(scope, roleId, by);
+    return {};
   }
 
   async runDo(scope: RepositoryContext, stage: MutableStage, signal: AbortSignal): Promise<"continue" | "stop"> {
@@ -111,80 +281,22 @@ export class Work {
         this.k.commitNow(scope);
       }
     }
-    let testedVersions: Record<string, string> | undefined;
-    if (role?.result === "build") {
-      if (task.miss) await this.guide.proposeGuideLine(scope, signal);
-      const updating = repository.updating;
-      const sourceName = repository.source?.start.kind === "pull-request" ? `PR #${repository.source.start.number}` : repository.source?.start.branch ?? "main";
-      if (updating) await this.updates.reopen(scope);
-      const starting = repository.conversation?.roleId === roleId && repository.conversation.head
-        ? { head: repository.conversation.head, tree: repository.conversation.builderTree }
-        : await git.observeContentTree(repository.worktree!, repository.savedVersion).catch(() => ({ head: undefined, tree: undefined }));
-      const startingTree = starting.tree;
-      // In a fix round the builder answers every finding it was given, by id. Acceptance failures whose returns are used up
-      // wait for the coordinator: no repair of another finding hands them over.
-      const given = task.fixing ? builderFindings(task, repository.productId) : [];
-      // Bind to the failure attempt now; mutable finding ids can be reused by a later check run.
-      const checkFailures = assignedCheckFailures(scope);
-      // Fix rounds and updates go back to its own conversation, except when it is asked to step back and rethink.
-      const own = repository.builderSession;
-      const rethink = freshBuilderRethink(task as Task, own, stage.id, profileId);
-      const back = (task.fixing || updating) && own?.stageId === stage.id && (own.plannedProfileId ?? own.profileId) === profileId && !rethink ? own : undefined;
-      const result = savedResult !== undefined ? BuildResult.parse(savedResult) : await this.turns.turn(scope, roleId, profileId, sections, BuildResult, signal, {
-        builderTree: startingTree,
-        initialHead: starting.head,
-        used,
-        check: async (value) => {
-          if (maintenance && typeof value.complete !== "boolean") return 'Return "complete": true for a completed investigation, or false and explain why it is incomplete.';
-          const missing = given.filter((finding) => !value.answers.some((answer) => answer.id === finding.id));
-          if (missing.length) return `answer every finding by id in "answers" (fixed, or not fixed and why), and these have none:\n${formatFindings(missing as Task["findings"])}`;
-          const marked = updating ? await git.withMarkers(repository.worktree!, updating.files) : [];
-          if (marked.length) return `these files still have git's conflict markers: ${marked.join(", ")}. Resolve them, run the checks again, then end with the result block.`;
-          return tooLong(value);
-        },
-        ...(back ? { resume: back } : {}),
-        ...(rethink ? { freshReason: "A deliberate fresh rethink after three review rounds; later repairs can keep this replacement conversation." } : {}),
-      });
-      await this.buildCompletion.complete(scope, { stageId: stage.id, roleId, plannedProfileId: profileId, actualProfileId: by,
-        result, maintenance: !!maintenance, updating, sourceName, startingTree, given, checkFailures, rethought: rethink || back?.rethought });
-    } else if (role?.result === "checks") {
-      const accepted = await this.acceptanceStep.run(scope, { roleId, profileId, canEdit: () => !!role.canEdit, used }, signal);
-      testedVersions = accepted.testedVersions;
-      if (accepted.next) return accepted.next;
-    } else {
-      const result = savedResult !== undefined ? NotesResult.parse(savedResult) : await this.turns.turn(
-        scope,
-        roleId,
-        profileId,
-        sections,
-        NotesResult,
-        signal,
-        {
-        used,
-        check: value => maintenance && typeof value.complete !== "boolean" ? 'Return "complete": true for a completed investigation, or false and explain why it is incomplete.' : undefined
-      }
-      );
-      const handed = {
-        ...(task.repositories && role?.canEdit ? { productId: repository.productId } : {}),
-        at: Date.now(),
-        profileId: by,
-        stageId: stage.id,
-        roleId,
-        roleName: repository.conversation?.role?.name ?? role?.name ?? roleId,
-        title: stage.title,
-        summary: result.summary,
-        notes: result.notes
-      };
-      task.handedBack = [...(task.handedBack ?? []).filter((entry) => entry.stageId !== stage.id || entry.productId !== handed.productId), handed];
-      this.k.participantSay(scope, "agent", [result.summary, ...result.notes.map((note) => `• ${note}`)].join("\n"), roleId, by, undefined);
-      this.k.log(scope, "done", `${role?.name ?? roleId} done: ${result.summary}`, roleId, by);
-      if (maintenance && !result.complete) {
-        this.k.commitNow(task);
-        throw new Error(`Maintenance investigation is incomplete: ${result.summary}`);
-      }
-      endAgentStep(task, { outcome: JOURNEY_WORDS.wroteNotes, reason: JOURNEY_WORDS.notesReady }, Date.now());
-    }
-    if (role?.result !== "build" && role?.result !== "checks") await this.k.saveRoleEdits(scope, roleId, by);
+    const doResult = resolveDoStageResult(role?.result);
+    const outcome = await this.doHandlers[doResult]({
+      scope,
+      stage,
+      signal,
+      roleId,
+      role,
+      profileId,
+      used,
+      actualProfileId: () => by,
+      sections,
+      maintenance,
+      savedResult,
+    });
+    if (outcome.next) return outcome.next;
+    const testedVersions = outcome.testedVersions;
     if (maintenance) {
       delete maintenance.pendingResult;
       if (maintenance.readOnlyWrites) throw new Error("The read-only maintenance agent changed product files. Petrina undid those writes. Review its report and retry the investigation.");

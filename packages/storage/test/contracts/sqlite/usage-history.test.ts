@@ -68,4 +68,34 @@ describe("The history of usage readings", () => {
       db.close();
     }
   });
+
+  it("persists overage readings, distinguishes overage transitions, and migrates pre-overage tables", () => {
+    const db = new Database(":memory:");
+    try {
+      db.run(`CREATE TABLE usage_readings (
+        seq INTEGER PRIMARY KEY AUTOINCREMENT,
+        tool_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        model TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL,
+        utilization REAL,
+        window_minutes INTEGER,
+        name TEXT,
+        resets_at INTEGER,
+        at INTEGER NOT NULL
+      )`);
+      const log = new WorkLog(db);
+      expect(log.recordUsage(report({ at: NOW, utilization: 1 }))).toBe(true);
+      expect(log.recordUsage(report({ at: NOW + HOUR, utilization: 1, overage: true }))).toBe(true);
+      expect(log.recordUsage(report({ at: NOW + 2 * HOUR, utilization: 1, overage: true }))).toBe(false);
+      expect(log.recordUsage(report({ at: NOW + 3 * HOUR, utilization: 1, overage: false }))).toBe(true);
+      expect(log.usageHistory({}).map((entry) => [entry.at, entry.overage])).toEqual([
+        [NOW, undefined],
+        [NOW + HOUR, true],
+        [NOW + 3 * HOUR, false],
+      ]);
+    } finally {
+      db.close();
+    }
+  });
 });

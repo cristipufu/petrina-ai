@@ -1,7 +1,8 @@
 import { posix } from "node:path";
+import { getProviderDescriptor, type Platform, type ProviderId } from "@petrina/core";
 import type { TerminalArgumentFormatter } from "./terminal-arguments.js";
 
-export type Platform = "darwin" | "win32" | "linux";
+export type { Platform };
 
 /** A terminal found on this machine, and how to make it run a launcher. */
 export interface FoundTerminal {
@@ -145,12 +146,20 @@ export class UnsafeValue extends Error {}
 /** Folders and programs: letters, digits, spaces and the punctuation paths use. No quotes, `$`, `;`, `&`, `|`, `%` or line breaks. */
 const PATH = /^[\p{L}\p{N} ._\-/\\:~+@()]{1,400}$/u;
 const ABSOLUTE = /^(\/|[A-Za-z]:\\)/;
-const SESSION = /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|(?:ses|pi)_[A-Za-z0-9_-]{4,96})$/i;
+const UUID_SESSION = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MODEL = /^(?!.*\.\.)[A-Za-z0-9._:-]{1,64}(?:\/[A-Za-z0-9._:-]{1,64}){0,2}$/;
 const EFFORT = /^(low|medium|high|xhigh)$/;
 
 function checked(value: string, pattern: RegExp, what: string): string {
   if (!pattern.test(value)) throw new UnsafeValue(`Petrina can't put ${what} in a launcher safely`);
+  return value;
+}
+
+function checkedSession(value: string, toolId: string): string {
+  const custom = getProviderDescriptor(toolId)?.terminal?.sessionPattern;
+  if (!UUID_SESSION.test(value) && !custom?.test(value)) {
+    throw new UnsafeValue("Petrina can't put the conversation's id in a launcher safely");
+  }
   return value;
 }
 
@@ -167,7 +176,7 @@ export interface LaunchInput {
   worktree: string;
   /** `mode`: Claude Code's ask-before-acting mode, by the name the installed copy lists. Other tools open with their usual prompts. */
   tool: {
-    id: "claude-code" | "codex" | "grok" | "antigravity" | "opencode" | "pi";
+    id: ProviderId;
     name: string;
     path: string;
     mode?: AskMode;
@@ -197,7 +206,7 @@ export type AskMode = "manual" | "default";
  */
 export function toolArgs(input: Pick<LaunchInput, "tool" | "sessionId" | "model" | "effort">, terminalArguments: TerminalArgumentFormatter | undefined): string[] {
   const path = checkedPath(input.tool.path, `${input.tool.name}'s location`);
-  const session = checked(input.sessionId, SESSION, "the conversation's id");
+  const session = checkedSession(input.sessionId, input.tool.id);
   const model = checked(input.model, MODEL, "the model's name");
   const effort = checked(input.effort, EFFORT, "the effort");
   if (!terminalArguments) throw new Error(`${input.tool.name} cannot reopen this conversation in a terminal`);

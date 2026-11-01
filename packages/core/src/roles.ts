@@ -18,8 +18,11 @@ import {
   type RoleResult,
   type Stage,
   type Task,
-  type Tone
+  type Tone,
 } from "./model.js";
+import { isRoleResult, ROLE_RESULT_CATALOG, ROLE_RESULTS, type RoleStep } from "./result-contracts.js";
+
+export type { RoleStep };
 
 export const ROLE_LIMITS = { name: 40, purpose: 200, instructions: 4000, handsBack: 300, added: 20 } as const;
 
@@ -46,60 +49,37 @@ export interface RoleDraft {
 export type RoleField = "name" | "purpose" | "instructions" | "handsBack" | "role";
 
 /** The kinds of result a role the coordinator adds can hand back. */
-export const ADDED_RESULTS: readonly RoleResult[] = ["notes", "findings"];
-
-/** Which kind of step a role works in, from what it hands back. The planner and delivery roles have none: Petrina places them. */
-export type RoleStep = "do" | "design" | "design-review" | "review";
+export const ADDED_RESULTS: readonly RoleResult[] = ROLE_RESULTS.filter(
+  (result) => ROLE_RESULT_CATALOG[result].userAddable.workflow,
+);
 
 export function stepOf(role: Pick<Role, "result">): RoleStep | undefined {
-  switch (role.result) {
-    case "notes":
-    case "build":
-    case "checks":
-      return "do";
-    case "brief":
-      return "design";
-    case "objections":
-      return "design-review";
-    case "findings":
-      return "review";
-    default:
-      return undefined;
-  }
+  return ROLE_RESULT_CATALOG[role.result].step;
 }
 
 /** Why a role's permission cannot change, or undefined when the coordinator may choose it. */
 export function permissionLock(role: Pick<Role, "id" | "result" | "category">): string | undefined {
-  if (role.category === "maintenance") return role.result === "build" ? "Small changes with review can change the product." : "Reports only is always read-only.";
-  if (role.result === "delivery") return "The Release Manager writes release notes. Petrina handles delivery itself. It can't be edited here.";
-  if (["check-discovery", "guide", "votes"].includes(role.result)) return "Petrina runs this role read-only as part of its checks.";
-  switch (role.result) {
-    case "plan":
-      return "The Planner is always read-only: it plans the work and changes nothing.";
-    case "objections":
-    case "findings":
-      return "Reviewers never change the work they judge, so they are always read-only.";
-    case "build":
-      return "The Builder always makes changes: building the work is its job.";
-    default:
-      return undefined;
+  if (role.category === "maintenance") {
+    return role.result === "build"
+      ? "Small changes with review can change the product."
+      : "Reports only is always read-only.";
   }
+  return ROLE_RESULT_CATALOG[role.result].permissionLock;
 }
-
-const ADDED_SEES: Readonly<Record<string, string>> = {
-  notes: "The task, the product, your notes on the task, the design brief and what earlier agents handed back.",
-  findings: "The design, the acceptance checklist, the change, the builder's report and earlier findings. Never the builder's transcript.",
-};
 
 /** Where a task sits on the board while a role it added works on it: notes roles design or build, findings roles review. */
 function addedColumn(result: RoleResult, canEdit: boolean): Column {
-  if (result === "findings") return "reviewing";
-  return canEdit ? "building" : "designing";
+  return ROLE_RESULT_CATALOG[result].columnFor(canEdit);
 }
 
 /** What a role the coordinator adds sees, and where its tasks sit on the board. Petrina sets both from its kind of result and permission. */
 export function addedFacts(result: RoleResult, canEdit: boolean): { sees: string; column: Column } {
-  return { sees: ADDED_SEES[result] ?? ADDED_SEES.notes!, column: addedColumn(result, result === "build" || (result === "notes" && canEdit)) };
+  const spec = ROLE_RESULT_CATALOG[result];
+  const effectiveCanEdit = spec.defaultCanEdit || (!spec.permissionLock && canEdit);
+  return {
+    sees: spec.addedSees ?? ROLE_RESULT_CATALOG.notes.addedSees!,
+    column: addedColumn(result, effectiveCanEdit),
+  };
 }
 
 /** One line, no runs of spaces. Names, purposes and hands-back descriptions are single lines. */
@@ -132,10 +112,11 @@ function addedRole(raw: unknown): Role | undefined {
   const role = raw as Partial<Role> | undefined;
   if (!role || typeof role.id !== "string" || !/^added-[a-z0-9-]{1,40}$/.test(role.id)) return undefined;
   if (typeof role.name !== "string" || typeof role.purpose !== "string" || typeof role.instructions !== "string" || typeof role.handsBack !== "string") return undefined;
-  if (!role.result) return undefined;
+  if (typeof role.result !== "string" || !isRoleResult(role.result)) return undefined;
   const maintenance = role.category === "maintenance";
-  if (maintenance ? role.result !== "notes" && role.result !== "build" : role.result !== "notes" && role.result !== "findings") return undefined;
-  const canEdit = maintenance ? role.result === "build" : role.result === "notes" && role.canEdit === true;
+  const spec = ROLE_RESULT_CATALOG[role.result];
+  if (!(maintenance ? spec.userAddable.maintenance : spec.userAddable.workflow)) return undefined;
+  const canEdit = maintenance ? spec.defaultCanEdit : !spec.permissionLock && role.canEdit === true;
   return {
     id: role.id,
     category: maintenance ? "maintenance" : "workflow",
@@ -145,12 +126,13 @@ function addedRole(raw: unknown): Role | undefined {
     purpose: line(role.purpose),
     instructions: block(role.instructions),
     canEdit,
-    sees: ADDED_SEES[role.result] ?? ADDED_SEES.notes!,
+    sees: spec.addedSees ?? ROLE_RESULT_CATALOG.notes.addedSees!,
     handsBack: line(role.handsBack),
     result: role.result,
     column: addedColumn(role.result, canEdit),
     added: true,
     ...(role.awayFromBuilder ? { awayFromBuilder: true } : {}),
+    ...(role.fullReview ? { fullReview: true } : {}),
     ...(role.removed ? { removed: true } : {}),
   };
 }
@@ -281,13 +263,11 @@ function newRoleId(name: string, taken: readonly Role[]): Id {
 export function addRole(changes: RoleChanges, draft: RoleDraft): { changes: RoleChanges; roleId: Id } {
   const roles = libraryRoles(changes);
   if (roles.filter((role) => role.added && !role.removed).length >= ROLE_LIMITS.added) throw new Error(`You can add at most ${ROLE_LIMITS.added} roles. Remove one you no longer use first.`);
-  if (draft.category === "maintenance" && ![
-    "notes",
-    "build"
-  ].includes(draft.result)) throw new Error("Maintenance roles hand back reports or small changes with review.");
-  if (draft.category === "maintenance" && draft.canEdit !== (draft.result === "build")) throw new Error("The result kind decides whether a maintenance role may change the product.");
-  if (draft.category !== "maintenance" && !ADDED_RESULTS.includes(draft.result)) throw new Error("A role you add hands back notes, or pass-or-fail findings.");
-  if (draft.result === "findings" && draft.canEdit) throw new Error("Reviewers never change the work they judge, so they are always read-only.");
+  const spec = ROLE_RESULT_CATALOG[draft.result];
+  if (draft.category === "maintenance" && !spec.userAddable.maintenance) throw new Error("Maintenance roles hand back reports or small changes with review.");
+  if (draft.category === "maintenance" && draft.canEdit !== spec.defaultCanEdit) throw new Error("The result kind decides whether a maintenance role may change the product.");
+  if (draft.category !== "maintenance" && !spec.userAddable.workflow) throw new Error("A role you add hands back notes, or pass-or-fail findings.");
+  if (spec.permissionLock && draft.canEdit !== spec.defaultCanEdit) throw new Error(spec.permissionLock);
   if (!ROLE_ICON_CHOICES.includes(draft.icon) || !TONE_CHOICES.includes(draft.tone)) throw new Error("Pick one of the icons and colours shown.");
   check(draft, roles);
   const roleId = newRoleId(draft.name, [...roles, ...changes.added]);

@@ -1,5 +1,6 @@
 import type {
   CoordinationResult as Result,
+  InboxDecisionOperation,
   InboxItem,
 } from "@petrina/core";
 import { messageRemovalText, offeredLessons } from "@petrina/core";
@@ -25,20 +26,7 @@ export type DelegatedMutationName = Exclude<
   LifecycleOnlyMutationName | DirectMutationName
 >;
 
-type InboxMutationName =
-  | "inbox.answer"
-  | "inbox.allow"
-  | "inbox.deny"
-  | "inbox.approve"
-  | "inbox.changes"
-  | "inbox.rerun-checks"
-  | "inbox.retry"
-  | "inbox.recovery"
-  | "learning.accept"
-  | "learning.decline"
-  | "review-guide.accept"
-  | "review-guide.decline"
-  | "screen.allow";
+type InboxMutationName = InboxDecisionOperation;
 
 type StateMutationName = Exclude<DelegatedMutationName, InboxMutationName>;
 
@@ -88,6 +76,9 @@ type GlobalMutationHandler<K extends GlobalMutationName> = (
 ) => Result | Promise<Result> | undefined | void;
 
 export const INBOX_MUTATION_HANDLERS: { readonly [K in InboxMutationName]: InboxMutationHandler<K> } = {
+  "inbox.maintenance-settings": ({ engine, itemTask, args }) => {
+    engine.resolveMaintenanceSettings(itemTask.id, args.choice);
+  },
   "inbox.answer": ({ engine, itemId, args }) => {
     engine.answer(itemId, args.answer, { clientId: args.requestId });
   },
@@ -349,6 +340,22 @@ export const GLOBAL_MUTATION_HANDLERS: { readonly [K in GlobalMutationName]: Glo
   },
   "product.remote-checks": ({ engine, args }) => {
     engine.setProductRemoteChecks(args.productId, args.checks);
+  },
+  "routine.save": ({ engine, args, done }) => {
+    const { requestId: _requestId, routineId, ...draft } = args;
+    const savedId = engine.saveRoutine(draft, routineId);
+    return done({ routineId: savedId });
+  },
+  "routine.enable": ({ engine, args, done }) => {
+    if (!engine.s.routines?.some((routine) => routine.id === args.routineId)) {
+      return { outcome: "missing", message: "That routine was removed." };
+    }
+    engine.setRoutineEnabled(args.routineId, args.enabled);
+    return done({ routineId: args.routineId, enabled: args.enabled });
+  },
+  "routine.remove": ({ engine, args, done }) => {
+    engine.removeRoutine(args.routineId);
+    return done({ routineId: args.routineId });
   },
   "pool.limit": ({ engine, args }) => {
     engine.setPoolLimit(args.limit);

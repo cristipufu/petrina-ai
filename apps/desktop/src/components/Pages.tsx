@@ -4,7 +4,7 @@ import { followLink, routeHref } from "../routes";
 import { Pause, Play, SquareTerminal, Undo2 } from "lucide-react";
 import { mainLine, readyQueue, type State } from "@petrina/core";
 import { mode, sim } from "../engine";
-import { agentSlots, duration, profileText, type Lookup } from "../lib";
+import { agentSlots, duration, profileText, toolStatusBadge, type Lookup } from "../lib";
 import { ProductName, RoleAvatar } from "./bits";
 import { LimitStepper } from "./Pool";
 import { drivingText, openHandBack } from "./TakeOver";
@@ -136,16 +136,13 @@ function TerminalPicker({ state }: { state: State }) {
   );
 }
 
-const TOOL_STATUS = { ready: "Ready", "logged-out": "Needs you to log in", "not-installed": "Not installed" } as const;
-
 /** The squad's roles, the tools found on this machine, and the profiles built from them. */
-export function LibraryPage({ state, onRole, product = "all", view = "roles", onView, onEditorDialog }: {
+export function LibraryPage({ state, onRole, product = "all", view = "roles", onView }: {
   state: State;
   onRole: (target: RolePanelTarget) => void;
   product?: string;
   view?: "roles" | "profiles";
   onView?: (view: "roles" | "profiles") => void;
-  onEditorDialog?: (open: boolean) => void
 }) {
 
   return (
@@ -178,7 +175,7 @@ export function LibraryPage({ state, onRole, product = "all", view = "roles", on
       )}
       >{tab[0]!.toUpperCase() + tab.slice(1)}</a>)}</nav>
       {view === "roles" && <RolesSection state={state} onOpen={onRole} />}
-      {view === "profiles" && <Profiles state={state} onDialogChange={onEditorDialog} />}
+      {view === "profiles" && <Profiles state={state} />}
     </div>
   );
 }
@@ -202,8 +199,8 @@ function AgentTools({ state }: { state: State }) {
                 <ToolIcon toolId={tool.id} />
                 <strong style={{ fontWeight: 600 }}>{tool.name}</strong>
               </div>
-              <span className={`label ${tool.status === "ready" ? "ok" : "warn"}`} style={{ fontSize: "var(--fs-meta)", lineHeight: "var(--lh-meta)" }}>
-                {TOOL_STATUS[tool.status]}
+              <span className={`label ${toolStatusBadge(tool.status).tone}`} style={{ fontSize: "var(--fs-meta)", lineHeight: "var(--lh-meta)" }}>
+                {toolStatusBadge(tool.status).label}
               </span>
             </div>
             <div style={{ color: "var(--text-2)" }}>{tool.models.length ? `Models: ${tool.models.join(", ")}` : "Connects through ACP once installed"}</div>

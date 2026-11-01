@@ -21,6 +21,7 @@ import { limitBuckets, limitsOverTime, readingsView } from "./limit-history-view
 import type { Id } from "./model.js";
 import { nodeUsage } from "./node-usage.js";
 import type { Figure } from "./numbers.js";
+import { getProviderDescriptor } from "./providers.js";
 import {
   addTurn, CHANGED_LABEL, emptyTally, lineModelLabel, modelLabel, NOT_CONFIRMED_LABEL, turnModelLabel,
   type Tally, type TokenLine, type WorkLogReader, type WorkTurn,
@@ -311,8 +312,12 @@ function analyticsView(log: WorkLogReader, request: { period: UsagePeriod; produ
     })
     .sort(byTokens);
 
-  const claudeMainOnly = turns.filter((turn) => turn.toolId === "claude-code" && turn.mainOnly).length;
-  const codexHelperTurns = turns.filter((turn) => turn.toolId === "codex" && turn.helpers > 0).length;
+  const claudeMainOnly = turns.filter(
+    (turn) => Boolean(getProviderDescriptor(turn.toolId)?.tokenAccounting?.breakdownIncludesHelpers) && turn.mainOnly,
+  ).length;
+  const codexHelperTurns = turns.filter(
+    (turn) => Boolean(getProviderDescriptor(turn.toolId)?.tokenAccounting?.omitsSpawnedHelpers) && turn.helpers > 0,
+  ).length;
 
   return {
     view: "analytics",

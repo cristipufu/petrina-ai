@@ -1,6 +1,7 @@
 import { parse } from "@babel/parser";
 import { childPrograms, type ChildProgram } from "./child-programs.js";
 import { engineConstructions, type EngineConstruction } from "./engine-construction.js";
+import { providerEnumerations } from "./provider-enumerations.js";
 import { CALLS, FUNCTIONS, lineOf, name, node, text, WRAPPERS, type Node } from "./source-ast.js";
 import { moduleMocks } from "./source-mocks.js";
 import { unfinishedWork } from "./source-unfinished.js";
@@ -30,6 +31,8 @@ export interface SourceFacts {
   engineConstructions: EngineConstruction[];
   /** Explicit TypeScript `any` type keywords (`TSAnyKeyword`). */
   anyTypes: number[];
+  /** Multi-provider ID tables, unions or switch/branch dispatches hardcoded in syntax. */
+  providerEnumerations: number[];
 }
 
 const BLOCKING = new Set(["spawnSync", "execFileSync", "execSync"]);
@@ -56,6 +59,7 @@ export function sourceFacts(source: string, filename: string): SourceFacts {
     childPrograms: [],
     engineConstructions: [],
     anyTypes: [],
+    providerEnumerations: [],
   };
   const ast = parse(source, {
     sourceType: "unambiguous",
@@ -64,6 +68,7 @@ export function sourceFacts(source: string, filename: string): SourceFacts {
     attachComment: false,
   });
   facts.childPrograms = childPrograms(ast.program as unknown as Node, filename);
+  facts.providerEnumerations = providerEnumerations(ast.program as unknown as Node);
   if (filename.startsWith("packages/engine/test/")) {
     facts.engineConstructions = engineConstructions(ast.program, filename);
   }

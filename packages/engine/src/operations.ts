@@ -1,19 +1,32 @@
 // One discoverable catalogue for the local API, CLI help and MCP tools.
 import { z } from "zod";
-import { WORKFLOW_EVENT_KINDS } from "@petrina/core";
-import { StartFromSchema, WorkChoiceSchema } from "./source-schema.js";
+import { INBOX_KINDS, WORKFLOW_EVENT_KINDS } from "@petrina/core";
+import {
+  AnalyticsPeriodSchema,
+  BacklogUpdateFields,
+  CheckSetupRequirementsSchema,
+  ProductChecksInputSchema,
+  ProductRemoteChecksSchema,
+  ProductSettingsFields,
+  RoutineDraftFields,
+  ScreenModeSchema,
+  StageProfileListSchema,
+  TaskKindSchema,
+  WireIdSchema,
+} from "./command-schemas.js";
+import { DeliveryModeSchema, StartFromSchema, WorkChoiceSchema } from "./source-schema.js";
 
-const id = z.string().min(1).max(200);
-/** One wire schema for the coordinator operation and window command; Core validates normalization atomically. */
-export const CheckSetupRequirementsSchema = z.array(z.object({ id, name: z.string().min(1).max(40), argv: z.array(z.string()).min(1) }).strict()).max(12);
+export { CheckSetupRequirementsSchema };
+
+const id = WireIdSchema;
 const text = z.string().min(1).max(8000);
 const page = { limit: z.number().int().min(1).max(100).default(25), cursor: z.string().max(1000).optional() };
 const evidence = { limit: z.number().int().min(1).max(32000).default(8000), cursor: z.string().max(1000).optional() };
 const task = { taskId: id };
 const decision = { itemId: id, revision: id.describe("Revision returned by inspecting this request. Changed requests must be inspected again.") };
-const kind = z.enum(["plan", "design", "delivery", "disagreement", "question", "permission", "stuck", "shipping", "learnings", "guide", "screen", "driving"]);
+const kind = z.enum(INBOX_KINDS);
 const state = z.enum(["backlog", "queued", "running", "waiting", "needs-you", "paused", "failed", "done", "pr-open", "cancelled"]);
-const delivery = z.enum(["pull-request", "release", "local"]);
+const delivery = DeliveryModeSchema;
 const filter = { productId: id.optional(), taskId: id.optional(), search: z.string().max(200).optional() };
 const wait = { wait: z.boolean().default(false), timeoutMs: z.number().int().min(0).max(3600000).default(30000) };
 export interface OperationFlags {
@@ -85,7 +98,7 @@ export const OPERATIONS = [
       productId: z.string().max(200).default("").describe("Existing product ID, or leave empty to let the planner choose, as in the app."),
       title: z.string().min(1).max(200),
       description: z.string().max(8000).optional(),
-      kind: z.enum(["new", "feature", "bug", "chore"]).optional(),
+      kind: TaskKindSchema.optional(),
       position: z.enum(["top", "bottom"]).optional(),
       approvePlan: z.boolean().optional(),
       delivery: delivery.optional(),
@@ -115,11 +128,10 @@ export const OPERATIONS = [
     "task.update-backlog",
     "Edit the title and request of a backlog task before work starts. Does not queue it or edit product files.",
     {
-    ...task,
-    title: z.string().trim().min(1).max(200),
-    description: z.string().max(8000)
-  },
-    true
+      ...task,
+      ...BacklogUpdateFields,
+    },
+    true,
   ),
   op(
     "task.inspect",
@@ -252,7 +264,7 @@ export const OPERATIONS = [
   op(
     "plan.assign",
     "Change a profile on a future stage only; preserves the engine's plan-editing rules.",
-    { ...task, stageId: id, list: z.enum(["profileIds", "reviewerProfileIds"]).default("profileIds"), index: z.number().int().min(0), profileId: id },
+    { ...task, stageId: id, list: StageProfileListSchema.default("profileIds"), index: z.number().int().min(0), profileId: id },
     true,
   ),
   op("plan.add-reviewer", "Add a reviewer to a future review stage using the engine's existing rules.", { ...task, stageId: id, profileId: id }, true),
@@ -340,6 +352,12 @@ export const OPERATIONS = [
     { itemId: id, ...evidence },
   ),
   op("inbox.answer", "Answer a question exactly once, tied to its inspected revision.", { ...decision, answer: text.max(4000) }, true),
+  op(
+    "inbox.maintenance-settings",
+    "Keep or stop a paused maintenance run whose agent reported workspace or personal settings.",
+    { ...decision, choice: z.enum(["keep", "stop"]) },
+    true,
+  ),
   op("inbox.allow", "Allow this inspected tool permission request once only. Does not grant lasting permission.", decision, true),
   op("inbox.deny", "Deny this inspected tool permission request with an optional note.", { ...decision, note: z.string().max(4000).optional() }, true),
   op(
@@ -392,7 +410,11 @@ export const OPERATIONS = [
   op(
     "product.settings",
     "Update existing product name and delivery/approval settings.",
-    { productId: id, name: z.string().min(1).max(200), delivery, approveDelivery: z.boolean(), shipLowRisk: z.boolean().optional() },
+    {
+      productId: id,
+      ...ProductSettingsFields,
+      name: z.string().min(1).max(200),
+    },
     true,
   ),
   op(
@@ -400,10 +422,7 @@ export const OPERATIONS = [
     "Set existing product check definitions, or null to return to Check finder. Adds no command runner; checks still run at existing engine gates.",
     {
       productId: id,
-      checks: z
-        .array(z.object({ name: z.string().min(1).max(40), command: z.string().min(1).max(500) }).strict())
-        .max(12)
-        .nullable(),
+      checks: ProductChecksInputSchema,
     },
     true,
   ),
@@ -411,33 +430,53 @@ export const OPERATIONS = [
     "product.check-setup",
     "Set coordinator-owned local setup requirements. Commands run through the existing local check owner; no installation or delivery approval.",
     {
-    productId: id,
-    requirements: CheckSetupRequirementsSchema
-  },
-    true
+      productId: id,
+      requirements: CheckSetupRequirementsSchema,
+    },
+    true,
   ),
   op(
     "product.remote-checks",
     "Set required GitHub check names that must pass on the exact tested version before direct branch or release delivery.",
     {
       productId: id,
-      checks: z.array(z.string().min(1).max(120)).max(20),
+      checks: ProductRemoteChecksSchema,
     },
     true,
   ),
+  op("routine.list", "List scheduled maintenance routines, optionally filtered by product.", {
+    productId: id.optional(),
+    ...page,
+  }),
+  op(
+    "routine.save",
+    "Create or update a scheduled maintenance routine using the existing calendar, role and profile rules.",
+    {
+      routineId: id.optional(),
+      ...RoutineDraftFields,
+      name: z.string().min(1).max(100),
+      productId: id,
+      roleId: id,
+      profileId: id,
+      zone: z.string().min(1).max(100),
+    },
+    true,
+  ),
+  op("routine.enable", "Enable or disable an existing scheduled maintenance routine.", { routineId: id, enabled: z.boolean() }, true),
+  op("routine.remove", "Remove a scheduled maintenance routine without disturbing tasks already admitted.", { routineId: id }, true),
   op("pool.inspect", "Inspect pool limits, scheduling preference, admitted work and drain blockers.", {}),
   op("pool.limit", "Set the existing total agent cap (1–12).", { limit: z.number().int().min(1).max(12) }, true),
   op("tools.inspect", "Inspect tool readiness, usage, profile choices and caps in bounded pages.", evidence),
   op("tools.check", "Ask the existing tool checks to refresh readiness. Results arrive independently.", {}, true),
   op("tools.cap", "Set an existing tool's agent cap (1–12).", { toolId: id, cap: z.number().int().min(1).max(12) }, true),
   op("screen.inspect", "Inspect the existing global allowance and pending task screen requests.", page),
-  op("screen.set", "Set the existing global screen allowance. Does not itself open windows.", { mode: z.enum(["off", "hour", "on"]) }, true),
+  op("screen.set", "Set the existing global screen allowance. Does not itself open windows.", { mode: ScreenModeSchema }, true),
   op("screen.task", "Set the existing per-task screen allowance. Does not itself open windows.", { ...task, allowed: z.boolean() }, true),
   op("screen.allow", "Allow one inspected pending screen request through the existing screen scheduler.", decision, true),
   op("analytics.inspect", "Read existing task or product analytics in bounded pages. Every page reports its read's asOf time; a product read's continuations expire ten minutes after its first page.", {
     taskId: id.optional(),
     productId: id.optional(),
-    period: z.enum(["today", "7d", "30d"]).default("7d"),
+    period: AnalyticsPeriodSchema.default("7d"),
     ...evidence,
   }),
   op(

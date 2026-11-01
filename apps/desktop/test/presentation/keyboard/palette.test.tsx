@@ -137,6 +137,31 @@ describe('the app keyboard', () => {
     expect(host.querySelector('.switcher-pop')).toBeNull();
   });
 
+  it('switches product from the command palette Switch product action and falls back to the palette when the top bar switcher is absent', async () => {
+    await palette('Switch product');
+    expect(el('[role=option][aria-selected=true]').id).toBe('palette-switch-product');
+    await key('Enter');
+    expect(el('.command-palette').getAttribute('aria-label')).toBe('Switch product');
+    await type('[role=combobox]', 'Notes');
+    await key('Enter');
+    expect(host.querySelector('.command-palette')).toBeNull();
+    expect(el('.switcher').textContent).toContain('Notes');
+
+    const switcher = el('.topbar .switcher');
+    const parent = switcher.parentElement!;
+    parent.removeChild(switcher);
+    try {
+      expect(await taken('p', { ctrlKey: true })).toBe(true);
+      expect(el('.command-palette').getAttribute('aria-label')).toBe('Switch product');
+      await type('[role=combobox]', 'All products');
+      await key('Enter');
+      expect(host.querySelector('.command-palette')).toBeNull();
+    } finally {
+      parent.prepend(switcher);
+    }
+    expect(el('.switcher').textContent).toContain('All products');
+  });
+
   it.each(['switcher', 'finished task'])('chooses a product with Enter once, without activating the restored %s', async (opener) => {
     let productName = 'Shop';
     if (opener === 'switcher') {

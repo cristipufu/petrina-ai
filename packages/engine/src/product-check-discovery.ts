@@ -174,17 +174,21 @@ export async function ensureProductChecks(
   const seen = product.checksSeen?.find((entry) => entry.fingerprint === fingerprint);
   if (!continuing && seen) return seen.checks;
   const declared = detectChecks(repository.worktree);
-  const restore = beginSideStep(k, scope, "check-finder");
+  const finderRoleId =
+    (continuing ? repository.conversation?.roleId : undefined)
+    ?? k.s.roles.find((role) => !role.removed && role.result === "check-discovery")?.id
+    ?? "check-finder";
+  const restore = beginSideStep(k, scope, finderRoleId);
   const why = !product.checks ? "first time" : "the CI, build or hook files changed";
   const finder = k.onUsable(CHECK_FINDER_PROFILE);
   let ran: Id = finder;
   try {
     const result = await turns.turn(
       scope,
-      "check-finder",
+      finderRoleId,
       finder,
       async () => [
-        ...(await context.sectionsFor(scope, "check-finder")),
+        ...(await context.sectionsFor(scope, finderRoleId)),
         ...(product.checks
           ? [
               {
@@ -219,7 +223,7 @@ export async function ensureProductChecks(
       scope,
       "done",
       `Found how to check ${product.name} (${why}): ${product.checks.map((c) => c.name).join(", ")}`,
-      "check-finder",
+      finderRoleId,
       ran,
     );
   } catch (error) {
@@ -227,7 +231,7 @@ export async function ensureProductChecks(
     k.releaseScreen(task);
     restore();
     if (error instanceof WaitingForUsage || error instanceof SourceRefreshRequired) throw error;
-    k.tracking.failed(scope, error, { roleId: "check-finder", profileId: ran });
+    k.tracking.failed(scope, error, { roleId: finderRoleId, profileId: ran });
     endAgentStep(task, { outcome: JOURNEY_WORDS.couldNotFinish, reason: JOURNEY_WORDS.checksAsBefore }, Date.now());
     if (product.checksBy === "coordinator") return product.checks ?? [];
     const fallback: ProductCheck[] = product.checks ? [...product.checks] : declared;
@@ -239,7 +243,7 @@ export async function ensureProductChecks(
     k.log(
       scope,
       "warn",
-      `The Check finder could not finish, so Petrina uses ${fallback.length ? "the checks it had" : "no checks"} for now`,
+      `The ${k.role(finderRoleId)?.name ?? "Check finder"} could not finish, so Petrina uses ${fallback.length ? "the checks it had" : "no checks"} for now`,
     );
   }
   product.checksBy = "finder";

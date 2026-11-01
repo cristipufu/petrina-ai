@@ -46,7 +46,8 @@ export interface WorkspaceFocusDialogs {
   palette: boolean;
   paletteTask: Task | undefined;
   shortcuts: boolean;
-  modalWithoutShortcuts: boolean;
+  modalOpen: boolean;
+  popoverOpen: boolean;
   singleKeys: boolean;
   focusedTask: Task | undefined;
 }
@@ -64,6 +65,7 @@ export interface WorkspaceFocusSetters {
 export interface WorkspaceFocusCommands {
   sendAction: (action: () => unknown, title: string, detail?: string) => Promise<boolean>;
   openPalette: () => void;
+  switchProduct: () => void;
   open: (taskId: string, tab?: SheetTab, list?: "board" | "inbox" | "history", itemId?: string) => void;
   openBoard: (id: string) => void;
   openItem: (id: string) => void;
@@ -108,11 +110,12 @@ export function useWorkspaceFocus({
     historyPage,
     visible,
   } = lists;
-  const { palette, paletteTask, shortcuts, modalWithoutShortcuts, singleKeys, focusedTask } = dialogs;
+  const { palette, paletteTask, shortcuts, modalOpen, popoverOpen, singleKeys, focusedTask } = dialogs;
   const { setBoardKeyboard, setBoardId, setInboxId, setOwner, setPalette, setShortcuts, setMessageFocus } = setters;
   const {
     sendAction,
     openPalette,
+    switchProduct,
     open,
     openBoard,
     openItem,
@@ -202,7 +205,7 @@ export function useWorkspaceFocus({
     if (
       el
       && !palette
-      && !modalWithoutShortcuts
+      && !modalOpen
       && !shortcuts
       && (focusArea.current === area || (!el.contains(document.activeElement) && !isTyping(document.activeElement as HTMLElement)))
     ) {
@@ -214,7 +217,7 @@ export function useWorkspaceFocus({
     currentBoardId,
     currentInboxId,
     palette,
-    modalWithoutShortcuts,
+    modalOpen,
     shortcuts,
     historyPage,
     view,
@@ -225,7 +228,8 @@ export function useWorkspaceFocus({
 
   useGlobalKeys({
     palette,
-    modal: modalWithoutShortcuts || shortcuts,
+    modal: modalOpen || shortcuts,
+    popover: popoverOpen,
     sheetOpen: Boolean(sheet),
     area,
     singleKeys,
@@ -233,10 +237,11 @@ export function useWorkspaceFocus({
     boardId: currentBoardId,
     inboxId: currentInboxId,
     togglePalette: () => {
-      if (modalWithoutShortcuts) return;
+      if (modalOpen) return;
       if (palette) setPalette(false);
       else openPalette();
     },
+    switchProduct,
     closeSheet,
     // Over the board the inbox hides and hands focus to the Inbox button. Docked, it hands the keys to the
     // board, and off the board to nothing: no hidden Enter, and no palette handing them back on close.
@@ -270,6 +275,7 @@ export function useWorkspaceFocus({
     state,
     singleKeys,
     newTask,
+    switchProduct,
     openInbox,
     go,
     showShortcuts: () => setShortcuts(true),

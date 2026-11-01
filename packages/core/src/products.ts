@@ -1,4 +1,5 @@
 import { parseCommand } from "./check-commands.js";
+import { isDeliveryMode } from "./delivery-modes.js";
 import { involvesProduct, repositoryPublished } from "./repositories.js";
 import { normalizeCheckPrerequisites, sameCheckPrerequisites } from "./check-environment.js";
 import type { DeepMutable } from "./flow.js";
@@ -15,11 +16,15 @@ export function suggestProductName(path: string): string {
   }).join(" ");
 }
 
+export const RELEASE_BUMPS = ["patch", "minor", "major"] as const;
+export type ReleaseBump = (typeof RELEASE_BUMPS)[number];
+
 export interface ProductSettings {
   name: string;
   delivery: DeliveryMode;
   approveDelivery: boolean;
-  shipLowRisk?: boolean;
+  shipLowRisk?: boolean | undefined;
+  releaseBump?: ReleaseBump | undefined;
 }
 
 export type ProductCheckSettingWork = DeepMutable<Pick<RepositoryState, "productId" | "checks">>;
@@ -83,19 +88,32 @@ export function productName(name: string, products: readonly Product[], except?:
 
 export function validateProductSettings(settings: ProductSettings, products: readonly Product[], except?: Id): ProductSettings {
   const name = productName(settings.name, products, except);
-  if (![
-    "pull-request",
-    "release",
-    "local"
-  ].includes(settings.delivery) || typeof settings.approveDelivery !== "boolean") throw new Error("Choose what happens when work is ready.");
+  if (!isDeliveryMode(settings.delivery) || typeof settings.approveDelivery !== "boolean") throw new Error("Choose what happens when work is ready.");
   if (settings.shipLowRisk !== undefined && typeof settings.shipLowRisk !== "boolean") throw new Error("Choose whether low-risk work ships without asking.");
-  // Left out, the low-risk setting stays as it is.
+  if (settings.releaseBump !== undefined && !(RELEASE_BUMPS as readonly string[]).includes(settings.releaseBump)) {
+    throw new Error("Choose whether releases bump patch, minor or major.");
+  }
+  // Left out, optional low-risk and release-bump settings stay as they are.
   return {
     name,
     delivery: settings.delivery,
     approveDelivery: settings.approveDelivery,
-    ...(settings.shipLowRisk !== undefined ? { shipLowRisk: settings.shipLowRisk } : {})
+    ...(settings.shipLowRisk !== undefined ? { shipLowRisk: settings.shipLowRisk } : {}),
+    ...(settings.releaseBump !== undefined ? { releaseBump: settings.releaseBump } : {}),
   };
+}
+
+export function applyProductSettings(
+  product: DeepMutable<Pick<Product, "id" | "name" | "delivery" | "approveDelivery" | "shipLowRisk" | "releaseBump">>,
+  settings: ProductSettings,
+  products: readonly Product[],
+): void {
+  const validated = validateProductSettings(settings, products, product.id);
+  product.name = validated.name;
+  product.delivery = validated.delivery;
+  product.approveDelivery = validated.approveDelivery;
+  if (validated.shipLowRisk !== undefined) product.shipLowRisk = validated.shipLowRisk;
+  if (validated.releaseBump !== undefined) product.releaseBump = validated.releaseBump;
 }
 
 export function productHistory(tasks: readonly Task[], productId: Id): { unfinished: number; finished: number } {

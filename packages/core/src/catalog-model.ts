@@ -1,11 +1,23 @@
 // Shared catalog, role, plan, inbox and pool domain types for the engine, simulator and UI.
+import type { RoleResult } from "./result-contracts.js";
+import type { GateKind, StageKind } from "./stage-kinds.js";
 import type { CheckId } from "./setup.js";
+
+export type { GateKind, RoleResult, StageKind };
 
 export type Id = string;
 
-export type Effort = "low" | "medium" | "high" | "xhigh" | "ultra";
+export const EFFORTS = ["low", "medium", "high", "xhigh", "ultra"] as const;
 
-export const EFFORTS: readonly Effort[] = ["low", "medium", "high", "xhigh", "ultra"];
+export type Effort = (typeof EFFORTS)[number];
+
+export const EFFORT_LABEL: Readonly<Record<Effort, string>> = {
+  ultra: "ultra effort",
+  low: "low effort",
+  medium: "medium effort",
+  high: "high effort",
+  xhigh: "extra high effort",
+};
 
 /** Something that can run an agent. Usually an ACP command line. */
 export interface Tool {
@@ -70,15 +82,11 @@ export const ROLE_ICON_CHOICES: readonly RoleIcon[] = [
   "rocket"
 ];
 
-export type Tone = "indigo" | "orange" | "violet" | "purple" | "pink" | "blue" | "green" | "teal" | "slate" | "amber";
+export const TONES = ["indigo", "orange", "violet", "purple", "pink", "blue", "green", "teal", "slate", "amber"] as const;
+
+export type Tone = (typeof TONES)[number];
 
 export const TONE_CHOICES: readonly Tone[] = ["blue", "teal", "green", "orange", "amber", "pink", "purple", "violet", "indigo", "slate"];
-
-/**
- * The kind of result a role hands back. It decides which kind of step the role works in, and it never
- * changes: built-in roles have theirs, and a role the coordinator adds hands back notes or findings.
- */
-export type RoleResult = "plan" | "notes" | "brief" | "objections" | "build" | "checks" | "findings" | "delivery" | "check-discovery" | "guide" | "votes";
 
 /** A role is data: what the agent is for, how it works, what it may do, what it sees and what it hands back. */
 export interface Role {
@@ -100,6 +108,21 @@ export interface Role {
   column: Column;
   /** Prefer a coding tool other than the builder's when another ready tool can run this role. */
   awayFromBuilder?: boolean;
+  /** Review the complete change from the base on every round instead of only what changed since the last review. */
+  fullReview?: boolean;
+  /** Optional opening scope sentence for full-diff specialist reviews when using Petrina's default wording. */
+  fullReviewSummary?: string;
+  /** Optional short label for a card's pipeline strip (defaults to `ROLE_RESULT_CATALOG[result].stepLabel`). */
+  stepLabel?: string;
+  /** Optional plain-language phrase for "Next: …" summaries (defaults to `ROLE_RESULT_CATALOG[result].upcomingVerb`). */
+  upcomingVerb?: string;
+  /** Optional stage-kind label and sort order in Analytics (defaults to `ROLE_RESULT_CATALOG[result].analytics`). */
+  analyticsLabel?: string;
+  analyticsOrder?: number;
+  /** Optional offline-demo script variant and example result placeholders so strategies never branch on role id. */
+  simVariant?: "research" | "screens";
+  exampleNotes?: { readonly summary: string; readonly note: string };
+  exampleFinding?: { readonly text: string; readonly evidence: string };
   /** Petrina runs this role itself: the planner is never told it exists, and a plan cannot use it. */
   internal?: boolean;
   /** The coordinator added it. */
@@ -129,10 +152,6 @@ export interface RoleChanges {
 export type Column = "backlog" | "queue" | "planning" | "designing" | "building" | "reviewing" | "ready" | "done";
 
 export const COLUMNS: readonly Column[] = ["backlog", "queue", "planning", "designing", "building", "reviewing", "ready", "done"];
-
-export type StageKind = "do" | "converge" | "review-chain" | "gate";
-
-export type GateKind = "plan" | "design" | "delivery";
 
 export interface ProfileAssignment {
   /** The profile requested by the person or agent making this assignment. */
@@ -179,7 +198,9 @@ export type TaskKind = "new" | "feature" | "bug" | "chore";
  * - `needs-you`: blocked on the coordinator (question, permission, gate).
  * - `pr-open`: delivered; the pull request is open for the coordinator to merge on GitHub.
  */
-export type RunState = "backlog" | "queued" | "waiting" | "running" | "needs-you" | "paused" | "failed" | "pr-open" | "done" | "cancelled";
+export const RUN_STATES = ["backlog", "queued", "waiting", "running", "needs-you", "paused", "failed", "pr-open", "done", "cancelled"] as const;
+
+export type RunState = (typeof RUN_STATES)[number];
 
 export type RiskLevel = "low" | "medium" | "high";
 
@@ -214,12 +235,8 @@ export interface Lesson {
   at: number;
 }
 
-/**
- * `shipping`: a delivery was interrupted, and Petrina could not tell whether it went out, or found something
- * else there. `driving`: the coordinator took over a step in their terminal.
- * `screen`: an agent waits for the coordinator's OK to use the screen. Quiet: listed last, never a notification.
- */
-export type InboxKind = "maintenance-settings" | "question" | "permission" | "plan" | "design" | "disagreement" | "delivery" | "stuck" | "shipping" | "driving" | "guide" | "learnings" | "screen";
+import type { InboxKind } from "./inbox-catalog.js";
+export type { InboxKind };
 
 export interface InboxItem {
   productId?: Id;
@@ -249,14 +266,7 @@ export interface InboxItem {
   stageId?: Id | null;
 }
 
-/**
- * What "ready" means for a product.
- * - `pull-request`: push the work's one commit and open a pull request (never merged by Petrina).
- * - `release`: push the work with a version commit to the default branch, with a new version tag, and publish a GitHub release.
- * - `local`: advance the approved branch in the local copy and push the tested work to its saved GitHub address. Commit to main does the same for the default branch.
- * Petrina publishes, and sets a release's version itself; the only agent at delivery is the Release Manager, writing a release's notes.
- */
-export type DeliveryMode = "pull-request" | "release" | "local";
+export { DELIVERY_MODES, type DeliveryDestinationKind, type DeliveryMode } from "./delivery-modes.js";
 
 /** What a tool last said about its usage limit: "allowed_warning" means it is close, "rejected" means it is out. */
 export type UsageStatus = "allowed" | "allowed_warning" | "rejected";

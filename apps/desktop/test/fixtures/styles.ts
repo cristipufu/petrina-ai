@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { toneRulesCss } from "../../src/themes/tones";
 
 function loadCss(path: string): string {
   const source = readFileSync(path, "utf8");
@@ -11,5 +12,5 @@ function loadCss(path: string): string {
 
 /** Reads `src/styles.css` with all local `@import` stylesheets inlined in cascade order for HappyDOM `<style>` injection. */
 export function readAppStyles(): string {
-  return loadCss(resolve(__dirname, "../../src/styles.css"));
+  return `${loadCss(resolve(__dirname, "../../src/styles.css"))}\n${toneRulesCss()}`;
 }

@@ -10,26 +10,10 @@
 // review guide, tools check, turns, context, catalog/task/inbox commands), and they share state
 // and bookkeeping through the kernel.
 
-import * as library from "@petrina/core";
 import {
-  SCREEN_HOUR_MS,
   stopCheckProgress,
-  type AskAnswer,
-  type Clone,
   type Commands,
-  type DeliveryMode,
-  type HandBackPreview,
   type Id,
-  type Launched,
-  type NewTaskInput,
-  type ProductSettings,
-  type RoleDraft,
-  type SaidContext,
-  type ScreenMode,
-  type SetupStep,
-  type UsageRequest,
-  type UsageViewFor,
-  type WorkChoice,
 } from "@petrina/core";
 import type { AgentAdmissionDependencies, ParticipantAdmission } from "@petrina/orchestrator";
 import { AcceptedPoints } from "./accepted-points.js";
@@ -40,6 +24,7 @@ import { Connections } from "./connection.js";
 import { Context } from "./context.js";
 import { Design } from "./design.js";
 import { Driver } from "./driver.js";
+import { bindEngineCommands, type EngineBoundCommands } from "./engine-commands.js";
 import { prepareRecoveredTasks, startEngineBackgroundLoops } from "./engine-startup.js";
 import { ExtraValidations } from "./extra-validations.js";
 import { FollowUps } from "./follow-ups.js";
@@ -63,6 +48,8 @@ import { Work } from "./work.js";
 
 export type { EngineOptions } from "./kernel.js";
 export type { NewTaskInput, SaidContext } from "@petrina/core";
+
+export interface Engine extends EngineBoundCommands {}
 
 /** The engine: every command the window can send (Commands) is a method here. */
 export class Engine extends Kernel implements Commands {
@@ -160,6 +147,23 @@ export class Engine extends Kernel implements Commands {
       this.guide,
       this.learnings,
       this.checkpoints,
+    );
+    Object.assign(
+      this,
+      bindEngineCommands({
+        kernel: this,
+        options,
+        profileReader: this.profileReader,
+        tools: this.tools,
+        catalogCommands: this.catalogCommands,
+        taskCommands: this.taskCommands,
+        inboxCommands: this.inboxCommands,
+        driver: this.driver,
+        takeover: this.takeover,
+        shipping: this.shipping,
+        learnings: this.learnings,
+        moveInQueue: (taskId, index) => this.moveInQueue(taskId, index),
+      }),
     );
     this.onTaskDone = (task) => {
       this.extraValidations?.cancelTask(task.id);
@@ -353,247 +357,5 @@ export class Engine extends Kernel implements Commands {
       })
       .then(done, failed);
     return this.shutdownDone;
-  }
-
-  // ── Profiles, routines, roles, products and first-run setup ────────────
-
-  profileChoices({ toolId, modelId, refresh = false }: library.ProfileChoiceRequest) {
-    return this.profileReader.read(toolId, modelId, refresh);
-  }
-  saveProfile(draft: library.ProfileDraft, clientId: Id, profileId?: Id): Promise<Id> {
-    return this.catalogCommands.saveProfile(draft, clientId, profileId);
-  }
-  removeProfile(profileId: Id): void {
-    this.catalogCommands.removeProfile(profileId);
-  }
-  saveRoutine(draft: library.RoutineDraft, routineId?: Id): Id {
-    return this.catalogCommands.saveRoutine(draft, routineId);
-  }
-  setRoutineEnabled(routineId: Id, enabled: boolean): void {
-    this.catalogCommands.setRoutineEnabled(routineId, enabled);
-  }
-  removeRoutine(routineId: Id): void {
-    this.catalogCommands.removeRoutine(routineId);
-  }
-  resolveMaintenanceSettings(taskId: Id, choice: "keep" | "stop"): void {
-    this.catalogCommands.resolveMaintenanceSettings(taskId, choice);
-  }
-  saveRole(roleId: Id, draft: RoleDraft): void {
-    this.catalogCommands.saveRole(roleId, draft);
-  }
-  addRole(draft: RoleDraft): Id {
-    return this.catalogCommands.addRole(draft);
-  }
-  resetRole(roleId: Id): void {
-    this.catalogCommands.resetRole(roleId);
-  }
-  removeRole(roleId: Id): void {
-    this.catalogCommands.removeRole(roleId);
-  }
-  addProduct(input: string, name?: string): Promise<Id> {
-    return this.catalogCommands.addProduct(input, name);
-  }
-  setProductDelivery(productId: Id, delivery: DeliveryMode, approveDelivery: boolean): void {
-    this.catalogCommands.setProductDelivery(productId, delivery, approveDelivery);
-  }
-  setProductChecks(productId: Id, checks: readonly { name: string; command: string }[] | null): void {
-    this.catalogCommands.setProductChecks(productId, checks);
-  }
-  setProductCheckSetup(productId: Id, requirements: readonly library.CheckPrerequisite[]): void {
-    this.catalogCommands.setProductCheckSetup(productId, requirements);
-  }
-  setProductRemoteChecks(productId: Id, checks: readonly string[]): void {
-    this.catalogCommands.setProductRemoteChecks(productId, checks);
-  }
-  updateProduct(productId: Id, settings: ProductSettings): void {
-    this.catalogCommands.updateProduct(productId, settings);
-  }
-  removeProduct(productId: Id): void {
-    this.catalogCommands.removeProduct(productId);
-  }
-  checkTools(): Promise<void> {
-    return this.tools.checkAll().then(() => {
-      if (!this.stopped) this.schedule();
-    });
-  }
-  findClones(): Promise<Clone[]> {
-    return this.catalogCommands.findClones();
-  }
-  setSetupStep(step: SetupStep): void {
-    this.catalogCommands.setSetupStep(step);
-  }
-  skipSetup(): void {
-    this.catalogCommands.skipSetup();
-  }
-  dismissTip(): void {
-    this.catalogCommands.dismissTip();
-  }
-  openGuide(url: string): void {
-    this.catalogCommands.openGuide(url);
-  }
-  setTerminal(terminalId: Id): void {
-    this.catalogCommands.setTerminal(terminalId);
-  }
-
-  // ── Tasks, backlog, queue, prerequisites, pool and screen ──────────────
-
-  usage<R extends UsageRequest>(request: R): UsageViewFor<R> {
-    return this.tracking.usage(request);
-  }
-  reportImage(taskId: string, imageId: string): Promise<Blob | undefined> {
-    return this.taskCommands.reportImage(taskId, imageId);
-  }
-  previewImage(taskId: Id, path: string, productId?: Id): Promise<{ mime: string; data: string }> {
-    return this.taskCommands.previewImage(taskId, path, productId);
-  }
-  startFirstTask(input: NewTaskInput & { clientId: Id }): Id {
-    return this.taskCommands.startFirstTask(input);
-  }
-  addTask(input: NewTaskInput, schedule = true): Id {
-    return this.taskCommands.addTask(input, schedule);
-  }
-  queueTask(taskId: Id): void {
-    this.taskCommands.queueTask(taskId);
-  }
-  combineBacklog(taskIds: Id[], title: string, clientId: Id): Promise<Id> {
-    return this.taskCommands.combineBacklog(taskIds, title, clientId);
-  }
-  moveToBacklog(taskId: Id): void {
-    this.taskCommands.moveToBacklog(taskId);
-  }
-  updateBacklog(taskId: Id, changes: { title: string; description: string }): void {
-    this.taskCommands.updateBacklog(taskId, changes);
-  }
-  setTaskStart(taskId: Id, choice: WorkChoice): Promise<void> {
-    return this.taskCommands.setTaskStart(taskId, choice);
-  }
-  setTaskProducts(taskId: Id, choices: readonly WorkChoice[]): Promise<void> {
-    return this.taskCommands.setTaskProducts(taskId, choices);
-  }
-  setTaskAddition(taskId: Id, repository: string, name: string, path: string): Promise<void> {
-    return this.taskCommands.setTaskAddition(taskId, repository, name, path);
-  }
-  setTaskApproval(taskId: Id, ask: boolean): void {
-    this.taskCommands.setTaskApproval(taskId, ask);
-  }
-  moveInQueue(taskId: Id, index: number): void {
-    this.taskCommands.moveInQueue(taskId, index);
-  }
-  moveToTop(taskId: Id): void {
-    this.moveInQueue(taskId, 0);
-  }
-  placeInQueue(taskId: Id, anchorId: Id, side: "before" | "after"): number {
-    return this.taskCommands.placeInQueue(taskId, anchorId, side);
-  }
-  moveVisibleInQueue(taskId: Id, visibleIds: Id[], direction: -1 | 1): number {
-    return this.taskCommands.moveVisibleInQueue(taskId, visibleIds, direction);
-  }
-  setHeld(taskId: Id, held: boolean): void {
-    this.taskCommands.setHeld(taskId, held);
-  }
-  setAfter(taskId: Id, after: readonly Id[]): void {
-    this.taskCommands.setAfter(taskId, after);
-  }
-  setRuntimeWait(taskId: Id, after: readonly Id[], reason: string, requestId: string): boolean {
-    return this.taskCommands.setRuntimeWait(taskId, after, reason, requestId);
-  }
-  setStageProfile(
-    taskId: Id,
-    stageId: Id,
-    list: "profileIds" | "reviewerProfileIds",
-    index: number,
-    profileId: Id,
-  ): void {
-    this.taskCommands.setStageProfile(taskId, stageId, list, index, profileId);
-  }
-  addReviewer(taskId: Id, stageId: Id, profileId: Id): void {
-    this.taskCommands.addReviewer(taskId, stageId, profileId);
-  }
-  setPoolLimit(limit: number): void {
-    this.driver.workflow.setPoolLimit(limit);
-  }
-  setToolCap(toolId: Id, cap: number): void {
-    this.driver.workflow.setToolCap(toolId, cap);
-  }
-  setPoolPaused(paused: boolean): void {
-    this.driver.workflow.setPoolPaused(paused);
-  }
-  setScreenUse(mode: ScreenMode): void {
-    this.screens.setScreenUse(mode, this.options.screenHourMs ?? SCREEN_HOUR_MS);
-  }
-  allowScreen(taskId: Id): void {
-    this.screens.allowScreen(taskId);
-  }
-  setTaskScreen(taskId: Id, allowed: boolean): void {
-    this.screens.setTaskScreen(taskId, allowed);
-  }
-
-  // ── Interventions, messages, inbox decisions and take-over ─────────────
-
-  pause(taskId: Id): void {
-    this.inboxCommands.pause(taskId);
-  }
-  resume(taskId: Id): void {
-    this.inboxCommands.resume(taskId);
-  }
-  cancel(taskId: Id): void {
-    this.inboxCommands.cancel(taskId);
-  }
-  retry(itemId: Id): Promise<void> {
-    return this.inboxCommands.retry(itemId);
-  }
-  rerunChecks(itemId: Id): void {
-    this.inboxCommands.rerunChecks(itemId);
-  }
-  sendMessage(taskId: Id, text: string, mode: "now" | "queue" | "interrupt" = "now", clientId?: Id): Id | undefined {
-    return this.inboxCommands.sendMessage(taskId, text, mode, clientId);
-  }
-  removeQueued(taskId: Id, messageId: Id): void {
-    this.inboxCommands.removeQueued(taskId, messageId);
-  }
-  answer(itemId: Id, answer: string, context: SaidContext = {}, how: AskAnswer = "answered"): void {
-    this.inboxCommands.answer(itemId, answer, context, how);
-  }
-  decideForMe(itemId: Id): void {
-    this.inboxCommands.decideForMe(itemId);
-  }
-  allow(itemId: Id, scope: "once" | "always" = "once"): void {
-    this.inboxCommands.allow(itemId, scope);
-  }
-  deny(itemId: Id, note?: string, context: SaidContext = {}): void {
-    this.inboxCommands.deny(itemId, note, context);
-  }
-  approve(itemId: Id): void | Promise<void> {
-    return this.inboxCommands.approve(itemId);
-  }
-  requestChanges(itemId: Id, note: string): void {
-    this.inboxCommands.requestChanges(itemId, note);
-  }
-  decline(itemId: Id): void {
-    this.inboxCommands.decline(itemId);
-  }
-  takeOver(taskId: Id, how: "open" | "copy" = "open"): Promise<Launched> {
-    return this.takeover.takeOver(taskId, how);
-  }
-  reopenTerminal(taskId: Id, how: "open" | "copy" = "open"): Promise<Launched> {
-    return this.takeover.reopenTerminal(taskId, how);
-  }
-  handBackPreview(taskId: Id): Promise<HandBackPreview> {
-    return this.takeover.handBackPreview(taskId);
-  }
-  handBack(taskId: Id, note = "", anyway = false): Promise<void> {
-    return this.takeover.handBack(taskId, note, anyway);
-  }
-  checkShipping(itemId: Id): void {
-    this.shipping.checkShipping(itemId);
-  }
-  shipAgain(itemId: Id): void {
-    this.shipping.shipAgain(itemId);
-  }
-  markDone(itemId: Id): void {
-    this.shipping.markDone(itemId);
-  }
-  addLessons(itemId: Id, keep: number[]): void {
-    this.learnings.accept(itemId, keep);
   }
 }

@@ -74,7 +74,7 @@ export function instructionAgents(script: InstructionScript = {}) {
       ownFile(cwd, title);
       return replies.acceptedBuild(cwd, [], false);
     },
-    toolProbe: scriptedToolProbe({ "claude-code": { status: "ready" }, codex: { status: "ready" }, grok: { status: "ready" }, antigravity: { status: "not-installed" }, opencode: { status: "not-installed" }, pi: { status: "not-installed" }, gh: { status: "ready" }, git: { status: "ready" } }),
+    toolProbe: scriptedToolProbe({ "claude-code": { status: "ready" }, codex: { status: "ready" }, grok: { status: "ready" }, gh: { status: "ready" }, git: { status: "ready" } }),
     openings: (role: string) => agents.received().filter(prompt => prompt.roleId === role.replace(/ /g, "-") && prompt.turn === 1).map(prompt => prompt.text),
   };
 }

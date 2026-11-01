@@ -20,12 +20,30 @@ export function sameLimit(a: Pick<UsageReport, "toolId" | "kind" | "model">, b: 
   return a.toolId === b.toolId && a.kind === b.kind && (a.model ?? "") === (b.model ?? "");
 }
 
+const USAGE_READING_EQUALITY_KEYS: Readonly<Record<Exclude<keyof UsageReport, "at">, true>> = {
+  toolId: true,
+  model: true,
+  kind: true,
+  status: true,
+  utilization: true,
+  windowMinutes: true,
+  name: true,
+  resetsAt: true,
+  overage: true,
+};
+void USAGE_READING_EQUALITY_KEYS;
+
 /** The same reading of the same limit: only the time it was reported differs. */
 export function sameReading(a: UsageReport, b: UsageReport): boolean {
-  return sameLimit(
-    a,
-    b
-  ) && a.status === b.status && (a.utilization ?? -1) === (b.utilization ?? -1) && (a.resetsAt ?? 0) === (b.resetsAt ?? 0) && (a.windowMinutes ?? 0) === (b.windowMinutes ?? 0) && (a.name ?? "") === (b.name ?? "");
+  return (
+    sameLimit(a, b)
+    && a.status === b.status
+    && (a.utilization ?? -1) === (b.utilization ?? -1)
+    && (a.resetsAt ?? 0) === (b.resetsAt ?? 0)
+    && (a.windowMinutes ?? 0) === (b.windowMinutes ?? 0)
+    && (a.name ?? "") === (b.name ?? "")
+    && (a.overage ?? false) === (b.overage ?? false)
+  );
 }
 
 /**

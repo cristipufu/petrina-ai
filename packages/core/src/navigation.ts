@@ -1,8 +1,12 @@
 import { taskProductIds } from "./repositories.js";
 import { boardSections } from "./board.js";
+import { countableInboxItems, INBOX_CATALOG } from "./inbox-catalog.js";
 import type { InboxItem, State, Task } from "./model.js";
 
-export type Page = "board" | "history" | "products" | "routines" | "agents" | "analytics" | "library" | "settings";
+export const PAGES = ["board", "history", "products", "routines", "agents", "analytics", "library", "settings"] as const;
+export type Page = (typeof PAGES)[number];
+export const SHEET_TABS = ["overview", "plan", "design", "review", "session"] as const;
+export type SheetTab = (typeof SHEET_TABS)[number];
 export type KeyArea = "board" | "inbox";
 export type TaskList = KeyArea | "history" | undefined;
 
@@ -40,7 +44,7 @@ export function boardOrder(tasks: readonly Task[], visible: (task: Task) => bool
 /** Agents kept waiting first, then by task priority and age. Quiet screen requests come after everything else. */
 export function inboxOrder(state: State): InboxItem[] {
   const started = new Map(state.tasks.map((task) => [task.id, task.startedAt ?? 0]));
-  const rank = (item: InboxItem) => (item.blocking ? 0 : item.kind === "screen" ? 2 : 1);
+  const rank = (item: InboxItem) => (item.blocking ? 0 : INBOX_CATALOG[item.kind].visibility.quietSort ? 2 : 1);
   return [...state.inbox].sort((a, b) => rank(a) - rank(b) || (started.get(a.taskId) ?? 0) - (started.get(b.taskId) ?? 0) || a.at - b.at);
 }
 
@@ -49,7 +53,7 @@ export function inboxOrder(state: State): InboxItem[] {
  * waits at a checkpoint. "Nobody is stuck" only when nothing is. A quiet screen request is none of these.
  */
 export function inboxSummary(items: readonly InboxItem[]): string {
-  const counted = items.filter((item) => item.kind !== "screen");
+  const counted = countableInboxItems(items);
   if (counted.length === 0) return "You're not blocking anyone.";
   const waiting = counted.filter((item) => item.blocking).length;
   const stuck = counted.filter((item) => !item.blocking && item.kind === "stuck").length;
@@ -61,11 +65,8 @@ export function inboxSummary(items: readonly InboxItem[]): string {
   return parts.join(" ");
 }
 
-export function inboxTab(kind: InboxItem["kind"]): "plan" | "design" | "review" | "session" {
-  if (kind === "plan") return "plan";
-  if (kind === "design" || kind === "disagreement") return "design";
-  if (kind === "delivery" || kind === "guide" || kind === "learnings") return "review";
-  return "session";
+export function inboxTab(kind: InboxItem["kind"]): Exclude<SheetTab, "overview"> {
+  return INBOX_CATALOG[kind].tab;
 }
 
 /** Keep the task, not its position. Only a removed task hands its place to its neighbour. */

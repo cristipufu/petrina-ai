@@ -4,9 +4,9 @@
 
 import { useCallback, useRef, useState, type RefObject } from "react";
 import { Bell, Ellipsis, Hand, Plus, Search, X } from "lucide-react";
-import type { State } from "@petrina/core";
+import { countableInboxItems, type State } from "@petrina/core";
 import type { EngineStatus } from "../engine";
-import { mod } from "../keyboard";
+import { GLOBAL_COMMANDS, shortcutTitle } from "../commands";
 import { screenMark, type Lookup } from "../lib";
 import type { Theme } from "../theme";
 import { Logo, useDismiss } from "./bits";
@@ -32,6 +32,8 @@ interface TopBarProps {
   room: BarRoom;
   product: string;
   onProduct: (productId: string) => void;
+  switcherOpen?: boolean;
+  onSwitcherOpenChange?: (open: boolean) => void;
   query: string;
   onClearQuery: () => void;
   onPalette: () => void;
@@ -48,7 +50,7 @@ interface TopBarProps {
   onAnalytics: () => void;
 }
 
-export function TopBar({ state, find, status, room, product, onProduct, query, onClearQuery, onPalette, blocking, inboxOpen, inboxButton, onOpenInbox, onToggleInbox, onNewTask, theme, onTheme, onOpen, onAnalytics }: TopBarProps) {
+export function TopBar({ state, find, status, room, product, onProduct, switcherOpen, onSwitcherOpenChange, query, onClearQuery, onPalette, blocking, inboxOpen, inboxButton, onOpenInbox, onToggleInbox, onNewTask, theme, onTheme, onOpen, onAnalytics }: TopBarProps) {
   const { roomy, searchField, poolSquares, barExtras, inboxLabel } = room;
   return (
     <header className="topbar">
@@ -56,19 +58,25 @@ export function TopBar({ state, find, status, room, product, onProduct, query, o
         <Logo />
         {roomy && "Petrina"}
       </div>
-      <ProductSwitcher state={state} value={product} onChange={onProduct} />
+      <ProductSwitcher
+        state={state}
+        value={product}
+        onChange={onProduct}
+        {...(switcherOpen !== undefined ? { open: switcherOpen } : {})}
+        {...(onSwitcherOpenChange ? { onOpenChange: onSwitcherOpenChange } : {})}
+      />
       <div className="palette-launcher">
         <button
           className={searchField ? "search-field palette-trigger" : "btn ghost icon"}
           aria-label="Find tasks, products or actions"
-          title={`Command palette (${mod}K)`}
+          title={shortcutTitle(GLOBAL_COMMANDS.palette.label, GLOBAL_COMMANDS.palette.shortcutDisplay)}
           onClick={onPalette}
         >
           <Search size={18} aria-hidden="true" />
           {searchField && (
             <>
               <span>Find tasks or actions</span>
-              <kbd>{mod}K</kbd>
+              <kbd>{GLOBAL_COMMANDS.palette.shortcutDisplay}</kbd>
             </>
           )}
         </button>
@@ -101,14 +109,18 @@ export function TopBar({ state, find, status, room, product, onProduct, query, o
         className="btn quiet"
         onClick={onToggleInbox}
         aria-pressed={inboxOpen}
-        aria-label={`Inbox, ${state.inbox.length} waiting on you`}
-        title="Needs you (I)"
+        aria-label={`Inbox, ${countableInboxItems(state.inbox).length} waiting on you`}
+        title={shortcutTitle(GLOBAL_COMMANDS.inbox.label, GLOBAL_COMMANDS.inbox.shortcutDisplay)}
       >
         <Bell size={16} aria-hidden="true" />
         {inboxLabel && "Inbox"}
-        {state.inbox.length > 0 && <span className="count">{state.inbox.length}</span>}
+        {countableInboxItems(state.inbox).length > 0 && <span className="count">{countableInboxItems(state.inbox).length}</span>}
       </button>
-      <button className="btn primary" onClick={onNewTask} title={`New task (${mod}N)`}>
+      <button
+        className="btn primary"
+        onClick={onNewTask}
+        title={shortcutTitle(GLOBAL_COMMANDS["new-task"].label, GLOBAL_COMMANDS["new-task"].shortcutDisplay)}
+      >
         <Plus size={16} aria-hidden="true" />
         New task
       </button>

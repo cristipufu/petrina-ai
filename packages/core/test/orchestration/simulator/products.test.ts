@@ -15,6 +15,25 @@ describe("product settings in the simulator", () => {
     expect(sim.getState().tasks.find((task) => task.id === oldId)).toEqual(before.tasks[0]);
     const id = sim.addTask({ productId: "p", title: "Next task" });
     expect(sim.getState().tasks.find((task) => task.id === id)).toMatchObject({ delivery: "local", approveDelivery: false });
+    sim.updateProduct("p", {
+      name: "Petrina HQ",
+      delivery: "release",
+      approveDelivery: true,
+      shipLowRisk: true,
+      releaseBump: "minor",
+    });
+    sim.updateProduct("p", { name: "Petrina HQ", delivery: "local", approveDelivery: false });
+    expect(sim.getState().products[0]).toEqual({
+      ...before.products[0],
+      name: "Petrina HQ",
+      delivery: "local",
+      approveDelivery: false,
+      shipLowRisk: true,
+      releaseBump: "minor",
+    });
+    sim.updateProduct("p", { name: "Petrina HQ", delivery: "local", approveDelivery: false, shipLowRisk: false });
+    expect(sim.getState().products[0]!.shipLowRisk).toBe(false);
+    expect(sim.getState().products.find((product) => product.id === "p")!.name).toBe("Petrina HQ");
     sim.setPoolPaused(false);
     sim.tick(); sim.tick();
     expect(sim.getState().tasks[0]!.timeline.some((entry) => entry.text.includes("Petrina HQ"))).toBe(true);

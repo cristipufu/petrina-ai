@@ -57,12 +57,17 @@ export interface ToolAdapter {
     startGapMs?: number;
   };
   terminalArgs?: import("./terminal-arguments.js").TerminalArgumentFormatter;
+  resolveTerminalMode?: (path: string) => Promise<import("./terminal-plan.js").AskMode | undefined>;
   id: string;
   name: string;
   /** The adapter's entry point, resolved from node_modules. Unset when `command` is the agent itself. */
   entry?: string;
   /** Embedded ACP protocol translator subcommand inside `petrina-engine` (or its source module under Bun). */
-  internalSubcommand?: "__internal-claude-acp" | "__internal-codex-acp" | "__internal-agy-acp" | "__internal-pi-acp";
+  internalSubcommand?: `__internal-${string}-acp`;
+  /** Source module under `packages/agent-runtime/src/` backing `internalSubcommand` during non-compiled runs. */
+  internalSourceFile?: string;
+  /** In-process entrypoint invoked when `petrina-engine` dispatches `internalSubcommand`. */
+  internalRunner?: (rawArgs?: readonly string[]) => Promise<void> | void;
   /** The program to spawn when the agent is the ACP server. Otherwise Petrina launches the ACP connector. */
   command?: readonly string[];
   /** The CLI the tool needs on PATH, for detection and for taking over in a terminal. */

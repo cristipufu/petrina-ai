@@ -3,7 +3,7 @@
 // the others; a second ask joins the one under way; and a tool a check gave up on is gone before the
 // next check starts it again, so copies never pile up.
 
-import { CHECK_NAMES, checkOf, type CheckId, type Id, type ToolCheck } from "@petrina/core";
+import { CHECK_IDS, CHECK_NAMES, checkOf, type CheckId, type Id, type ToolCheck } from "@petrina/core";
 import { ToolCheckCoordinator, TOOL_CHECK_LINGER_MS, type ToolCheckClock } from "@petrina/orchestrator";
 import { notReady, ToolProblem, type RuntimeTask } from "./engine-options.js";
 import type { Kernel } from "./kernel.js";
@@ -13,7 +13,7 @@ import { ADAPTERS } from "@petrina/agent-runtime/tools";
 import { NativeToolProbe } from "./tool-probe.js";
 
 /** Everything the tools check looks at, in the order it is shown. */
-export const CHECKS: readonly CheckId[] = ["claude-code", "codex", "grok", "antigravity", "opencode", "pi", "gh", "git"];
+export const CHECKS: readonly CheckId[] = CHECK_IDS;
 
 const clock: ToolCheckClock = {
   now: () => Date.now(),

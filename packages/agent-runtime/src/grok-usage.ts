@@ -4,11 +4,12 @@ import { spawn } from "node:child_process";
 import { Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
 import { grokReports } from "./grok-report.js";
-import { GROK_AGENT_COMMAND } from "./tool-entry.js";
 import type { ReadOptions } from "./codex-usage.js";
 import type { UsageInfo } from "./failures.js";
 import { UsageReader } from "./usage-reader.js";
 import { withUsageProcess } from "./usage-process.js";
+
+export const GROK_AGENT_COMMAND = ["grok", "--permission-mode", "auto", "agent", "stdio"] as const;
 
 /** Initialize ACP, ask its read-only billing extension, then stop. No session or AI turn. */
 export async function readGrokUsage(options: ReadOptions): Promise<UsageInfo[]> {

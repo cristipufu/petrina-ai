@@ -403,3 +403,26 @@ it("enforces the 650-line and 160-character ceilings on production Rust modules 
   ]);
   expect(found("pub fn clean() -> bool { true }\n", "apps/desktop/src-tauri/src/lib.rs")).toEqual([]);
 });
+
+it("rejects hardcoded multi-provider tables and dispatches outside providers.ts and agent-runtime/src/providers/", () => {
+  const disallowed = [
+    `export const TOOLS = ["claude-code", "codex", "grok"] as const;\n`,
+    `export const THEMES = { "claude-code": "#111", codex: "#222", grok: "#333" };\n`,
+    `export type ToolId = "claude-code" | "codex" | "grok";\n`,
+    `export function pick(id: string) {\n  switch (id) {\n    case "claude-code":\n      return 1;\n    case "codex":\n      return 2;\n    case "grok":\n      return 3;\n  }\n  return 0;\n}\n`,
+    `export const match = (id: string) => id === "claude-code" || id === "codex" || id === "opencode";\n`,
+    `export function branch(id: string) {\n  if (id === "claude-code") return 1;\n  else if (id === "codex") return 2;\n  else if (id === "pi") return 3;\n  return 0;\n}\n`,
+    `export const isCodex = (id: string) => id === "codex";\n`,
+  ];
+  for (const snippet of disallowed) {
+    expect(found(snippet, "packages/core/src/example.ts")).toEqual([
+      expect.stringContaining("derive provider tables and dispatch from PROVIDER_CATALOG"),
+    ]);
+    expect(found(snippet, "apps/desktop/src/example.ts")).toEqual([
+      expect.stringContaining("derive provider tables and dispatch from PROVIDER_CATALOG"),
+    ]);
+    expect(found(snippet, "packages/core/src/providers.ts")).toEqual([]);
+    expect(found(snippet, "packages/agent-runtime/src/providers/index.ts")).toEqual([]);
+  }
+  expect(found(`export const CAPS = { "claude-code": 5, codex: 4 };\n`, "packages/core/src/demo.ts")).toEqual([]);
+});

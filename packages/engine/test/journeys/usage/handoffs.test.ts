@@ -4,7 +4,7 @@ import { fakeAgentSessions } from "../../fixtures/fake-agent-sessions.js";
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { journeyProblems, journeyView, usageLines, type Task } from "@petrina/core";
+import { CHECK_NAMES, journeyProblems, journeyView, PROVIDER_DESCRIPTORS, PROVIDER_IDS, usageLines, type Task } from "@petrina/core";
 import * as gitOps from "@petrina/repositories/git";
 import { waitFor } from "../../fixtures.js";
 
@@ -330,7 +330,8 @@ describe.concurrent("an agent that runs out of usage", () => {
         const reset = new Date(Math.min(...run.engine.getState().pool.limited!.map((limit) => limit.until)));
         const clock = reset.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
         const day = reset.toLocaleDateString("en-US", { weekday: "short" });
-        const prefix = "Waiting for usage: Claude Code, Codex, Grok, Antigravity, OpenCode and Pi are out until ";
+        const allNames = PROVIDER_DESCRIPTORS.map((provider) => provider.name);
+        const prefix = `Waiting for usage: ${allNames.slice(0, -1).join(", ")} and ${allNames.at(-1)} are out until `;
         // The reset may cross midnight; either date form remains valid if midnight passes after the status was recorded.
         expect([`${prefix}${clock}`, `${prefix}${day} ${clock}`]).toContain(waiting.statusLine);
         expect(waiting.holdsSlot).toBe(false);
@@ -359,8 +360,9 @@ describe.concurrent("an agent that runs out of usage", () => {
         expect(builders[1]!.text).toStartWith("Petrina restarted while you were on");
         expect(lines(task).some((line) => line.includes("took over from"))).toBe(false);
         expect(lines(task)).toContain("Picked up where it left off");
-        // Claude Code's limit ended and was dropped; Codex's and Grok's, set to last longer, are still there.
-        expect(run.engine.getState().pool.limited?.map((limit) => limit.toolId)).toEqual(["codex", "grok", "antigravity", "opencode", "pi"]);
+        // Claude Code's limit ended and was dropped; the remaining providers' longer limits are still there.
+        const nonClaudeIds = PROVIDER_IDS.filter((id) => id !== "claude-code");
+        expect(run.engine.getState().pool.limited?.map((limit) => limit.toolId)).toEqual(nonClaudeIds);
         expect(task.journey!.filter((step) => step.roleId === "builder")).toEqual([expect.objectContaining({ id: boxId, startedAt, end: "done" })]);
         // Picking the step up after the wait is a retry, counted once, with nothing left owed.
         const details = run.engine.usage({ view: "analytics", period: "today" }).squad.details;
@@ -377,13 +379,11 @@ describe.concurrent("an agent that runs out of usage", () => {
       // must not erase Claude's already reported limit or admit a replacement.
       entry: "builder",
       before: (engine) => {
-        engine.s.pool.limited = [
-          { toolId: "codex", until: Date.now() + 3_600_000, reason: "Codex's usage limit" },
-          { toolId: "grok", until: Date.now() + 3_600_000, reason: "Grok's rate limit" },
-          { toolId: "antigravity", until: Date.now() + 3_600_000, reason: "Antigravity's usage limit" },
-          { toolId: "opencode", until: Date.now() + 3_600_000, reason: "OpenCode's usage limit" },
-          { toolId: "pi", until: Date.now() + 3_600_000, reason: "Pi's usage limit" },
-        ];
+        engine.s.pool.limited = PROVIDER_IDS.filter((id) => id !== "claude-code").map((toolId) => ({
+          toolId,
+          until: Date.now() + 3_600_000,
+          reason: `${CHECK_NAMES[toolId]}'s usage limit`,
+        }));
       },
     });
   });

@@ -15,6 +15,7 @@ import {
 } from "@petrina/core";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useViewport, viewportSize } from "./components/bits";
+import type { PaletteMode } from "./components/CommandPalette";
 import { CouldNotStart, EngineRecovery, StartingScreen } from "./components/EngineState";
 import { FirstRun } from "./components/FirstRun";
 import type { HistoryPosition } from "./components/History";
@@ -27,9 +28,11 @@ import { TaskDrafts } from "./drafts";
 import { mode, sim, useEngineStatus, useSim, type EngineStatus } from "./engine";
 import { useSingleKeys } from "./keyboard";
 import { blockingCount, lookup } from "./lib";
+import { useModalOpen, usePopoverOpen } from "./modalLayer";
 import { useLanding } from "./notify/useLanding";
 import { useNotices } from "./notify/useNotices";
 import type { Notice } from "./notify/words";
+import { PAGE_CATALOG } from "./pageCatalog";
 import { routeHref, useAppRoute } from "./routes";
 import { taskCommands } from "./taskCommands";
 import { initialTheme, type Theme } from "./theme";
@@ -92,17 +95,17 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
   );
   const viewport = useViewport();
   const [route, navigate] = useAppRoute();
-  const { view, product, sheet, productSettings } = route;
-  const productSettingsOpen = view === "products" && Boolean(productSettings && find.product(productSettings));
+  const { view, product, sheet } = route;
   const setSheet = useCallback((next: typeof sheet) => navigate((previous) => ({ ...previous, sheet: next })), [navigate]);
   const [rolePanel, setRolePanel] = useState<RolePanelTarget>();
-  const [routineDialog, setRoutineDialog] = useState(false);
   const setProductSettings = (next: string | undefined) =>
     navigate((previous) => ({ ...previous, view: "products", productSettings: next }));
   /** "About these numbers" opens with Analytics when a task sheet's link leads there. */
   const [aboutNumbers, setAboutNumbers] = useState(false);
   const [query, setQuery] = useState("");
   const [palette, setPalette] = useState(false);
+  const [paletteMode, setPaletteMode] = useState<PaletteMode>("default");
+  const [switcherOpen, setSwitcherOpen] = useState(false);
   const [shortcuts, setShortcuts] = useState(false);
   const singleKeys = useSingleKeys();
   const [owner, setOwner] = useState<KeyArea>("board");
@@ -152,11 +155,11 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
   const inboxPanel = useRef<HTMLElement>(null);
   const focusArea = useRef<KeyArea | undefined>(undefined);
   const { toasts, showToast, toast, dismiss } = useToasts();
-  const modalWithoutShortcuts =
-    creating || addingProduct || Boolean(rolePanel) || Boolean(dependencyTask) || routineDialog || productSettingsOpen;
+  const modalOpen = useModalOpen();
+  const popoverOpen = usePopoverOpen();
   // Read by notification clicks, which arrive outside React's renders.
-  const latest = useRef({ state, dialog: modalWithoutShortcuts, sheet: sheet !== undefined });
-  latest.current = { state, dialog: modalWithoutShortcuts, sheet: sheet !== undefined };
+  const latest = useRef({ state, dialog: modalOpen, sheet: sheet !== undefined });
+  latest.current = { state, dialog: modalOpen, sheet: sheet !== undefined };
 
   // What the top bar gives up as the window narrows (or zooms, or text grows), in this order: the
   // wordmark and repeated wording, then the search field, the pool's squares, then pool and theme
@@ -208,9 +211,14 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
   const focusedTask =
     sheetTask ?? (area === "inbox" ? find.task(highlightedItem?.taskId) : area === "board" ? find.task(currentBoardId) : undefined);
   const [paletteTaskId, setPaletteTaskId] = useState<string>();
-  const openPalette = () => {
+  const openPalette = (nextMode: PaletteMode = "default") => {
     setPaletteTaskId(focusedTask?.id);
+    setPaletteMode(nextMode);
     setPalette(true);
+  };
+  const switchProduct = () => {
+    if (document.querySelector(".topbar .switcher")) setSwitcherOpen(true);
+    else openPalette("product");
   };
 
   const open = useCallback(
@@ -244,6 +252,7 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
   }, []);
   const closeOverlays = useCallback(() => {
     setPalette(false);
+    setPaletteMode("default");
     setShortcuts(false);
   }, []);
   const { jump, landing, requestJump, blankLanding } = useLanding({
@@ -267,7 +276,7 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
     }));
     setMessageFocus(undefined);
     setOwner("board");
-    focusArea.current = page === "board" || page === "history" ? "board" : undefined;
+    focusArea.current = PAGE_CATALOG[page].focusBoardOnEnter ? "board" : undefined;
   };
   /** App settings, or a product's editor on Products. */
   const openSettings = (productId?: string) => {
@@ -332,10 +341,7 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
     navigate((previous) => ({
       ...previous,
       product: id,
-      view:
-        previous.view === "analytics" || previous.view === "history" || previous.view === "routines"
-          ? previous.view
-          : "board",
+      view: PAGE_CATALOG[previous.view].preservesViewOnProductSwitch ? previous.view : "board",
       sheet: undefined,
       productSettings: undefined,
       history: undefined,
@@ -376,11 +382,23 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
       historyPage: history.page,
       visible,
     },
-    dialogs: { palette, paletteTask, shortcuts, modalWithoutShortcuts, singleKeys, focusedTask },
-    setters: { setBoardKeyboard, setBoardId, setInboxId, setOwner, setPalette, setShortcuts, setMessageFocus },
+    dialogs: { palette, paletteTask, shortcuts, modalOpen, popoverOpen, singleKeys, focusedTask },
+    setters: {
+      setBoardKeyboard,
+      setBoardId,
+      setInboxId,
+      setOwner,
+      setPalette: (next) => {
+        setPalette(next);
+        if (!next) setPaletteMode("default");
+      },
+      setShortcuts,
+      setMessageFocus,
+    },
     commands: {
       sendAction,
-      openPalette,
+      openPalette: () => openPalette(),
+      switchProduct,
       open,
       openBoard: (id) => openBoard(id),
       openItem: (id) => openItem(id),
@@ -419,9 +437,11 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
         room={{ roomy, searchField, poolSquares, barExtras, inboxLabel }}
         product={product}
         onProduct={pickProduct}
+        switcherOpen={switcherOpen}
+        onSwitcherOpenChange={setSwitcherOpen}
         query={query}
         onClearQuery={() => setQuery("")}
-        onPalette={openPalette}
+        onPalette={() => openPalette()}
         blocking={blocking}
         inboxOpen={inboxOpen}
         inboxButton={inboxButton}
@@ -470,7 +490,6 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
           onAboutSeen: aboutSeen,
           onRunPosition: setRunPosition,
           onOpenRoutineRuns: (id) => navigate((previous) => ({ ...previous, routineRuns: { id }, sheet: undefined })),
-          onRoutineDialog: setRoutineDialog,
           onRolePanel: setRolePanel,
           onLibraryView: (libraryView) => navigate((previous) => ({ ...previous, libraryView })),
           onShowShortcuts: () => setShortcuts(true),
@@ -531,6 +550,7 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
           creating,
           newTitle,
           palette,
+          paletteMode,
           actions,
           forTask,
           shortcuts,
@@ -558,7 +578,10 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
             setCreating(false);
             if (!sheet) go("board");
           },
-          onClosePalette: () => setPalette(false),
+          onClosePalette: () => {
+            setPalette(false);
+            setPaletteMode("default");
+          },
           onOpenTask: (id) => open(id),
           onPickProduct: pickProduct,
           onHistoryProduct: (id) => {

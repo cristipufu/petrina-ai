@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   DELIVERY_LABEL,
+  DELIVERY_MODES,
   commandInputText,
   parseCommand,
   productHistory,
@@ -113,7 +114,7 @@ export function ProductEditor({ product, state, onClose, onRemoved }: { product:
             role="radiogroup"
             aria-labelledby={`product-delivery-${product.id}`}
           >
-            {(Object.keys(DELIVERY_LABEL) as DeliveryMode[]).map(mode => <button
+            {DELIVERY_MODES.map(mode => <button
               key={mode}
               role="radio"
               aria-checked={delivery === mode}

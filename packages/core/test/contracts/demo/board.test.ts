@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { boardSections, currentStep, pipelineOf, stepTip, stripOf } from "../../../src/board.js";
 import { createDemoState, createPortfolioDemo } from "../../../src/demo.js";
-import { composePlan } from "../../../src/library.js";
-import type { Task } from "../../../src/model.js";
+import { BUILT_IN_ROLES, composePlan } from "../../../src/library.js";
+import type { Role, Task } from "../../../src/model.js";
 
 const demo = createDemoState(1_000_000_000);
 
@@ -40,6 +40,31 @@ describe("each card's own pipeline", () => {
   it("checks every step once the work is delivered, and has none while queued", () => {
     expect(pipelineOf(byTitle("Report errors to Sentry")).every((step) => step.state === "done")).toBe(true);
     expect(pipelineOf(byTitle("Export notes to PDF"))).toEqual([]);
+  });
+
+  it("derives pipeline step labels from RoleResult contracts for custom role ids", () => {
+    const customRoles: readonly Role[] = [
+      ...BUILT_IN_ROLES,
+      { ...BUILT_IN_ROLES.find((role) => role.result === "build")!, id: "custom-implementer", name: "Implementer" },
+      { ...BUILT_IN_ROLES.find((role) => role.result === "checks")!, id: "custom-acceptance", name: "Acceptance Partner" },
+      { ...BUILT_IN_ROLES.find((role) => role.result === "delivery")!, id: "custom-shipper", name: "Release Publisher" },
+    ];
+    const base = byTitle("Fix login loop on Safari");
+    const task: Task = {
+      ...base,
+      stageIndex: 0,
+      plan: {
+        plannerProfileId: "opus-high",
+        rationale: "Custom role ids",
+        stages: [
+          { id: "c:build", kind: "do", title: "Implement", roleId: "custom-implementer", profileIds: ["opus-high"] },
+          { id: "c:test", kind: "do", title: "Verify", roleId: "custom-acceptance", profileIds: ["sonnet-medium"] },
+          { id: "c:review", kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["sol-high"] },
+          { id: "c:ship", kind: "do", title: "Publish", roleId: "custom-shipper", profileIds: ["opus-high"] },
+        ],
+      },
+    };
+    expect(pipelineOf(task, customRoles).map((step) => step.label)).toEqual(["Plan", "Build", "Test", "Review", "Ship"]);
   });
 });
 

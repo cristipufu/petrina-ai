@@ -1,16 +1,30 @@
-import { createTaskState, DEFAULT_PROFILES, DEMO_PRODUCTS, displayTask, KNOWN_TOOLS, libraryRoles, NO_ROLE_CHANGES, type DeepMutable, type State, type Task } from "@petrina/core";
+import {
+  CATALOG_TOOLS,
+  createTaskState,
+  DEFAULT_PROFILES,
+  DEMO_PRODUCTS,
+  displayTask,
+  libraryRoles,
+  NO_ROLE_CHANGES,
+  type DeepMutable,
+  type State,
+  type Task,
+} from "@petrina/core";
 
 /** Private catalog data, without running the demo's workflows or generating their history. */
 export function stateFixture(now = 1_000_000_000, extra: Partial<State> = {}): DeepMutable<State> {
   return structuredClone({
-    now, seq: 0, products: DEMO_PRODUCTS, roles: libraryRoles(NO_ROLE_CHANGES), profiles: DEFAULT_PROFILES,
-    tools: [...KNOWN_TOOLS,
-      { id: "grok", name: "Grok", command: ["grok"], status: "not-installed", models: ["Grok 4.7"] },
-      { id: "antigravity", name: "Antigravity", command: ["agy"], status: "not-installed", models: ["Gemini 4 Argon"] },
-      { id: "opencode", name: "OpenCode", command: ["opencode"], status: "not-installed", models: ["Claude Sonnet 4.5", "GPT-5"] },
-      { id: "pi", name: "Pi", command: ["pi"], status: "not-installed", models: ["Claude Sonnet 4.5", "GPT-5"] },
-    ],
-    tasks: [], inbox: [], pool: { limit: 5, paused: true, toolCaps: { "claude-code": 3, codex: 2 } }, planner: "sonnet-medium", ...extra,
+    now,
+    seq: 0,
+    products: DEMO_PRODUCTS,
+    roles: libraryRoles(NO_ROLE_CHANGES),
+    profiles: DEFAULT_PROFILES,
+    tools: [...CATALOG_TOOLS],
+    tasks: [],
+    inbox: [],
+    pool: { limit: 5, paused: true, toolCaps: { "claude-code": 3, codex: 2 } },
+    planner: "sonnet-medium",
+    ...extra,
   } satisfies State) as DeepMutable<State>;
 }
 

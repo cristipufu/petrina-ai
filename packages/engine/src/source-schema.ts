@@ -1,4 +1,7 @@
 import { z } from "zod";
+import { DELIVERY_MODES } from "@petrina/core";
+
+export const DeliveryModeSchema = z.enum(DELIVERY_MODES);
 
 export const StartFromSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("default") }),
@@ -8,11 +11,7 @@ export const StartFromSchema = z.discriminatedUnion("kind", [
 export const WorkChoiceSchema = z.object({
   productId: z.string(),
   startFrom: StartFromSchema,
-  delivery: z.enum([
-  "pull-request",
-  "release",
-  "local"
-]),
+  delivery: DeliveryModeSchema,
   repo: z.string().max(300).optional(),
   reason: z.string().max(1000).optional(),
   builderProfileId: z.string().optional(),

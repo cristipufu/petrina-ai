@@ -1,3 +1,4 @@
+import { STAGE_KINDS } from "@petrina/core";
 import { z } from "zod";
 import { WorkChoiceSchema } from "./source-schema.js";
 
@@ -12,7 +13,7 @@ export const PlanResult = z.object({
   stages: z
     .array(
       z.object({
-        kind: z.enum(["do", "converge", "review-chain", "gate"]),
+        kind: z.enum(STAGE_KINDS),
         title: z.string().min(1).max(60),
         roleId: z.string(),
         profileIds: z.array(z.string()).default([]),

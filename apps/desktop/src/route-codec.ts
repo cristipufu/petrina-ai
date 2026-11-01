@@ -1,19 +1,10 @@
 // Pure address decoding and encoding; the browser wrapper supplies its current query.
-import { HISTORY_STATUSES, type HistoryStatus, type Page, type TaskList } from "@petrina/core";
+import { HISTORY_STATUSES, SHEET_TABS, type HistoryStatus, type Page, type SheetTab, type TaskList } from "@petrina/core";
 import type { HistoryPosition } from "./components/History";
-import type { SheetTab } from "./components/TaskCard";
+import { PAGE_NAMES } from "./pageCatalog";
 
-export const PAGE_NAMES: Record<Page, string> = {
-  board: "Board",
-  history: "History",
-  products: "Products",
-  routines: "Routines",
-  agents: "Agents",
-  analytics: "Analytics",
-  library: "Library",
-  settings: "Settings"
-};
-const TABS: readonly SheetTab[] = ["overview", "plan", "design", "review", "session"];
+export { PAGE_NAMES };
+const TABS: readonly SheetTab[] = SHEET_TABS;
 const OWN_PARAMS = ["product", "from", "node", "attempt", "historyCursor", "historyQuery", "historyPrevious", "historyStatus", "routine"];
 
 export type TaskRoute = { taskId: string; tab: SheetTab; list: TaskList; itemId?: string; stepId?: string; attemptId?: string };

@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { LONG_PIPELINE, pipelineOf, stepTip, stripOf, type AgentProfile, type Product, type Role, type RoleIcon, type Task } from "@petrina/core";
 import { profileText, type Lookup } from "../lib";
+import { useModalLayer, type ModalLayerKind } from "../modalLayer";
 
 export const ROLE_ICONS: Record<RoleIcon, LucideIcon> = {
   map: MapIcon,
@@ -197,6 +198,7 @@ export function dismissPopovers(): void {
  * Capture also avoids catching the opening click when a picker mounts during that click.
  */
 export function useDismiss(ref: RefObject<HTMLElement | null>, open: boolean, close: () => void, outsideEvent: "mousedown" | "click" = "mousedown"): void {
+  useModalLayer("popover", open);
   useEffect(() => {
     if (!open) return;
     const onOutside = (event: MouseEvent) => {
@@ -258,7 +260,13 @@ const traps: HTMLElement[] = [];
  * Escape included: it closes the topmost dialog only. Focus moves in when it opens and goes back to
  * whatever had it before when it closes, or to `returnTo` when that is gone, then the dialog beneath it.
  */
-export function useFocusTrap(ref: RefObject<HTMLElement | null>, onEscape?: () => void, returnTo?: () => HTMLElement | null): void {
+export function useFocusTrap(
+  ref: RefObject<HTMLElement | null>,
+  onEscape?: () => void,
+  returnTo?: () => HTMLElement | null,
+  layer: ModalLayerKind = "modal",
+): void {
+  useModalLayer(layer);
   // Read while rendering, before the dialog's own autofocus moves it.
   const [opener] = useState(() => document.activeElement);
   const escape = useRef(onEscape);

@@ -21,18 +21,19 @@ import {
   type WorkTurn,
 } from "@petrina/core";
 import {
-  countsOf,
+  lineOf,
   momentOf,
   num,
-  opt,
+  productOf,
   readingOf,
   tallyOfRow,
   TALLY_COLUMNS,
   turnOf,
   where,
   WORKLOG_SCHEMA,
-  type CountRow,
+  type LineRow,
   type MomentRow,
+  type ProductRow,
   type ReadingRow,
   type TurnRow,
 } from "./worklog-schema.js";
@@ -47,6 +48,8 @@ export class WorkLog implements WorkLogReader {
       for (const statement of WORKLOG_SCHEMA) db.run(statement);
       const columns = new Set(db.query<{ name: string }, []>("PRAGMA table_info(work_turns)").all().map(row => row.name));
       for (const column of ["journey_id", "agent_run_id", "agent_seat"]) if (!columns.has(column)) db.run(`ALTER TABLE work_turns ADD COLUMN ${column} TEXT`);
+      const readingColumns = new Set(db.query<{ name: string }, []>("PRAGMA table_info(usage_readings)").all().map(row => row.name));
+      if (!readingColumns.has("overage")) db.run("ALTER TABLE usage_readings ADD COLUMN overage INTEGER");
     }).immediate();
   }
 
@@ -230,8 +233,19 @@ export class WorkLog implements WorkLogReader {
     return this.db.transaction(() => {
       this.db.query("DELETE FROM usage_readings WHERE at < ?").run(cutoff);
       this.db
-        .query("INSERT INTO usage_readings (tool_id, kind, model, status, utilization, window_minutes, name, resets_at, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
-        .run(report.toolId, report.kind, report.model ?? "", report.status, num(report.utilization), num(report.windowMinutes), report.name ?? null, num(report.resetsAt), report.at);
+        .query("INSERT INTO usage_readings (tool_id, kind, model, status, utilization, window_minutes, name, resets_at, overage, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .run(
+          report.toolId,
+          report.kind,
+          report.model ?? "",
+          report.status,
+          num(report.utilization),
+          num(report.windowMinutes),
+          report.name ?? null,
+          num(report.resetsAt),
+          report.overage === undefined ? null : report.overage ? 1 : 0,
+          report.at,
+        );
       return true;
     })();
   }
@@ -313,13 +327,9 @@ export class WorkLog implements WorkLogReader {
   lines(filter: TurnFilter): TokenLine[] {
     const { sql, params } = where(filter, "t.");
     return this.db
-      .query<CountRow & {
-        turn_id: string;
-        model: string;
-        changed: number
-      }, (string | number)[]>(`SELECT k.* FROM work_tokens k JOIN work_turns t ON t.id = k.turn_id ${sql}`)
+      .query<LineRow, (string | number)[]>(`SELECT k.* FROM work_tokens k JOIN work_turns t ON t.id = k.turn_id ${sql}`)
       .all(...params)
-      .map((row) => ({ turnId: row.turn_id, model: row.model, ...(row.changed ? { changed: true } : {}), ...countsOf(row) }));
+      .map(lineOf);
   }
 
   moments(filter: MomentFilter): WorkMoment[] {
@@ -373,9 +383,9 @@ export class WorkLog implements WorkLogReader {
 
   products(): ProductRecord[] {
     return this.db
-      .query<{ id: string; name: string | null; repo: string | null; added_at: number | null; removed_at: number | null }, []>("SELECT * FROM products_ever")
+      .query<ProductRow, []>("SELECT * FROM products_ever")
       .all()
-      .map((row) => ({ id: row.id, ...opt("name", row.name), ...opt("repo", row.repo), ...opt("addedAt", row.added_at), ...opt("removedAt", row.removed_at) }));
+      .map(productOf);
   }
 }
 

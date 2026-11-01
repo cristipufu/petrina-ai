@@ -1,9 +1,61 @@
 import type { Id, JourneyStep, SessionLine, Task, TimelineEntry } from "./model.js";
+import type { PublicRecording } from "./public-messages.js";
 
-export type TaskDetailsSummary = Omit<
-  Task,
-  "session" | "timeline" | "journey" | "designSessions" | "reviewSessions" | "handedBack"
->;
+export const TASK_DETAIL_ONLY_KEYS = [
+  "session",
+  "timeline",
+  "journey",
+  "designSessions",
+  "reviewSessions",
+  "handedBack",
+] as const;
+export type TaskDetailOnlyKey = (typeof TASK_DETAIL_ONLY_KEYS)[number];
+export type TaskDetailsSummary = Omit<Task, TaskDetailOnlyKey>;
+
+const PUBLIC_RECORDING_SIGNATURE_KEYS: Readonly<Record<keyof PublicRecording, true>> = {
+  recordedLength: true,
+  originalLength: true,
+  complete: true,
+  state: true,
+  reason: true,
+  revision: true,
+};
+void PUBLIC_RECORDING_SIGNATURE_KEYS;
+
+const SESSION_LINE_SIGNATURE_KEYS: Readonly<Record<keyof SessionLine, true>> = {
+  id: true,
+  at: true,
+  from: true,
+  roleId: true,
+  profileId: true,
+  productId: true,
+  text: true,
+  recording: true,
+  coordinatorMessageId: true,
+  step: true,
+  images: true,
+  toolInvocationId: true,
+  inputIndex: true,
+};
+void SESSION_LINE_SIGNATURE_KEYS;
+
+export function sessionLineSignature(line: SessionLine, hashText: (text: string) => string): string {
+  const recording = line.recording
+    ? `${line.recording.revision}:${line.recording.state}:${line.recording.recordedLength}:${line.recording.originalLength ?? ""}:${line.recording.reason ?? ""}:${line.recording.complete ?? ""}`
+    : "";
+  return `${line.id}:${line.at}:${line.from}:${hashText(line.text)}:${recording}:${line.roleId ?? ""}:${line.profileId ?? ""}:${line.productId ?? ""}:${line.coordinatorMessageId ?? ""}:${line.step ?? ""}:${line.toolInvocationId ?? ""}:${line.inputIndex ?? ""}:${line.images ? JSON.stringify(line.images) : ""}`;
+}
+
+export function omittedTaskDetailsPayload(task: Task): readonly unknown[] {
+  return [
+    task.timeline,
+    task.journey,
+    task.designSessions,
+    task.reviewSessions,
+    task.handedBack,
+    task.hunt?.findingChecks,
+  ];
+}
 
 export interface KeyedListDelta<T extends { readonly id: Id }> {
   readonly replace?: readonly T[];
@@ -131,7 +183,7 @@ export function diffKeyedList<T extends { readonly id: Id }>(
   };
 }
 
-function stripSummary(task: Task): TaskDetailsSummary {
+export function stripTaskDetailsSummary(task: Task): TaskDetailsSummary {
   const {
     session: _session,
     timeline: _timeline,
@@ -219,7 +271,7 @@ export function diffTaskDetails(
       kind: "delta",
       baseRevision: base.detailsRevision,
       detailsRevision,
-      summary: stripSummary(current),
+      summary: stripTaskDetailsSummary(current),
       ...(session.delta ? { session: session.delta } : {}),
       ...(timeline.delta ? { timeline: timeline.delta } : {}),
       ...(journeyDelta ? { journey: journeyDelta } : {}),

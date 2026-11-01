@@ -1,5 +1,21 @@
-import { allowsLongWait, CheckSetupRequirementsSchema } from "./operations.js";
-import { StartFromSchema, WorkChoiceSchema } from "./source-schema.js";
+import { allowsLongWait } from "./operations.js";
+import {
+  AnalyticsPeriodSchema,
+  BacklogUpdateSchema,
+  CheckSetupRequirementsSchema,
+  ClientIdSchema,
+  NewTaskWindowSchema,
+  ProductChecksInputSchema,
+  ProductRemoteChecksSchema,
+  ProductSettingsSchema,
+  ProfileDraftSchema,
+  RoleDraftSchema,
+  RoutineDraftSchema,
+  ScreenModeSchema,
+  StageProfileListSchema,
+  TaskIdSchema,
+} from "./command-schemas.js";
+import { DeliveryModeSchema, WorkChoiceSchema } from "./source-schema.js";
 // The local API the UI (and scripts) use. It only listens on 127.0.0.1, every request
 // needs the random token, and Host/Origin are checked so a web page cannot reach it.
 // The token never travels in an address: requests that carry it there are refused.
@@ -13,15 +29,13 @@ import {
   READING_PAGE_SIZE,
   allowanceKey,
   captureWindowStateBase,
+  COMMAND_META,
+  COMMAND_NAMES,
   diffWindowState,
   HISTORY_STATUSES,
-  type HistoryStatus,
-  ROLE_ICON_CHOICES,
-  ROLE_LIMITS,
-  TONE_CHOICES,
-  COMMAND_NAMES,
   type CommandName,
   type Commands,
+  type HistoryStatus,
   type State,
   type WindowStateBase,
 } from "@petrina/core";
@@ -30,186 +44,96 @@ import { Coordination, serial, type LifecycleControl } from "./coordination.js";
 
 const ALLOWED_ORIGINS = new Set(["http://localhost:1430", "http://127.0.0.1:1430", "tauri://localhost", "http://tauri.localhost", "https://tauri.localhost"]);
 
-/** The window's id for something it sent, so a resend after a lost confirmation counts once. */
-const ClientId = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/);
 const Said = z.object({
   taskId: z.string().optional(),
   about: z.string().max(4000).optional(),
   decided: z.boolean().optional(),
-  clientId: ClientId.optional()
+  clientId: ClientIdSchema.optional(),
 });
-const TaskId = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/);
 const How = z.enum(["open", "copy"]);
-const NewTask = z.object({
-  backlog: z.boolean().optional(),
-  after: z.array(TaskId).max(20).optional(),
-  worksOn: z.array(WorkChoiceSchema).max(20).optional(),
-  startFrom: StartFromSchema.optional(),
-  productId: z.string(),
-  title: z.string().min(1).max(200),
-  description: z.string().max(8000).optional(),
-  kind: z.enum(["new", "feature", "bug", "chore"]).optional(),
-  position: z.enum(["top", "bottom"]).optional(),
-  approvePlan: z.boolean().optional(),
-  delivery: z.enum(["pull-request", "release", "local"]).optional(),
-  approveDelivery: z.boolean().optional(),
-  clientId: ClientId.optional(),
-});
+const HistoryReport = z
+  .object({
+    toolId: z.string().min(1).max(200),
+    kind: z.string().min(1).max(200),
+    model: z.string().max(200).optional(),
+    name: z.string().max(400).optional(),
+    status: z.enum(["allowed", "allowed_warning", "rejected"]),
+    at: z.number().int().min(0),
+    utilization: z.number().optional(),
+    windowMinutes: z.number().positive().optional(),
+    resetsAt: z.number().min(0).optional(),
+    overage: z.boolean().optional(),
+  })
+  .strict();
 
 /**
  * What each command's arguments may be, checked before the engine sees them. The compiler holds this to
  * the command table (Commands in @petrina/core): every command, nothing else, arguments the engine takes.
  */
-const RoleDraft = z.object({
-  category: z.enum(["workflow", "maintenance"]).optional(),
-  name: z.string().max(ROLE_LIMITS.name * 10),
-  icon: z.enum(ROLE_ICON_CHOICES),
-  tone: z.enum(TONE_CHOICES),
-  purpose: z.string().max(ROLE_LIMITS.purpose * 10),
-  instructions: z.string().max(ROLE_LIMITS.instructions * 10),
-  canEdit: z.boolean(),
-  handsBack: z.string().max(ROLE_LIMITS.handsBack * 10),
-  result: z.enum(["plan", "notes", "brief", "objections", "build", "checks", "findings", "delivery", "check-discovery", "guide", "votes"]),
-});
-
-const RoutineDraft = z.object({
-  name: z.string().max(100),
-  productId: z.string(),
-  roleId: z.string(),
-  profileId: z.string(),
-  focus: z.string().max(4000),
-  zone: z.string().max(100),
-  enabled: z.boolean(),
-  schedule: z.discriminatedUnion(
-  "kind",
-  [
-  z.object({
-  kind: z.literal("daily"),
-  time: z.string()
-}),
-  z.object({
-  kind: z.literal("weekly"),
-  time: z.string(),
-  weekdays: z.array(z.number().int().min(0).max(6)).max(7)
-}),
-  z.object({
-  kind: z.literal("cron"),
-  expression: z.string().max(200)
-})
-]
-)
-});
-const HistoryReport = z.object({
-  toolId: z.string().min(1).max(200),
-  kind: z.string().min(1).max(200),
-  model: z.string().max(200).optional(),
-  name: z.string().max(400).optional(),
-  status: z.enum([
-  "allowed",
-  "allowed_warning",
-  "rejected"
-]),
-  at: z.number().int().min(0),
-  utilization: z.number().optional(),
-  windowMinutes: z.number().positive().optional(),
-  resetsAt: z.number().min(0).optional(),
-  overage: z.boolean().optional()
-}).strict();
 const ARGS = {
-  profileChoices: z.tuple([z.object({
-    toolId: z.string().min(1).max(100),
-    modelId: z.string().min(1).max(200).optional(),
-    refresh: z.boolean().optional()
-  }).strict()]),
-  saveProfile: z.tuple([
-    z.object({
-    toolId: z.string().min(1).max(100),
-    modelId: z.string().min(1).max(200),
-    effort: z.enum([
-    "low",
-    "medium",
-    "high",
-    "xhigh",
-    "ultra"
+  profileChoices: z.tuple([
+    z
+      .object({
+        toolId: z.string().min(1).max(100),
+        modelId: z.string().min(1).max(200).optional(),
+        refresh: z.boolean().optional(),
+      })
+      .strict(),
   ]),
-    standby: z.boolean().optional()
-  }).strict(),
-    ClientId,
-    z.string().optional()
-  ]),
+  saveProfile: z.tuple([ProfileDraftSchema, ClientIdSchema, z.string().optional()]),
   removeProfile: z.tuple([z.string()]),
-  saveRoutine: z.tuple([RoutineDraft, z.string().optional()]),
+  saveRoutine: z.tuple([RoutineDraftSchema, z.string().optional()]),
   setRoutineEnabled: z.tuple([z.string(), z.boolean()]),
   removeRoutine: z.tuple([z.string()]),
-  resolveMaintenanceSettings: z.tuple([TaskId, z.enum(["keep", "stop"])]),
-  historyPage: z.tuple([z.object({
-    includeUsage: z.boolean().optional(),
-    taskId: TaskId.optional(),
-    status: z.enum(Object.keys(HISTORY_STATUSES) as HistoryStatus[]).optional(),
-    routineId: z.string().min(1).max(200).optional(),
-    productId: z.string().max(200).optional(),
-    query: z.string().max(500).optional(),
-    cursor: z.string().max(1000).optional(),
-    limit: z.number().int().min(1).max(100).optional()
-  }).strict()]),
-  taskDetails: z.tuple([TaskId]),
-  taskDetailsDelta: z.tuple([TaskId, z.string().min(1).max(200)]),
+  resolveMaintenanceSettings: z.tuple([TaskIdSchema, z.enum(["keep", "stop"])]),
+  historyPage: z.tuple([
+    z
+      .object({
+        includeUsage: z.boolean().optional(),
+        taskId: TaskIdSchema.optional(),
+        status: z.enum(Object.keys(HISTORY_STATUSES) as HistoryStatus[]).optional(),
+        routineId: z.string().min(1).max(200).optional(),
+        productId: z.string().max(200).optional(),
+        query: z.string().max(500).optional(),
+        cursor: z.string().max(1000).optional(),
+        limit: z.number().int().min(1).max(100).optional(),
+      })
+      .strict(),
+  ]),
+  taskDetails: z.tuple([TaskIdSchema]),
+  taskDetailsDelta: z.tuple([TaskIdSchema, z.string().min(1).max(200)]),
   publicMessage: z.tuple([
-    TaskId,
+    TaskIdSchema,
     z.string().min(1).max(200),
     z.number().int().min(0).optional(),
     z.number().int().min(1).max(32000).optional(),
   ]),
-  previewImage: z.tuple([TaskId, z.string().min(1).max(4096), z.string().max(200).optional()]),
-  saveRole: z.tuple([z.string(), RoleDraft]),
-  addRole: z.tuple([RoleDraft]),
+  previewImage: z.tuple([TaskIdSchema, z.string().min(1).max(4096), z.string().max(200).optional()]),
+  saveRole: z.tuple([z.string(), RoleDraftSchema]),
+  addRole: z.tuple([RoleDraftSchema]),
   resetRole: z.tuple([z.string()]),
   removeRole: z.tuple([z.string()]),
   addProduct: z.tuple([z.string().min(1).max(4096), z.string().max(200).optional()]),
   removeProduct: z.tuple([z.string()]),
-  setProductChecks: z.tuple([
-    z.string(),
-    z.union([
-    z.null(),
-    z.array(z.object({
-    name: z.string().min(1).max(40),
-    command: z.string().min(1).max(500)
-  })).max(12)
-  ])
-  ]),
+  setProductChecks: z.tuple([z.string(), ProductChecksInputSchema]),
   setProductCheckSetup: z.tuple([z.string(), CheckSetupRequirementsSchema]),
-  setProductRemoteChecks: z.tuple([
-    z.string(),
-    z.array(z.string().min(1).max(120)).max(20),
-  ]),
-  updateProduct: z.tuple([
-    z.string(),
-    z.object({
-    name: z.string(),
-    delivery: z.enum([
-    "pull-request",
-    "release",
-    "local"
-  ]),
-    approveDelivery: z.boolean(),
-    shipLowRisk: z.boolean().optional()
-  })
-  ]),
-  setProductDelivery: z.tuple([z.string(), z.enum(["pull-request", "release", "local"]), z.boolean()]),
+  setProductRemoteChecks: z.tuple([z.string(), ProductRemoteChecksSchema]),
+  updateProduct: z.tuple([z.string(), ProductSettingsSchema]),
+  setProductDelivery: z.tuple([z.string(), DeliveryModeSchema, z.boolean()]),
   setTaskStart: z.tuple([z.string(), WorkChoiceSchema]),
   setTaskProducts: z.tuple([z.string(), z.array(WorkChoiceSchema).max(20)]),
   setTaskAddition: z.tuple([z.string(), z.string(), z.string().min(1).max(200), z.string().min(1).max(4096)]),
   setTaskApproval: z.tuple([z.string(), z.boolean()]),
-  addTask: z.tuple([NewTask]),
-  queueTask: z.tuple([TaskId]),
-  combineBacklog: z.tuple([z.array(TaskId).min(2).max(20), z.string().trim().min(1).max(200), ClientId]),
-  moveToBacklog: z.tuple([TaskId]),
-  updateBacklog: z.tuple([TaskId, z.object({ title: z.string().trim().min(1).max(200), description: z.string().max(8000) })]),
+  addTask: z.tuple([NewTaskWindowSchema]),
+  queueTask: z.tuple([TaskIdSchema]),
+  combineBacklog: z.tuple([z.array(TaskIdSchema).min(2).max(20), z.string().trim().min(1).max(200), ClientIdSchema]),
+  moveToBacklog: z.tuple([TaskIdSchema]),
+  updateBacklog: z.tuple([TaskIdSchema, BacklogUpdateSchema]),
   checkTools: z.tuple([]),
   findClones: z.tuple([]),
   setSetupStep: z.tuple([z.enum(["welcome", "tools", "product", "task"])]),
   skipSetup: z.tuple([]),
-  startFirstTask: z.tuple([NewTask.extend({ clientId: ClientId })]),
+  startFirstTask: z.tuple([NewTaskWindowSchema.extend({ clientId: ClientIdSchema })]),
   dismissTip: z.tuple([]),
   openGuide: z.tuple([z.string().max(300)]),
   moveInQueue: z.tuple([z.string(), z.number().int()]),
@@ -221,15 +145,20 @@ const ARGS = {
   setPoolLimit: z.tuple([z.number()]),
   setPoolPaused: z.tuple([z.boolean()]),
   setToolCap: z.tuple([z.string(), z.number()]),
-  setScreenUse: z.tuple([z.enum(["off", "hour", "on"])]),
+  setScreenUse: z.tuple([ScreenModeSchema]),
   pause: z.tuple([z.string()]),
   resume: z.tuple([z.string()]),
   cancel: z.tuple([z.string()]),
   retry: z.tuple([z.string()]),
   rerunChecks: z.tuple([z.string()]),
-  sendMessage: z.tuple([z.string(), z.string().min(1).max(8000), z.enum(["now", "queue", "interrupt"]).optional(), ClientId.optional()]),
+  sendMessage: z.tuple([
+    z.string(),
+    z.string().min(1).max(8000),
+    z.enum(["now", "queue", "interrupt"]).optional(),
+    ClientIdSchema.optional(),
+  ]),
   removeQueued: z.tuple([z.string(), z.string()]),
-  setStageProfile: z.tuple([z.string(), z.string(), z.enum(["profileIds", "reviewerProfileIds"]), z.number().int(), z.string()]),
+  setStageProfile: z.tuple([z.string(), z.string(), StageProfileListSchema, z.number().int(), z.string()]),
   addReviewer: z.tuple([z.string(), z.string(), z.string()]),
   allowScreen: z.tuple([z.string()]),
   setTaskScreen: z.tuple([z.string(), z.boolean()]),
@@ -244,10 +173,10 @@ const ARGS = {
   checkShipping: z.tuple([z.string()]),
   shipAgain: z.tuple([z.string()]),
   markDone: z.tuple([z.string()]),
-  takeOver: z.tuple([TaskId, How.optional()]),
-  reopenTerminal: z.tuple([TaskId, How.optional()]),
-  handBackPreview: z.tuple([TaskId]),
-  handBack: z.tuple([TaskId, z.string().max(4000).optional(), z.boolean().optional()]),
+  takeOver: z.tuple([TaskIdSchema, How.optional()]),
+  reopenTerminal: z.tuple([TaskIdSchema, How.optional()]),
+  handBackPreview: z.tuple([TaskIdSchema]),
+  handBack: z.tuple([TaskIdSchema, z.string().max(4000).optional(), z.boolean().optional()]),
   setTerminal: z.tuple([z.string().regex(/^[a-z0-9-]{0,40}$/)]),
   // The window asks for the numbers of one view at a time: only these views and periods exist.
   usage: z.tuple([
@@ -256,17 +185,19 @@ const ARGS = {
       z.object({ view: z.literal("node"), taskId: z.string().min(1).max(200), nodeId: z.string().min(1).max(200) }).strict(),
       z.object({ view: z.literal("products") }).strict(),
       z.object({ view: z.literal("today") }).strict(),
-      z.object({
-        view: z.literal("readings"),
-        toolId: z.string().min(1).max(200),
-        allowanceKey: z.string().min(1).max(600),
-        from: z.number().int().min(0),
-        to: z.number().int().min(0),
-        snapshotAt: z.number().int().min(0),
-        latest: HistoryReport.optional(),
-        offset: z.number().int().min(0).max(MAX_READING_OFFSET).multipleOf(READING_PAGE_SIZE)
-      }).strict(),
-      z.object({ view: z.literal("analytics"), period: z.enum(["today", "7d", "30d"]), productId: z.string().min(1).max(200).optional() }).strict(),
+      z
+        .object({
+          view: z.literal("readings"),
+          toolId: z.string().min(1).max(200),
+          allowanceKey: z.string().min(1).max(600),
+          from: z.number().int().min(0),
+          to: z.number().int().min(0),
+          snapshotAt: z.number().int().min(0),
+          latest: HistoryReport.optional(),
+          offset: z.number().int().min(0).max(MAX_READING_OFFSET).multipleOf(READING_PAGE_SIZE),
+        })
+        .strict(),
+      z.object({ view: z.literal("analytics"), period: AnalyticsPeriodSchema, productId: z.string().min(1).max(200).optional() }).strict(),
     ]),
   ]),
 } satisfies { [K in CommandName]: z.ZodType<Parameters<Commands[K]>> };
@@ -295,7 +226,7 @@ export async function dispatch(engine: Engine, raw: unknown): Promise<unknown> {
     if (request.view === "readings" && request.latest && (request.latest.at > request.snapshotAt || request.latest.toolId !== request.toolId || allowanceKey(request.latest) !== request.allowanceKey)) throw new Error("The latest report must belong to this allowance and snapshot");
   }
   const method = engine[name] as (...args: unknown[]) => unknown;
-  if (name === "profileChoices") return await method.apply(engine, checked);
+  if (!COMMAND_META[name].changes) return await method.apply(engine, checked);
   // Native discovery must not hold the coordinator mutation queue while a tool opens.
   if (name === "saveProfile") {
     const draft = checked[0] as Parameters<Commands["saveProfile"]>[0];

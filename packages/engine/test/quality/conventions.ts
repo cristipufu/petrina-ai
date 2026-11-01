@@ -1,6 +1,7 @@
 import { engineConstructionBoundaries } from "./engine-construction.js";
 import { MAX_PRODUCTION_LINE_WIDTH, productionFormattingViolations } from "./format.js";
 import { childFixtureBoundaries, layerBoundaries, packageBoundaries } from "./layers.js";
+import { isAllowedProviderRegistryFile } from "./provider-enumerations.js";
 import { sourceCandidates } from "./source-paths.js";
 import { sourceFacts } from "./source.js";
 import { isSource, isTest, workspaceOf } from "./test-paths.js";
@@ -103,6 +104,13 @@ export function conventions(files: ReadonlyMap<string, string>): string[] {
         }
         for (const violation of productionFormattingViolations(source, file)) {
           errors.push(`${file}:${violation.line}: ${violation.reason}`);
+        }
+        if (!isAllowedProviderRegistryFile(file)) {
+          for (const line of facts.providerEnumerations) {
+            errors.push(
+              `${file}:${line}: derive provider tables and dispatch from PROVIDER_CATALOG / PROVIDER_IDS (@petrina/core) or PROVIDER_ADAPTERS (@petrina/agent-runtime) instead of hardcoding provider IDs outside providers.ts and agent-runtime/src/providers/`,
+            );
+          }
         }
       }
       continue;

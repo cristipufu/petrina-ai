@@ -1,10 +1,25 @@
 export { AgentRun, AGENT_CLEANUP_NOTE, reportOf, reroutedTo, settingsOf, stopAll } from "./acp-run.js";
 export type { RunCallbacks } from "./acp-run.js";
 export { AgentMessages, immediateMessageClock, TurnText, type MessageClock } from "./agent-messages.js";
-export { ADAPTERS, ENGINE_PROFILES, adapterEntry, adapterLaunchCommand, agentCommandFor, detectTools, findProgram } from "./tools.js";
+export {
+  EMBEDDED_ACP_TARGETS,
+  PROVIDER_ADAPTERS,
+  runEmbeddedAcpSubcommand,
+  type EmbeddedAcpTarget,
+} from "./providers/index.js";
+export {
+  ADAPTERS,
+  ENGINE_PROFILES,
+  adapterEntry,
+  adapterLaunchCommand,
+  agentCommandFor,
+  detectTools,
+  findProgram,
+} from "./tools.js";
 export type { AgentLaunchOptions, ToolAdapter } from "./tools.js";
 export { UsageLimited, ModelAtCapacity, CAPACITY_WAIT, limitFromFailure, limitFromReport } from "./usage.js";
 export type { UsageInfo } from "./usage.js";
 export { AgentBrowser, recoverBrowserTemps } from "./browser.js";
 export { checkAgentTool, AGENT_CHECK_TIMEOUT_MS } from "./probe.js";
+export { codexLimits, codexReports } from "./codex-report.js";
 export { isAuthRequired } from "./failures.js";

@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, Copy, ExternalLink, RotateCw } from "lucide-react";
-import { agentTools, CHECK_LABELS, CHECK_NAMES, checkOf, fixFor, type CheckId, type Fix, type Platform, type ToolCheck } from "@petrina/core";
+import { agentTools, CHECK_NAMES, checkOf, fixFor, type CheckId, type Fix, type Platform, type ToolCheck } from "@petrina/core";
 import { desktop, mode, sim } from "../engine";
-import { safeUrl } from "../lib";
+import { safeUrl, TOOL_CHECK_TONE, toolStatusBadge } from "../lib";
 import { ToolIcon } from "./ToolIcon";
 
 /**
@@ -31,12 +31,9 @@ export function useCheckOnEnter(active: boolean): void {
 }
 
 function statusText(check: ToolCheck): string {
-  if (check.status === "unchecked") return "Checking…";
   if (check.id === "gh" && check.status === "ready" && check.account) return `Ready · logged in as ${check.account}`;
-  return CHECK_LABELS[check.status];
+  return toolStatusBadge(check.status).label;
 }
-
-const TONE: Record<ToolCheck["status"], string> = { ready: "ok", "not-installed": "warn", "logged-out": "warn", unknown: "", unchecked: "quiet" };
 
 /** The tools, each with its status and, when it is not Ready, what to do about it. */
 export function ToolList({ checks, platform }: { checks: readonly ToolCheck[]; platform: Platform }) {
@@ -58,7 +55,7 @@ function ToolRow({ check, platform }: { check: ToolCheck; platform: Platform }) 
       <div className="tool-body">
         <div className="tool-head">
           <strong>{name}</strong>
-          <span className={`label ${TONE[check.status]}`} aria-live="polite">
+          <span className={`label ${TOOL_CHECK_TONE[check.status]}`} aria-live="polite">
             {statusText(check)}
             {check.checking && check.status !== "unchecked" && <span className="again"> · checking again…</span>}
           </span>

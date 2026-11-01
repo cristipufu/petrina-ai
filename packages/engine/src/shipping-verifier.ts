@@ -1,4 +1,5 @@
 // Observe exact approved delivery destinations. This module never publishes or records delivery.
+import { DELIVERY_MODE_CATALOG, effectiveDestinationKind, type DeliveryDestinationKind } from "@petrina/core";
 import { realPath } from "@petrina/repositories/paths";
 import * as github from "@petrina/repositories/github";
 import * as git from "@petrina/repositories/git";
@@ -195,7 +196,7 @@ export class ShippingVerifier {
     const { work: repository } = scope;
     const connection = await this.connections.connection(scope, signal);
     if (!connection.ok) {
-      if (connection.missing && repository.delivery === "local") return true;
+      if (connection.missing && !DELIVERY_MODE_CATALOG[repository.delivery].requiresGitHub) return true;
       throw new Error(connection.reason);
     }
     const branch = repository.source?.start.branch ?? this.k.repositoryOf(scope)?.defaultBranch ?? "main";
@@ -205,83 +206,73 @@ export class ShippingVerifier {
     return tip === repository.shipping!.base || await git.contains(this.k.repositoryOf(scope)!.path!, repository.shipping!.base!, tip);
   }
 
+  private readonly lookups: Readonly<
+    Record<DeliveryDestinationKind, (scope: RepositoryContext, branch: string, tested: string) => Promise<DeliveryLookup>>
+  > = {
+    "update-pr": async (scope, _branch, tested) => {
+      const pr = await this.approvedPr(scope);
+      if (await this.prContains(scope, pr, tested)) {
+        return { found: true, text: `Updated PR #${pr.number}`, evidence: { kind: "pr", pr, updated: true } };
+      }
+      const remote = this.destinationRemote(scope);
+      const at = await this.remoteTip(scope, remote, pr.branch);
+      if (await this.remoteContains(scope, remote, pr.branch, at, tested)) {
+        return { found: true, text: `Updated PR #${pr.number}`, evidence: { kind: "pr", pr, updated: true } };
+      }
+      if (pr.state !== "open") {
+        throw new Error(`PR #${pr.number} is ${pr.state}. The task's work is preserved; nothing more will be published.`);
+      }
+      if (!at) throw new Error("The approved pull request working branch is unavailable. The task's work is preserved.");
+      return { found: false, text: `PR #${pr.number} does not contain the tested work yet.` };
+    },
+    "new-pr": async (scope) => {
+      const pr = await this.findPullRequest(scope, scope.task.state === "cancelled");
+      if (pr) return { found: true, text: `pull request #${pr.number}`, evidence: { kind: "pr", pr } };
+      return { found: false, text: "No pull request is open for this work yet." };
+    },
+    release: async (scope, _branch, tested) => {
+      const shipping = scope.work.shipping!;
+      const release = await this.findRelease(scope);
+      if (!release) return { found: false, text: `There is no release ${shipping.tag} on GitHub yet.` };
+      // Checked on GitHub itself: the release's tag is at the tested commit.
+      const refs = await this.releaseRefs(scope, this.connections.savedRemote(scope));
+      if (refs.tag !== tested) {
+        // Before Petrina's push, someone else's release makes this version stale: publishing gets it ready again.
+        if (!shipping.pushed) return { found: false, text: `GitHub has a release ${shipping.tag} that is not this work.` };
+        return {
+          found: "other",
+          text: `GitHub has a release ${shipping.tag}, but its tag is not at the tested commit ${tested.slice(0, 7)}. Look at it on GitHub.`,
+        };
+      }
+      return { found: true, text: `release ${release.tag}`, evidence: { kind: "release", release } };
+    },
+    branch: async (scope, branch, tested) => {
+      const product = this.k.repositoryOf(scope)!;
+      const at = await git.revParse(product.path!, `refs/heads/${branch}`);
+      if (at && (at === tested || (await git.contains(product.path!, at, tested)))) {
+        return {
+          found: true,
+          text: `${branch} has the work (${tested.slice(0, 7)})`,
+          evidence: { kind: "local", branch, tested },
+        };
+      }
+      return { found: false, text: `${branch} does not have the work yet.` };
+    },
+  };
+
   /**
    * Is the prepared delivery already out? Asked of GitHub for the product's own repository (never through a
    * working copy's remote), or of the main copy for local delivery. Only a clear "not there" counts as
    * nothing published; a lookup that fails is never taken for an empty answer.
    */
   async lookForDelivery(scope: RepositoryContext): Promise<DeliveryLookup> {
-    const { task, work: repository } = scope;
+    const { work: repository } = scope;
     const product = this.k.repositoryOf(scope)!;
     const shipping = repository.shipping!;
     const { tested } = shipping.prepared!;
     const branch = repository.source?.destination.branch ?? product.defaultBranch ?? "main";
     try {
-      if (repository.source?.start.kind === "pull-request") {
-        const pr = await this.approvedPr(scope);
-        if (await this.prContains(scope, pr, tested)) return { found: true, text: `Updated PR #${pr.number}`, evidence: { kind: "pr", pr, updated: true } };
-        const remote = this.destinationRemote(scope);
-        const at = await this.remoteTip(scope, remote, pr.branch);
-        if (await this.remoteContains(
-          scope,
-          remote,
-          pr.branch,
-          at,
-          tested
-        )) return {
-          found: true,
-          text: `Updated PR #${pr.number}`,
-          evidence: {
-          kind: "pr",
-          pr,
-          updated: true
-        }
-        };
-        if (pr.state !== "open") throw new Error(`PR #${pr.number} is ${pr.state}. The task's work is preserved; nothing more will be published.`);
-        if (!at) throw new Error(`The approved pull request working branch is unavailable. The task's work is preserved.`);
-        return { found: false, text: `PR #${pr.number} does not contain the tested work yet.` };
-      }
-      if (repository.delivery === "pull-request") {
-        const pr = await this.findPullRequest(scope, task.state === "cancelled");
-        if (pr) return { found: true, text: `pull request #${pr.number}`, evidence: { kind: "pr", pr } };
-        return { found: false, text: "No pull request is open for this work yet." };
-      }
-      if (repository.delivery === "release") {
-        const release = await this.findRelease(scope);
-        if (!release) return { found: false, text: `There is no release ${shipping.tag} on GitHub yet.` };
-        // Checked on GitHub itself: the release's tag is at the tested commit.
-        const refs = await this.releaseRefs(scope, this.connections.savedRemote(scope));
-        if (refs.tag !== tested) {
-          // Before Petrina's push, someone else's release makes this version stale: publishing gets it ready again.
-          if (!shipping.pushed) return { found: false, text: `GitHub has a release ${shipping.tag} that is not this work.` };
-          return {
-            found: "other",
-            text: `GitHub has a release ${shipping.tag}, but its tag is not at the tested commit ${tested.slice(
-            0,
-            7
-          )}. Look at it on GitHub.`
-          };
-        }
-        return { found: true, text: `release ${release.tag}`, evidence: { kind: "release", release } };
-      }
-      const at = await git.revParse(product.path!, `refs/heads/${branch}`);
-      if (at && (at === tested || (await git.contains(
-        product.path!,
-        at,
-        tested
-      )))) return {
-        found: true,
-        text: `${branch} has the work (${tested.slice(
-        0,
-        7
-      )})`,
-        evidence: {
-        kind: "local",
-        branch,
-        tested
-      }
-      };
-      return { found: false, text: `${branch} does not have the work yet.` };
+      return await this.lookups[effectiveDestinationKind(repository)](scope, branch, tested);
     } catch (error) {
       const text = error instanceof Error ? error.message : String(error);
       return { found: error instanceof Unreachable ? "unknown" : "other", text };

@@ -1,7 +1,9 @@
 import {
   emptyTally,
+  type ProductRecord,
   type Tally,
   type TokenCounts,
+  type TokenLine,
   type TurnFilter,
   type UsageReport,
   type WorkMoment,
@@ -110,11 +112,30 @@ export const WORKLOG_SCHEMA = [
     window_minutes INTEGER,
     name TEXT,
     resets_at INTEGER,
+    overage INTEGER,
     at INTEGER NOT NULL
   )`,
   "CREATE INDEX IF NOT EXISTS usage_readings_at ON usage_readings (at)",
   "CREATE INDEX IF NOT EXISTS usage_readings_limit ON usage_readings (tool_id, kind, model, at)",
 ];
+
+type OptionalKeys<T> = {
+  [K in keyof T]-?: {} extends Pick<T, K> ? K : never;
+}[keyof T];
+
+type KeysOf<T> = keyof T;
+
+type CompleteShape<T> = {
+  readonly [K in KeysOf<T>]: K extends OptionalKeys<T> ? T[K] | undefined : T[K];
+};
+
+function stripUndefined<T extends object>(record: CompleteShape<T>): T {
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(record)) {
+    if (value !== undefined) result[key] = value;
+  }
+  return result as T;
+}
 
 export interface ReadingRow {
   tool_id: string;
@@ -125,6 +146,7 @@ export interface ReadingRow {
   window_minutes: number | null;
   name: string | null;
   resets_at: number | null;
+  overage: number | null;
   at: number;
 }
 
@@ -136,17 +158,18 @@ export const opt = <K extends string, V>(
 export const num = (value: number | undefined): number | null => (value === undefined ? null : value);
 
 export function readingOf(row: ReadingRow): UsageReport {
-  return {
+  return stripUndefined<UsageReport>({
     toolId: row.tool_id,
     kind: row.kind,
-    ...(row.model ? { model: row.model } : {}),
+    model: row.model ? row.model : undefined,
     status: row.status as UsageReport["status"],
-    ...opt("utilization", row.utilization),
-    ...opt("windowMinutes", row.window_minutes),
-    ...opt("name", row.name),
-    ...opt("resetsAt", row.resets_at),
+    utilization: row.utilization ?? undefined,
+    windowMinutes: row.window_minutes ?? undefined,
+    name: row.name ?? undefined,
+    resetsAt: row.resets_at ?? undefined,
+    overage: row.overage === null ? undefined : row.overage === 1,
     at: row.at,
-  };
+  });
 }
 
 export interface TurnRow {
@@ -189,6 +212,18 @@ export interface TurnRow {
 }
 
 export type CountRow = Pick<TurnRow, "input" | "cache_read" | "cache_write" | "output" | "reasoning" | "total">;
+export interface LineRow extends CountRow {
+  turn_id: string;
+  model: string;
+  changed: number;
+}
+export interface ProductRow {
+  id: string;
+  name: string | null;
+  repo: string | null;
+  added_at: number | null;
+  removed_at: number | null;
+}
 export type MomentRow = { id: string; at: number; kind: string; task_id: string; product_id: string; data: string };
 
 export function momentOf(row: MomentRow): WorkMoment {
@@ -203,19 +238,44 @@ export function momentOf(row: MomentRow): WorkMoment {
 }
 
 export function countsOf(row: CountRow): TokenCounts {
-  return {
-    ...opt("input", row.input),
-    ...opt("cacheRead", row.cache_read),
-    ...opt("cacheWrite", row.cache_write),
-    ...opt("output", row.output),
-    ...opt("reasoning", row.reasoning),
-    ...opt("total", row.total),
-  };
+  return stripUndefined<TokenCounts>({
+    input: row.input ?? undefined,
+    cacheRead: row.cache_read ?? undefined,
+    cacheWrite: row.cache_write ?? undefined,
+    output: row.output ?? undefined,
+    reasoning: row.reasoning ?? undefined,
+    total: row.total ?? undefined,
+  });
+}
+
+export function lineOf(row: LineRow): TokenLine {
+  const counts = countsOf(row);
+  return stripUndefined<TokenLine>({
+    turnId: row.turn_id,
+    model: row.model,
+    changed: row.changed ? true : undefined,
+    input: counts.input,
+    cacheRead: counts.cacheRead,
+    cacheWrite: counts.cacheWrite,
+    output: counts.output,
+    reasoning: counts.reasoning,
+    total: counts.total,
+  });
+}
+
+export function productOf(row: ProductRow): ProductRecord {
+  return stripUndefined<ProductRecord>({
+    id: row.id,
+    name: row.name ?? undefined,
+    repo: row.repo ?? undefined,
+    addedAt: row.added_at ?? undefined,
+    removedAt: row.removed_at ?? undefined,
+  });
 }
 
 export function turnOf(row: TurnRow): WorkTurn {
   const tokens = countsOf(row);
-  return {
+  return stripUndefined<WorkTurn>({
     id: row.id,
     taskId: row.task_id,
     productId: row.product_id,
@@ -227,27 +287,27 @@ export function turnOf(row: TurnRow): WorkTurn {
     roleId: row.role_id,
     toolId: row.tool_id,
     profileId: row.profile_id,
-    ...opt("modelAsked", row.model_asked),
-    ...opt("modelAskedName", row.model_asked_name),
-    ...opt("effortAsked", row.effort_asked),
-    ...opt("modelRan", row.model_ran),
-    ...opt("modelRanName", row.model_ran_name),
-    ...opt("effortRan", row.effort_ran),
-    ...opt("modelChangedTo", row.model_changed_to),
-    ...opt("effortChangedTo", row.effort_changed_to),
+    modelAsked: row.model_asked ?? undefined,
+    modelAskedName: row.model_asked_name ?? undefined,
+    effortAsked: row.effort_asked ?? undefined,
+    modelRan: row.model_ran ?? undefined,
+    modelRanName: row.model_ran_name ?? undefined,
+    effortRan: row.effort_ran ?? undefined,
+    modelChangedTo: row.model_changed_to ?? undefined,
+    effortChangedTo: row.effort_changed_to ?? undefined,
     sessionId: row.session_id,
-    ...opt("journeyId", row.journey_id),
-    ...opt("agentRunId", row.agent_run_id),
-    ...opt("agentSeat", row.agent_seat),
+    journeyId: row.journey_id ?? undefined,
+    agentRunId: row.agent_run_id ?? undefined,
+    agentSeat: row.agent_seat ?? undefined,
     reason: row.reason as WorkTurn["reason"],
     startedAt: row.started_at,
-    ...opt("endedAt", row.ended_at),
-    ...opt("end", row.end_kind as WorkTurn["end"] | null),
+    endedAt: row.ended_at ?? undefined,
+    end: (row.end_kind as WorkTurn["end"] | null) ?? undefined,
     mainOnly: row.main_only === 1,
     helpers: row.helpers,
-    ...opt("workMs", row.work_ms),
-    ...(Object.keys(tokens).length > 0 ? { tokens } : {}),
-  };
+    workMs: row.work_ms ?? undefined,
+    tokens: Object.keys(tokens).length > 0 ? tokens : undefined,
+  });
 }
 
 export function where(filter: TurnFilter, alias = "", moments = false): { sql: string; params: (string | number)[] } {

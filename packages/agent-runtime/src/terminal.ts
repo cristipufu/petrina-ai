@@ -27,7 +27,6 @@ import {
   type FoundTerminal,
   type LaunchPlan,
   type LaunchInput,
-  type AskMode
 } from "./terminal-plan.js";
 export { detectTerminals, pickTerminal, terminalEnv, UnsafeValue } from "./terminal-plan.js";
 export type { Platform, Probe, FoundTerminal, LaunchPlan, LaunchInput, AskMode } from "./terminal-plan.js";
@@ -157,11 +156,7 @@ function sameStart(now: string, noted: string, platform: Platform): boolean {
   return apart >= -1_000_000n && apart <= 1_000_000n;
 }
 
-/** Claude Code's ask-before-acting mode, by the name the installed copy lists in its help. */
-export async function askMode(path: string): Promise<AskMode> {
-  const help = await terminalOutput([path, "--help"]) ?? "";
-  return /"manual"/.test(help) ? "manual" : "default";
-}
+export { askMode } from "./claude-ask-mode.js";
 
 /** When a process started, as the launcher records it: `ps` in the C locale, or .NET ticks on Windows. */
 async function startTime(pid: number, platform: Platform): Promise<string | undefined> {

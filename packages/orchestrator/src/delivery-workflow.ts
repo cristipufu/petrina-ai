@@ -1,5 +1,6 @@
 import {
   beginPetrinaStep,
+  DELIVERY_MODE_CATALOG,
   endPetrinaStep,
   companionText,
   completeAll,
@@ -19,7 +20,7 @@ import type { DeliveryFailures, DeliveryPhaseEffects, DeliveryRecording, Deliver
 
 /** Whether the delivery step needs an agent now: only a release, for its notes, until they are written. */
 export function needsReleaseManager(task: RepositoryWork): boolean {
-  return task.delivery === "release" && !task.shipping?.prepared && !task.shipping?.step && !task.shipping?.carriedOver;
+  return DELIVERY_MODE_CATALOG[task.delivery].requiresAgentPrepNotes && !task.shipping?.prepared && !task.shipping?.step && !task.shipping?.carriedOver;
 }
 
 /** Preparations restarted after source movement, before asking the coordinator. */

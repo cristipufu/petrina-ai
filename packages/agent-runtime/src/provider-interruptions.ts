@@ -221,11 +221,10 @@ function grokNotice(notice: SessionNotice): RetryNotice | undefined {
 // Antigravity: the pinned 1.4.1 server records its retries and service-unavailable errors only in its own
 // log, never as an ACP event, and a 503 does not establish a full model. It has no interruptions here.
 
+export const claudeInterruptions: ToolInterruptions = { capacity: claudeCapacity };
+export const grokInterruptions: ToolInterruptions = { capacity: grokCapacity, notice: grokNotice };
+
 /** Pure observations use the host's authentication error representation. */
-export function createProviderInterruptions(authRequired: () => Error): { codex: ToolInterruptions; claude: ToolInterruptions; grok: ToolInterruptions } {
-  return {
-    codex: { capacity: codexCapacity, notice: codexNotice, failure: createCodexFailure(authRequired) },
-    claude: { capacity: claudeCapacity },
-    grok: { capacity: grokCapacity, notice: grokNotice },
-  };
+export function createCodexInterruptions(authRequired: () => Error): ToolInterruptions {
+  return { capacity: codexCapacity, notice: codexNotice, failure: createCodexFailure(authRequired) };
 }

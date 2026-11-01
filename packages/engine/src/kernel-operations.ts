@@ -10,6 +10,7 @@ import {
   clearTaskStep,
   finishTaskStep,
   immediateMessageClock,
+  INBOX_CATALOG,
   involvesProduct,
   isCheckId,
   libraryRoles,
@@ -315,17 +316,15 @@ export async function waitForKernelReply(k: Kernel, id: Id, signal: AbortSignal)
 
 export function dropKernelBlockingItems(k: Kernel, taskId: Id): void {
   const task = k.task(taskId);
-  const dropped = k.s.inbox.filter(
-    (entry) => entry.taskId === taskId && entry.blocking && entry.kind !== "maintenance-settings",
-  );
+  const shouldDrop = (entry: DeepMutable<InboxItem>) =>
+    entry.taskId === taskId && entry.blocking && !INBOX_CATALOG[entry.kind].survivesAgentStop;
+  const dropped = k.s.inbox.filter(shouldDrop);
   if (task) withdrawAsks(task, dropped.map((item) => item.id), Date.now());
   for (const item of dropped) {
     k.waiting.get(item.id)?.reject(new Aborted());
     k.waiting.delete(item.id);
   }
-  k.s.inbox = k.s.inbox.filter(
-    (entry) => !(entry.taskId === taskId && entry.blocking && entry.kind !== "maintenance-settings"),
-  );
+  k.s.inbox = k.s.inbox.filter((entry) => !shouldDrop(entry));
 }
 
 export function stopKernelDriver(k: Kernel, taskId: Id): void {

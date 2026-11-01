@@ -138,6 +138,27 @@ describe('the app keyboard', () => {
     expect(simulator.getState().tasks.length).toBe(count);
   });
 
+  it('blocks Ctrl K and global shortcuts automatically inside nested Board dialogs such as Combine backlog tasks', async () => {
+    const productId = simulator.getState().products[0]!.id;
+    await act(async () => {
+      simulator.addTask({ productId, title: 'Backlog item one', backlog: true });
+      simulator.addTask({ productId, title: 'Backlog item two', backlog: true });
+    });
+    const selectBtn = Array.from(host.querySelectorAll('button')).find((entry) => entry.textContent?.trim() === 'Select tasks');
+    expect(selectBtn).toBeDefined();
+    await act(async () => selectBtn!.click());
+    await click('[aria-label="Include Backlog item one"]');
+    await click('[aria-label="Include Backlog item two"]');
+    const combineBtn = Array.from(host.querySelectorAll('button')).find((entry) => entry.textContent?.includes('Combine and queue'));
+    expect(combineBtn).toBeDefined();
+    await act(async () => combineBtn!.click());
+    expect(host.querySelector('[aria-label="Combine backlog tasks"]')).not.toBeNull();
+    await key('k', { ctrlKey: true });
+    expect(host.querySelector('.command-palette')).toBeNull();
+    await key('Escape');
+    expect(host.querySelector('[aria-label="Combine backlog tasks"]')).toBeNull();
+  });
+
   it.each(['Researcher', 'Bug finder'])('leaves the %s role panel its own keys: Escape asks before unsaved changes go, and app shortcuts wait', async (roleName) => {
     const button = (text: string) => { const found = Array.from(host.querySelectorAll('button')).find((entry) => entry.textContent?.trim() === text); expect(found, text).toBeDefined(); return found!; };
     const roles = simulator.getState().roles;

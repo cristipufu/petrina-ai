@@ -272,16 +272,6 @@
   color: var(--tone);
   background: var(--tone-soft);
 }
-.tone-indigo { --tone: var(--t-indigo); --tone-soft: var(--t-indigo-soft); }
-.tone-orange { --tone: var(--t-orange); --tone-soft: var(--t-orange-soft); }
-.tone-violet { --tone: var(--t-violet); --tone-soft: var(--t-violet-soft); }
-.tone-purple { --tone: var(--t-purple); --tone-soft: var(--t-purple-soft); }
-.tone-pink { --tone: var(--t-pink); --tone-soft: var(--t-pink-soft); }
-.tone-blue { --tone: var(--t-blue); --tone-soft: var(--t-blue-soft); }
-.tone-green { --tone: var(--t-green); --tone-soft: var(--t-green-soft); }
-.tone-teal { --tone: var(--t-teal); --tone-soft: var(--t-teal-soft); }
-.tone-slate { --tone: var(--t-slate); --tone-soft: var(--t-slate-soft); }
-.tone-amber { --tone: var(--t-amber); --tone-soft: var(--t-amber-soft); }
 
 .product-name { display: inline-flex; align-items: center; gap: 4px; color: var(--text-2); font-weight: 500; white-space: nowrap; }
 .product-name i { width: 8px; height: 8px; border-radius: 50%; background: var(--tone); flex: none; }

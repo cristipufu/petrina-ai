@@ -14,11 +14,12 @@ import {
   type TurnResult
 } from "@petrina/orchestrator";
 import * as acp from "@agentclientprotocol/sdk";
-import type { ProfileChoices, AgentProfile } from "@petrina/core";
+import { EFFORTS, type ProfileChoices, type AgentProfile } from "@petrina/core";
 import type { ClaudeSandbox } from "./sandbox.js";
 import { SandboxUnavailable, sandboxFailure } from "./sandbox-failures.js";
 import { ADAPTERS } from "./tool-catalog.js";
 import { adapterLaunchCommand } from "./tool-entry.js";
+import { registerAntigravityProbeStarter } from "./antigravity-probe-runner.js";
 import { AgentBrowser } from "./browser.js";
 export { AGENT_CLEANUP_NOTE } from "./browser-cleanup.js";
 import { CLEANUP_INCOMPLETE } from "@petrina/platform/process-tree";
@@ -402,7 +403,7 @@ export class AgentRun implements AgentSession {
           else if (sessionOptions === before) throw new Error(`${adapter.name} did not confirm its model settings.`);
         }
         if (modelOption()?.currentValue !== modelId) throw new Error(`${adapter.name} did not confirm the selected model.`);
-        const known = new Set(["low", "medium", "high", "xhigh", "ultra"]);
+        const known = new Set<string>(EFFORTS);
         const efforts = choices(sessionOptions.find(option => option.id === adapter.options.effort)).map(choice => choice.value).filter(value => known.has(value)) as AgentProfile["effort"][];
         if (!efforts.length) throw new Error(`${adapter.name} did not report supported effort levels for this model.`);
         return { toolId: profile.toolId, models, modelId, efforts };
@@ -570,3 +571,5 @@ export class AgentRun implements AgentSession {
     return this.stopper(graceMs);
   }
 }
+
+registerAntigravityProbeStarter((options) => AgentRun.start(options));

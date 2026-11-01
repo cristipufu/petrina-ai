@@ -5,7 +5,20 @@ import { ChevronDown, Package, Search } from "lucide-react";
 import { EditorPanel } from "./EditorPanel";
 import { StartFromFields } from "./TaskStart";
 import { useEffect, useId, useRef, useState } from "react";
-import { DELIVERY_LABEL, type DeliveryMode, type NewTaskInput, type State, type TaskKind, type WorkChoice } from "@petrina/core";
+import {
+  DELIVERY_LABEL,
+  DELIVERY_MODES,
+  DELIVERY_MODE_CATALOG,
+  DELIVERY_SELECT_MODES,
+  deliveryChoiceSummaryLabel,
+  deliverySelectLabel,
+  isValidDeliveryStart,
+  type DeliveryMode,
+  type NewTaskInput,
+  type State,
+  type TaskKind,
+  type WorkChoice,
+} from "@petrina/core";
 import { failureText, mode, sim } from "../engine";
 import { useDismiss, ConfirmDialog, WaitingLine } from "./bits";
 
@@ -135,7 +148,7 @@ export function TaskOptions({ kind, delivery, position, onKind, onDelivery, onPo
       {!hideDelivery && <div className="opt">
         <span id="new-delivery">When it's ready</span>
         <div className="segmented" role="radiogroup" aria-labelledby="new-delivery">
-          {(Object.keys(DELIVERY_LABEL) as DeliveryMode[]).map((mode) => (
+          {DELIVERY_MODES.map((mode) => (
             <button
               key={mode}
               role="radio"
@@ -237,7 +250,10 @@ export function NewTaskDialog({ state, defaultProduct, initialTitle = "", waitin
   const invalidSource = choices.some(({
     startFrom,
     delivery
-  }) => (startFrom.kind === "branch" && !startFrom.name.trim()) || (startFrom.kind === "pull-request" && !startFrom.value.trim()) || (delivery === "release" && startFrom.kind !== "default"));
+  }) => (startFrom.kind === "branch" && !startFrom.name.trim()) || (startFrom.kind === "pull-request" && !startFrom.value.trim()) || !isValidDeliveryStart(
+    startFrom.kind,
+    delivery
+  ));
   const add = async (another: boolean) => {
     if (adding.current || (!pending.current && (!title.trim() || invalidSource || (backlog && !supportsBacklog)))) return;
     const request = pending.current ??= {
@@ -389,7 +405,10 @@ export function NewTaskDialog({ state, defaultProduct, initialTitle = "", waitin
             className="repository-row new-task-product-settings"
             key={choice.productId}
           >
-            <summary><span><strong>{product.name}</strong><span className="quiet-text">{choice.startFrom.kind === "default" ? "Default branch" : choice.startFrom.kind === "branch" ? choice.startFrom.name || "Choose a branch" : choice.startFrom.value || "Choose a pull request"} · {choice.delivery === "local" ? "Commit and push" : choice.delivery === "release" ? "Publish a release" : choice.startFrom.kind === "pull-request" ? "Update pull request" : "Open a pull request"}</span></span><ChevronDown
+            <summary><span><strong>{product.name}</strong><span className="quiet-text">{choice.startFrom.kind === "default" ? "Default branch" : choice.startFrom.kind === "branch" ? choice.startFrom.name || "Choose a branch" : choice.startFrom.value || "Choose a pull request"} · {deliveryChoiceSummaryLabel(
+              choice.delivery,
+              choice.startFrom.kind
+            )}</span></span><ChevronDown
               size={16}
               aria-hidden="true"
             /></summary>
@@ -402,11 +421,17 @@ export function NewTaskDialog({ state, defaultProduct, initialTitle = "", waitin
                 product.id,
                 { delivery: event.target.value as DeliveryMode }
               )}
-              ><option value="pull-request">{choice.startFrom.kind === "pull-request" ? "Update pull request" : "Open a pull request"}</option><option value="local">Commit and push to the starting branch</option><option value="release">Publish a release</option></Select></label>
-              {choice.delivery === "release" && choice.startFrom.kind !== "default" && <p
+              >{DELIVERY_SELECT_MODES.map((mode) => <option
+                key={mode}
+                value={mode}
+              >{deliverySelectLabel(
+                mode,
+                choice.startFrom.kind
+              )}</option>)}</Select></label>
+              {!isValidDeliveryStart(choice.startFrom.kind, choice.delivery) && <p
                 className="note bad"
                 role="alert"
-              >{product.name}: Releases use the default branch.</p>}
+              >{product.name}: {DELIVERY_MODE_CATALOG[choice.delivery].invalidStartInlineNote}</p>}
               <button
                 className="btn quiet small"
                 aria-label={`Remove ${product.name}`}

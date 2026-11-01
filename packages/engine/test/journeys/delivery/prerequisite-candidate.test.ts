@@ -67,7 +67,7 @@ function candidateAgents(world: NativeWorld): Pick<EngineOptions, "startAgentSes
     return scriptedResult({ summary: "Wrote the release notes.", notes });
   });
   return {
-    toolProbe: scriptedToolProbe({ "claude-code": { status: "ready" }, codex: { status: "ready" }, grok: { status: "ready" }, antigravity: { status: "not-installed" }, opencode: { status: "not-installed" }, pi: { status: "not-installed" }, gh: { status: "ready" }, git: { status: "ready" } }),
+    toolProbe: scriptedToolProbe({ "claude-code": { status: "ready" }, codex: { status: "ready" }, grok: { status: "ready" }, gh: { status: "ready" }, git: { status: "ready" } }),
     startAgentSession: agents.start,
   };
 }

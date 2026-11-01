@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { involvesProduct } from "@petrina/core";
+import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
+import { countableInboxItems, DELIVERY_LABEL, involvesProduct, type Column, type Product, type ProductsUsage, type State } from "@petrina/core";
 import { Check, ChevronDown, Search } from "lucide-react";
-import { DELIVERY_LABEL, type Column, type Product, type ProductsUsage, type State } from "@petrina/core";
-import { mod } from "../keyboard";
+import { GLOBAL_COMMANDS, mod, shortcutTitle } from "../commands";
+import { emptyColumnCounts, PIPELINE_COLUMNS } from "../lib";
 import { useUsage } from "../usage";
 import { useDismiss, useFocusTrap } from "./bits";
 import { FigureText } from "./Usage";
@@ -22,14 +22,14 @@ export interface ProductStats {
 export function productStats(state: State): ProductStats[] {
   return state.products.map((product) => {
     const tasks = state.tasks.filter((task) => involvesProduct(task, product.id));
-    const byColumn = { backlog: 0, queue: 0, planning: 0, designing: 0, building: 0, reviewing: 0, ready: 0, done: 0 } as Record<Column, number>;
+    const byColumn = emptyColumnCounts();
     const history = state.history?.products.find((entry) => entry.productId === product.id);
     byColumn.done = (history?.done ?? 0) + (history?.cancelled ?? 0);
     for (const task of tasks) byColumn[task.column] += 1;
     const ids = new Set(tasks.map((task) => task.id));
     const working = tasks.filter((task) => task.state === "running").length;
     const queued = tasks.filter((task) => task.state === "queued").length;
-    const needsYou = state.inbox.filter((item) => ids.has(item.taskId)).length;
+    const needsYou = countableInboxItems(state.inbox).filter((item) => ids.has(item.taskId)).length;
     const inFlight = tasks.filter((task) => !["backlog", "queued", "done", "cancelled"].includes(task.state)).length;
     return {
       product,
@@ -55,25 +55,35 @@ export function ProductCounts({ stats }: { stats: ProductStats }) {
 }
 
 /** Scales to many products: search, then grouped by what needs attention. */
-export function ProductSwitcher({ state, value, onChange }: { state: State; value: string; onChange: (productId: string) => void }) {
-  const [open, setOpen] = useState(false);
+export function ProductSwitcher({
+  state,
+  value,
+  onChange,
+  open: controlledOpen,
+  onOpenChange,
+}: {
+  state: State;
+  value: string;
+  onChange: (productId: string) => void;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+}) {
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
+  const open = controlledOpen ?? uncontrolledOpen;
+  const setOpen = useCallback(
+    (next: boolean | ((previous: boolean) => boolean)) => {
+      const resolved = typeof next === "function" ? next(open) : next;
+      if (controlledOpen === undefined) setUncontrolledOpen(resolved);
+      onOpenChange?.(resolved);
+    },
+    [controlledOpen, onOpenChange, open],
+  );
   const [query, setQuery] = useState("");
   const box = useRef<HTMLDivElement>(null);
-  const close = useCallback(() => setOpen(false), []);
+  const close = useCallback(() => setOpen(false), [setOpen]);
   useDismiss(box, open, close);
   const stats = useMemo(() => productStats(state), [state]);
   const current = state.products.find((product) => product.id === value);
-
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey || event.key.toLowerCase() !== "p") return;
-      // Never the browser's Print. Like ⌘K it works over an open task, but not over another dialog.
-      event.preventDefault();
-      if (!document.querySelector(".command-palette, .dialog, .editor-panel")) setOpen(true);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
 
   const match = (entry: ProductStats) => !query.trim() || entry.product.name.toLowerCase().includes(query.trim().toLowerCase());
   const byName = (a: ProductStats, b: ProductStats) => a.product.name.localeCompare(b.product.name);
@@ -92,7 +102,13 @@ export function ProductSwitcher({ state, value, onChange }: { state: State; valu
 
   return (
     <div style={{ position: "relative", minWidth: 0, flex: "0 1 auto" }} ref={box}>
-      <button className="btn switcher" onClick={() => setOpen((on) => !on)} aria-expanded={open} aria-haspopup="dialog" title={`Switch product (${mod}P)`}>
+      <button
+        className="btn switcher"
+        onClick={() => setOpen((on) => !on)}
+        aria-expanded={open}
+        aria-haspopup="dialog"
+        title={shortcutTitle(GLOBAL_COMMANDS["switch-product"].label, GLOBAL_COMMANDS["switch-product"].shortcutDisplay)}
+      >
         <span className="label-text">
           {current ? (
             <span className={`tone-${current.tone}`} style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
@@ -164,23 +180,13 @@ export function ProductSwitcher({ state, value, onChange }: { state: State; valu
 /** Holds focus while open, over an open task too, and gives it back to where it was on Esc. */
 function SwitcherPopover({ onEscape, children }: { onEscape: () => void; children: ReactNode }) {
   const box = useRef<HTMLDivElement>(null);
-  useFocusTrap(box, onEscape);
+  useFocusTrap(box, onEscape, undefined, "popover");
   return (
     <div ref={box} className="popover switcher-pop" role="dialog" aria-label="Switch product" tabIndex={-1}>
       {children}
     </div>
   );
 }
-
-const PIPE: readonly { column: Column; label: string }[] = [
-  { column: "backlog", label: "Backlog" },
-  { column: "queue", label: "Queue" },
-  { column: "planning", label: "Plan" },
-  { column: "designing", label: "Design" },
-  { column: "building", label: "Build" },
-  { column: "reviewing", label: "Review" },
-  { column: "ready", label: "Ready" },
-];
 
 /** The portfolio: every product on one screen, what is in flight and what waits on you. */
 export function ProductsPage({ state, onPick, onAdd, settings, onSettings }: {
@@ -232,7 +238,7 @@ export function ProductsPage({ state, onPick, onAdd, settings, onSettings }: {
           <thead>
             <tr>
               <th scope="col">Product</th>
-              {PIPE.map((step) => (
+              {PIPELINE_COLUMNS.map((step) => (
                 <th key={step.column} scope="col" className="c">
                   {step.label}
                 </th>
@@ -267,7 +273,7 @@ export function ProductsPage({ state, onPick, onAdd, settings, onSettings }: {
                     </span>
                   </span>
                 </th>
-                {PIPE.map((step) => (
+                {PIPELINE_COLUMNS.map((step) => (
                   <td key={step.column} className="c">
                     {count(entry.byColumn[step.column])}
                   </td>

@@ -1,15 +1,27 @@
-import { profileModelName } from "@petrina/core";
 import {
+  CHECK_LABELS,
+  checkOutcome,
+  checkOutcomeLabel,
+  COLUMNS,
+  EFFORT_LABEL,
   landingOf,
   onScreen,
+  profileModelName,
+  PROVIDER_CATALOG,
+  ROLE_RESULT_CATALOG,
+  ROLE_RESULTS,
+  RUN_STATES,
   SCREEN_WORDS,
   screenOn,
   screenWait,
   slotUses,
+  TONES,
   type AgentProfile,
+  type CheckRun,
+  type CheckStatus,
   type Column,
-  type Effort,
   type Id,
+  type JourneyProductCheck,
   type Role,
   type RoleIcon,
   type RoleResult,
@@ -17,8 +29,11 @@ import {
   type State,
   type Task,
   type Tone,
-  type Tool
+  type Tool,
 } from "@petrina/core";
+import { TONE_CATALOG } from "./themes/tones";
+
+export { EFFORT_LABEL } from "@petrina/core";
 
 export function lookup(state: State, task?: Pick<Task, "maintenance">) {
   const roles = new Map(state.roles.map((role) => [role.id, role]));
@@ -28,12 +43,12 @@ export function lookup(state: State, task?: Pick<Task, "maintenance">) {
   const tasks = new Map(state.tasks.map((task) => [task.id, task]));
   const finished = new Map(state.history?.dependencies?.map((task) => [task.id, task]) ?? []);
   return {
-    role: (id?: Id): Role | undefined => (id ? task?.maintenance?.role.id === id ? task.maintenance.role : roles.get(id) : undefined),
-    profile: (id?: Id): AgentProfile | undefined => (id ? task?.maintenance?.profile.id === id ? task.maintenance.profile : profiles.get(id) : undefined),
+    role: (id?: Id): Role | undefined => (id ? (task?.maintenance?.role.id === id ? task.maintenance.role : roles.get(id)) : undefined),
+    profile: (id?: Id): AgentProfile | undefined => (id ? (task?.maintenance?.profile.id === id ? task.maintenance.profile : profiles.get(id)) : undefined),
     tool: (id?: Id): Tool | undefined => (id ? tools.get(id) : undefined),
     product: (id?: Id) => (id ? products.get(id) : undefined),
     task: (id?: Id): Task | undefined => (id ? tasks.get(id) : undefined),
-    finishedTask: (id?: Id) => id ? finished.get(id) : undefined,
+    finishedTask: (id?: Id) => (id ? finished.get(id) : undefined),
   };
 }
 
@@ -52,18 +67,27 @@ export function agentSlots(state: State, find: Lookup) {
   });
 }
 
-export const STATE_LABEL: Record<RunState, string> = {
-  backlog: "Backlog",
-  queued: "Queued",
-  waiting: "Waiting for a slot",
-  running: "Working",
-  "needs-you": "Needs you",
-  paused: "Paused",
-  failed: "Failed",
-  "pr-open": "Awaiting merge",
-  done: "Completed",
-  cancelled: "Cancelled",
+export interface RunStateDescriptor {
+  readonly label: string;
+  readonly activityLabel: string;
+}
+
+export const RUN_STATE_META: Readonly<Record<RunState, RunStateDescriptor>> = {
+  backlog: { label: "Backlog", activityLabel: "Backlog" },
+  queued: { label: "Queued", activityLabel: "Queued" },
+  waiting: { label: "Waiting for a slot", activityLabel: "Waiting" },
+  running: { label: "Working", activityLabel: "Working" },
+  "needs-you": { label: "Needs you", activityLabel: "Needs you" },
+  paused: { label: "Paused", activityLabel: "Paused" },
+  failed: { label: "Failed", activityLabel: "Stuck" },
+  "pr-open": { label: "Awaiting merge", activityLabel: "Awaiting merge" },
+  done: { label: "Completed", activityLabel: "Done" },
+  cancelled: { label: "Cancelled", activityLabel: "Cancelled" },
 };
+
+export const STATE_LABEL: Record<RunState, string> = Object.fromEntries(
+  RUN_STATES.map((state) => [state, RUN_STATE_META[state].label]),
+) as Record<RunState, string>;
 
 /** A task's state in words. A task waiting for the screen says so instead of waiting for a slot. */
 export function stateLabel(task: Task, state: State): string {
@@ -85,14 +109,6 @@ export function clockTime(at: number): string {
   return new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-export const EFFORT_LABEL: Record<Effort, string> = {
-  ultra: "ultra effort",
-  low: "low effort",
-  medium: "medium effort",
-  high: "high effort",
-  xhigh: "extra high effort",
-};
-
 /** A profile in words: "Opus 5.5", or in full "Claude Code · Opus 5.5 · high effort". */
 export function profileText(profile: AgentProfile | undefined, find: Lookup, full = false): string {
   if (!profile) return "";
@@ -103,21 +119,24 @@ export function profileText(profile: AgentProfile | undefined, find: Lookup, ful
 /** Where delivered work stands, in words, or undefined before delivery. A closed pull request and "Mark as done" deliver nothing. */
 export function deliveryText(task: Task): { text: string; done: boolean } | undefined {
   if (task.release) return { text: `Released ${task.release.tag}`, done: true };
-  if (task.landed) return {
-    text: task.localUpdate?.pushed ? `Committed to ${task.landed.branch} · pushed to GitHub` : `Delivered locally to ${task.landed.branch}`,
-    done: true
-  };
+  if (task.landed) {
+    return {
+      text: task.localUpdate?.pushed ? `Committed to ${task.landed.branch} · pushed to GitHub` : `Delivered locally to ${task.landed.branch}`,
+      done: true,
+    };
+  }
   // A pull request found after you marked the work done does not deliver it.
   if (landingOf(task) === "marked-done") return { text: "Marked as done · delivery not confirmed", done: false };
   if (task.pr?.state === "merged") return { text: `Pull request #${task.pr.number} merged`, done: true };
-  if (task.pr && (task.pr.state === "closed" || landingOf(task) === "closed")) return {
-    text: `Pull request #${task.pr.number} closed without merging`,
-    done: false
-  };
-  if (task.pr) return {
-    text: `${task.source?.start.kind === "pull-request" ? "Updated PR" : "Pull request"} #${task.pr.number} · awaiting merge`,
-    done: false
-  };
+  if (task.pr && (task.pr.state === "closed" || landingOf(task) === "closed")) {
+    return { text: `Pull request #${task.pr.number} closed without merging`, done: false };
+  }
+  if (task.pr) {
+    return {
+      text: `${task.source?.start.kind === "pull-request" ? "Updated PR" : "Pull request"} #${task.pr.number} · awaiting merge`,
+      done: false,
+    };
+  }
   if (landingOf(task) === "no-changes") return { text: "Completed · No product changes", done: true };
   return undefined;
 }
@@ -136,15 +155,9 @@ export function duration(from: number | undefined, to: number): string {
   return from === undefined ? "" : ago(from, to) === "now" ? "<1m" : ago(from, to);
 }
 
-export const TOOL_COLORS: Record<string, string> = {
-  antigravity: "var(--tool-antigravity)",
-  "claude-code": "#d97757",
-  codex: "#10a37f",
-  grok: "#5b6cff",
-  gemini: "#4285f4",
-  opencode: "var(--tool-opencode)",
-  pi: "var(--tool-pi)",
-};
+export const TOOL_COLORS: Record<string, string> = Object.fromEntries(
+  PROVIDER_CATALOG.map((provider) => [provider.id, `var(--tool-${provider.id}, ${provider.theme.light})`]),
+);
 
 /** Agents waiting on the coordinator while keeping their slot. A step the coordinator is driving is not waiting on them. */
 export function blockingCount(state: State): number {
@@ -163,31 +176,100 @@ export function safeUrl(url: string | undefined): string | undefined {
 }
 
 /** What each kind of result is, in the Library's words. */
-export const RESULT_WORDS: Record<RoleResult, { label: string; detail: string }> = {
-  plan: { label: "A plan", detail: "The steps for the task, with a reason for each." },
-  notes: { label: "Notes", detail: "A summary and a list that every later agent on the task reads." },
-  brief: { label: "A design brief", detail: "What changes for users, the parts that change, an acceptance checklist and risks." },
-  objections: { label: "Objections", detail: "Each one blocking or not. The architect answers every one." },
-  build: { label: "A change ready for review", detail: "With a plain-language summary that goes into the pull request." },
-  checks: { label: "Pass or fail per acceptance item", detail: "Failed checks go back to the builder." },
-  findings: { label: "Pass-or-fail findings", detail: "It joins the review next to the code reviewers. Its blocking findings go back to the builder." },
-  delivery: { label: "Release notes", detail: "Notes for a release that Petrina publishes itself." },
-  "check-discovery": { label: "Product checks", detail: "The checks Petrina runs on the work." },
-  guide: { label: "Review guide point", detail: "A proposed point to help future reviews." },
-  votes: { label: "Verdicts on findings", detail: "An independent check of important findings." },
+export const RESULT_WORDS = Object.fromEntries(
+  ROLE_RESULTS.map((result) => [result, ROLE_RESULT_CATALOG[result].words]),
+) as Record<RoleResult, { label: string; detail: string }>;
+
+export interface ColumnDescriptor {
+  readonly label: string;
+  /** Short table column heading on the Products portfolio view (omitted for `done`, which has its own Shipped column). */
+  readonly pipelineHeading?: string;
+}
+
+export const COLUMN_META: Readonly<Record<Column, ColumnDescriptor>> = {
+  backlog: { label: "Backlog", pipelineHeading: "Backlog" },
+  queue: { label: "Queue", pipelineHeading: "Queue" },
+  planning: { label: "Planning", pipelineHeading: "Plan" },
+  designing: { label: "Designing", pipelineHeading: "Design" },
+  building: { label: "Building", pipelineHeading: "Build" },
+  reviewing: { label: "Reviewing", pipelineHeading: "Review" },
+  ready: { label: "Delivery", pipelineHeading: "Ready" },
+  done: { label: "Done" },
 };
 
-/** The stage a task is in while a role works on it, as the Products page counts them. */
-export const COLUMN_LABEL: Record<Column, string> = {
-  backlog: "Backlog",
-  queue: "Queue",
-  planning: "Planning",
-  designing: "Designing",
-  building: "Building",
-  reviewing: "Reviewing",
-  ready: "Delivery",
-  done: "Done",
+/** The stage a task is in while a role works on it, as the Role details panel and Products page name them. */
+export const COLUMN_LABEL: Record<Column, string> = Object.fromEntries(
+  COLUMNS.map((column) => [column, COLUMN_META[column].label]),
+) as Record<Column, string>;
+
+export const PIPELINE_COLUMNS: readonly { readonly column: Column; readonly label: string }[] = COLUMNS.flatMap(
+  (column) => {
+    const heading = COLUMN_META[column].pipelineHeading;
+    return heading ? [{ column, label: heading }] : [];
+  },
+);
+
+export function emptyColumnCounts(): Record<Column, number> {
+  return Object.fromEntries(COLUMNS.map((column) => [column, 0])) as Record<Column, number>;
+}
+
+export const TOOL_CHECK_TONE: Readonly<Record<CheckStatus, string>> = {
+  ready: "ok",
+  "not-installed": "warn",
+  "logged-out": "warn",
+  unknown: "",
+  unchecked: "quiet",
 };
+
+export function toolStatusBadge(status: CheckStatus): { readonly label: string; readonly tone: string } {
+  return {
+    label: status === "unchecked" ? "Checking…" : CHECK_LABELS[status],
+    tone: TOOL_CHECK_TONE[status],
+  };
+}
+
+const JOURNEY_CHECK_META: Readonly<Record<JourneyProductCheck["result"], { readonly label: string; readonly tone: string }>> = {
+  pass: { label: "Passed", tone: "ok" },
+  fail: { label: "Failed", tone: "bad" },
+  "did-not-finish": { label: "Timed out", tone: "bad" },
+  running: { label: "Running", tone: "running" },
+  pending: { label: "Pending", tone: "" },
+  stopped: { label: "Stopped — verification incomplete", tone: "" },
+  skipped: { label: "Skipped", tone: "" },
+};
+
+export function checkBadge(
+  result: JourneyProductCheck["result"],
+  options?: { readonly run?: CheckRun; readonly lifecycle?: boolean },
+): { readonly label: string; readonly tone: string } {
+  const lifecycle = options?.lifecycle ?? true;
+  if (result === "stopped" && !lifecycle) {
+    const words = options?.run ? checkOutcomeLabel(checkOutcome(options.run)) : undefined;
+    return {
+      label: words ? words[0]!.toUpperCase() + words.slice(1) : "Unverified — execution details were not recorded",
+      tone: "",
+    };
+  }
+  return JOURNEY_CHECK_META[result];
+}
+
+export function checkRunBadge(run: CheckRun): {
+  readonly label: string;
+  readonly tone: string;
+  readonly passed: boolean;
+  readonly failed: boolean;
+} {
+  const outcome = checkOutcome(run);
+  const passed = outcome.kind === "passed";
+  const failed = outcome.kind === "failed";
+  const words = checkOutcomeLabel(outcome);
+  return {
+    label: words[0]!.toUpperCase() + words.slice(1),
+    tone: passed ? "ok" : failed ? "bad" : "",
+    passed,
+    failed,
+  };
+}
 
 export const ICON_NAME: Record<RoleIcon, string> = {
   lightbulb: "Light bulb",
@@ -209,15 +291,6 @@ export const ICON_NAME: Record<RoleIcon, string> = {
   rocket: "Rocket",
 };
 
-export const TONE_NAME: Record<Tone, string> = {
-  blue: "Blue",
-  teal: "Teal",
-  green: "Green",
-  orange: "Orange",
-  amber: "Amber",
-  pink: "Pink",
-  purple: "Purple",
-  violet: "Violet",
-  indigo: "Indigo",
-  slate: "Slate",
-};
+export const TONE_NAME: Record<Tone, string> = Object.fromEntries(
+  TONES.map((tone) => [tone, TONE_CATALOG[tone].name]),
+) as Record<Tone, string>;

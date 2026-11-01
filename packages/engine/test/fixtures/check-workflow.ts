@@ -186,7 +186,7 @@ async function prepareWorkflow(entry: CheckWorkflowStart, root: string, lifetime
     runCheckCommand: execute,
     agentCommand: () => [process.execPath, join(import.meta.dir, "..", "unconfigured-service.ts"), "check workflow"],
     toolProbe: scriptedToolProbe({ "claude-code": { status: "ready" }, codex: { status: "ready" }, grok: { status: "ready" },
-      antigravity: { status: "logged-out" }, opencode: { status: "not-installed" }, pi: { status: "not-installed" }, gh: { status: "unknown" }, git: { status: "ready" } }),
+      antigravity: { status: "logged-out" }, gh: { status: "unknown" }, git: { status: "ready" } }),
   };
   const repository = await createProductRepository(root, { origin: "none" }), repo = repository.path;
   available();

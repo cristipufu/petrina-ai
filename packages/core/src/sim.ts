@@ -12,7 +12,7 @@ import { messageRemovable } from "./message-delivery.js";
 import { messagePage, previewRecord } from "./public-messages.js";
 import type { CheckPrerequisite, DeliveryMode, Id, InboxItem, Product, RoleChanges, ScreenMode, State, Task } from "./model.js";
 import { queueNeighbour, queuePlacement } from "./navigation.js";
-import { productHistory, validateProductSettings, type ProductSettings } from "./products.js";
+import { applyProductSettings, productHistory, validateProductSettings, type ProductSettings } from "./products.js";
 import { demoProfileChoices, removeProfile, saveProfile, type ProfileChoiceRequest, type ProfileDraft } from "./profiles.js";
 import * as library from "./roles.js";
 import type { RoleDraft } from "./roles.js";
@@ -200,6 +200,11 @@ export class Simulator {
 
   /** Approve a gate (plan, design, delivery) or settle a disagreement with the architect's position. */
   approve(itemId: Id): void {
+    const existing = this.state.inbox.find((entry) => entry.id === itemId);
+    if (existing?.kind === "maintenance-settings") {
+      this.resolveMaintenanceSettings(existing.taskId, "keep");
+      return;
+    }
     this.resolve(itemId, (d, task, item) => simApproveItem(this.rt, d, task, item), "approved");
   }
 
@@ -292,11 +297,11 @@ export class Simulator {
   }
 
   updateProduct(productId: Id, settings: ProductSettings): void {
-    const validated = validateProductSettings(settings, this.state.products, productId);
+    validateProductSettings(settings, this.state.products, productId);
     this.update((d) => {
       const product = d.products.find((entry) => entry.id === productId);
       if (!product) throw new Error("This product is no longer in Petrina.");
-      Object.assign(product, validated);
+      applyProductSettings(product, settings, d.products);
       // The permanent list keeps the latest name, so a removed product shows under the name it last had.
       this.rt.work.recordProduct({ id: product.id, name: product.name, repo: product.repo });
     });

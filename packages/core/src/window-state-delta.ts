@@ -29,16 +29,36 @@ export interface OptionalKeyedListDelta<T extends { readonly id: Id }> {
   readonly delta?: KeyedListDelta<T>;
 }
 
-export interface WindowStateExtrasDelta {
-  readonly history?: { readonly value?: State["history"] | undefined };
-  readonly roleChanges?: { readonly value?: State["roleChanges"] | undefined };
-  readonly setup?: { readonly value?: State["setup"] | undefined };
-  readonly work?: { readonly value?: State["work"] | undefined };
-  readonly followUpPending?: { readonly value?: State["followUpPending"] | undefined };
-  readonly profileCatalogSaved?: { readonly value?: State["profileCatalogSaved"] | undefined };
-  readonly terminal?: { readonly value?: State["terminal"] | undefined };
-  readonly planner?: { readonly value?: State["planner"] | undefined };
-}
+const KEYED_STATE_KEYS = ["products", "roles", "tools", "profiles", "tasks", "inbox"] as const;
+const OPTIONAL_KEYED_STATE_KEYS = [
+  "retiredProfiles",
+  "routines",
+  "backgroundAgents",
+  "terminals",
+  "extraValidations",
+] as const;
+const EXTRA_STATE_KEYS = [
+  "history",
+  "roleChanges",
+  "setup",
+  "work",
+  "followUpPending",
+  "profileCatalogSaved",
+  "terminal",
+  "planner",
+] as const;
+
+type KeyedStateKey = (typeof KEYED_STATE_KEYS)[number];
+type OptionalKeyedStateKey = (typeof OPTIONAL_KEYED_STATE_KEYS)[number];
+type ExtraStateKey = (typeof EXTRA_STATE_KEYS)[number];
+type HandledStateKey = "now" | "seq" | "pool" | KeyedStateKey | OptionalKeyedStateKey | ExtraStateKey;
+type MissingStateDeltaKey = Exclude<keyof State, HandledStateKey>;
+const EVERY_STATE_KEY_HANDLED: MissingStateDeltaKey extends never ? true : MissingStateDeltaKey = true;
+void EVERY_STATE_KEY_HANDLED;
+
+export type WindowStateExtrasDelta = {
+  readonly [K in ExtraStateKey]?: { readonly value?: State[K] | undefined };
+};
 
 export interface WindowStateDelta {
   readonly now: number;
@@ -71,14 +91,7 @@ export interface WindowStateBase {
   readonly backgroundAgents: CapturedKeyedList | undefined;
   readonly terminals: CapturedKeyedList | undefined;
   readonly extraValidations: CapturedKeyedList | undefined;
-  readonly historyJson: string;
-  readonly roleChangesJson: string;
-  readonly setupJson: string;
-  readonly workJson: string;
-  readonly followUpPendingJson: string;
-  readonly profileCatalogSavedJson: string;
-  readonly terminalJson: string;
-  readonly plannerJson: string;
+  readonly extrasJson: Readonly<Record<ExtraStateKey, string>>;
 }
 
 function captureOptionalKeyed<T extends { readonly id: Id }>(
@@ -88,6 +101,10 @@ function captureOptionalKeyed<T extends { readonly id: Id }>(
 }
 
 export function captureWindowStateBase(state: State): WindowStateBase {
+  const extrasJson = {} as Record<ExtraStateKey, string>;
+  for (const key of EXTRA_STATE_KEYS) {
+    extrasJson[key] = stableJson(state[key]);
+  }
   return {
     products: captureKeyedList(state.products),
     roles: captureKeyedList(state.roles),
@@ -101,14 +118,7 @@ export function captureWindowStateBase(state: State): WindowStateBase {
     backgroundAgents: captureOptionalKeyed(state.backgroundAgents),
     terminals: captureOptionalKeyed(state.terminals),
     extraValidations: captureOptionalKeyed(state.extraValidations),
-    historyJson: stableJson(state.history),
-    roleChangesJson: stableJson(state.roleChanges),
-    setupJson: stableJson(state.setup),
-    workJson: stableJson(state.work),
-    followUpPendingJson: stableJson(state.followUpPending),
-    profileCatalogSavedJson: stableJson(state.profileCatalogSaved),
-    terminalJson: stableJson(state.terminal),
-    plannerJson: stableJson(state.planner),
+    extrasJson,
   };
 }
 
@@ -157,6 +167,20 @@ function diffOptionalKeyedList<T extends { readonly id: Id }>(
   return delta ? { delta } : undefined;
 }
 
+type MutableExtrasDelta = {
+  -readonly [P in ExtraStateKey]?: { readonly value?: State[P] | undefined };
+};
+
+function recordExtraDelta<K extends ExtraStateKey>(
+  target: MutableExtrasDelta,
+  key: K,
+  current: State,
+): void {
+  const value = current[key];
+  (target as Record<ExtraStateKey, { readonly value?: unknown }>)[key] =
+    value === undefined ? {} : { value };
+}
+
 export function diffWindowState(
   base: WindowStateBase,
   current: State,
@@ -188,29 +212,14 @@ export function diffWindowState(
     nextBase.extraValidations,
   );
 
-  const extras: {
-    history?: { readonly value?: State["history"] | undefined };
-    roleChanges?: { readonly value?: State["roleChanges"] | undefined };
-    setup?: { readonly value?: State["setup"] | undefined };
-    work?: { readonly value?: State["work"] | undefined };
-    followUpPending?: { readonly value?: State["followUpPending"] | undefined };
-    profileCatalogSaved?: { readonly value?: State["profileCatalogSaved"] | undefined };
-    terminal?: { readonly value?: State["terminal"] | undefined };
-    planner?: { readonly value?: State["planner"] | undefined };
-  } = {};
-  if (nextBase.historyJson !== base.historyJson) extras.history = { value: current.history };
-  if (nextBase.roleChangesJson !== base.roleChangesJson) extras.roleChanges = { value: current.roleChanges };
-  if (nextBase.setupJson !== base.setupJson) extras.setup = { value: current.setup };
-  if (nextBase.workJson !== base.workJson) extras.work = { value: current.work };
-  if (nextBase.followUpPendingJson !== base.followUpPendingJson) {
-    extras.followUpPending = { value: current.followUpPending };
+  const extras: MutableExtrasDelta = {};
+  let hasExtras = false;
+  for (const key of EXTRA_STATE_KEYS) {
+    if (nextBase.extrasJson[key] !== base.extrasJson[key]) {
+      recordExtraDelta(extras, key, current);
+      hasExtras = true;
+    }
   }
-  if (nextBase.profileCatalogSavedJson !== base.profileCatalogSavedJson) {
-    extras.profileCatalogSaved = { value: current.profileCatalogSaved };
-  }
-  if (nextBase.terminalJson !== base.terminalJson) extras.terminal = { value: current.terminal };
-  if (nextBase.plannerJson !== base.plannerJson) extras.planner = { value: current.planner };
-  const hasExtras = Object.keys(extras).length > 0;
 
   return {
     now: current.now,
@@ -242,59 +251,44 @@ function applyOptionalKeyedList<T extends { readonly id: Id }>(
   return applyKeyedListDelta(base, patch.delta);
 }
 
-export function applyWindowStateDelta(previous: State, delta: WindowStateDelta): State {
-  const products = applyKeyedListDelta(previous.products, delta.products);
-  const roles = applyKeyedListDelta(previous.roles, delta.roles);
-  const tools = applyKeyedListDelta(previous.tools, delta.tools);
-  const profiles = applyKeyedListDelta(previous.profiles, delta.profiles);
-  const tasks = applyKeyedListDelta(previous.tasks, delta.tasks);
-  const inbox = applyKeyedListDelta(previous.inbox, delta.inbox);
-  const pool = delta.pool ?? previous.pool;
+function assignExtraStateField<K extends ExtraStateKey>(
+  next: State,
+  previous: State,
+  extras: WindowStateExtrasDelta | undefined,
+  key: K,
+): void {
+  const entry = extras?.[key];
+  const value = entry !== undefined ? entry.value : previous[key];
+  if (value !== undefined) {
+    next[key] = value;
+  }
+}
 
+export function applyWindowStateDelta(previous: State, delta: WindowStateDelta): State {
   const retiredProfiles = applyOptionalKeyedList(previous.retiredProfiles, delta.retiredProfiles);
   const routines = applyOptionalKeyedList(previous.routines, delta.routines);
   const backgroundAgents = applyOptionalKeyedList(previous.backgroundAgents, delta.backgroundAgents);
   const terminals = applyOptionalKeyedList(previous.terminals, delta.terminals);
   const extraValidations = applyOptionalKeyedList(previous.extraValidations, delta.extraValidations);
 
-  const history = delta.extras?.history !== undefined ? delta.extras.history.value : previous.history;
-  const roleChanges =
-    delta.extras?.roleChanges !== undefined ? delta.extras.roleChanges.value : previous.roleChanges;
-  const setup = delta.extras?.setup !== undefined ? delta.extras.setup.value : previous.setup;
-  const work = delta.extras?.work !== undefined ? delta.extras.work.value : previous.work;
-  const followUpPending =
-    delta.extras?.followUpPending !== undefined
-      ? delta.extras.followUpPending.value
-      : previous.followUpPending;
-  const profileCatalogSaved =
-    delta.extras?.profileCatalogSaved !== undefined
-      ? delta.extras.profileCatalogSaved.value
-      : previous.profileCatalogSaved;
-  const terminal = delta.extras?.terminal !== undefined ? delta.extras.terminal.value : previous.terminal;
-  const planner = delta.extras?.planner !== undefined ? delta.extras.planner.value : previous.planner;
-
-  return {
+  const next: State = {
     now: delta.now,
     seq: delta.seq,
-    products,
-    roles,
-    tools,
-    profiles,
-    tasks,
-    inbox,
-    pool,
+    products: applyKeyedListDelta(previous.products, delta.products),
+    roles: applyKeyedListDelta(previous.roles, delta.roles),
+    tools: applyKeyedListDelta(previous.tools, delta.tools),
+    profiles: applyKeyedListDelta(previous.profiles, delta.profiles),
+    tasks: applyKeyedListDelta(previous.tasks, delta.tasks),
+    inbox: applyKeyedListDelta(previous.inbox, delta.inbox),
+    pool: delta.pool ?? previous.pool,
     ...(retiredProfiles !== undefined ? { retiredProfiles } : {}),
     ...(routines !== undefined ? { routines } : {}),
     ...(backgroundAgents !== undefined ? { backgroundAgents } : {}),
     ...(terminals !== undefined ? { terminals } : {}),
     ...(extraValidations !== undefined ? { extraValidations } : {}),
-    ...(history !== undefined ? { history } : {}),
-    ...(roleChanges !== undefined ? { roleChanges } : {}),
-    ...(setup !== undefined ? { setup } : {}),
-    ...(work !== undefined ? { work } : {}),
-    ...(followUpPending !== undefined ? { followUpPending } : {}),
-    ...(profileCatalogSaved !== undefined ? { profileCatalogSaved } : {}),
-    ...(terminal !== undefined ? { terminal } : {}),
-    ...(planner !== undefined ? { planner } : {}),
   };
+  for (const key of EXTRA_STATE_KEYS) {
+    assignExtraStateField(next, previous, delta.extras, key);
+  }
+  return next;
 }

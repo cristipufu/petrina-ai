@@ -2,7 +2,7 @@
 // asking. Never the command behind a permission, the error of a stuck task, or a link: those stay
 // in the app, since notifications can show on the lock screen and stay in the system's history.
 
-import { deliveryDecisionProblem, type InboxItem, type InboxKind, type State } from "@petrina/core";
+import { describeInboxNoticeTitle, type InboxItem, type State } from "@petrina/core";
 
 /** Where a click on a notification, or View on an in-app message, leads. */
 export type Target = { kind: "item"; id: string } | { kind: "inbox" };
@@ -124,23 +124,6 @@ function request(item: InboxItem): string {
   return !words || repeats ? "It wants your OK before going ahead" : words;
 }
 
-/** What is needed, and who is asking. Only a stuck task names the task here: the rest say it below. */
-const NEED: Record<InboxKind, (who: string, task: string) => string> = {
-  "maintenance-settings": (_who, task) => `Choose whether to keep the reported agent settings for ${task}`,
-  question: (who) => `${who} has a question`,
-  permission: (who) => `${who} needs your permission`,
-  plan: (who) => `${who}: a plan needs your OK`,
-  design: (who) => `${who}: a design needs your check`,
-  disagreement: (who) => `${who}: the architects need your call`,
-  delivery: (who) => `${who}: a task is ready to ship`,
-  stuck: (who, task) => `${who}: ${task} is stuck`,
-  shipping: (who) => `${who}: shipping a task was interrupted`,
-  driving: () => "You're driving",
-  guide: (who) => `${who}: a point for the review guide`,
-  learnings: (who) => `${who}: lessons about working in this repository`,
-  screen: (who) => `${who} needs the screen`,
-};
-
 /** The notification for one inbox item. */
 export function noticeFor(item: InboxItem, state: State): Notice {
   const who = whoAsks(item, state);
@@ -150,13 +133,8 @@ export function noticeFor(item: InboxItem, state: State): Notice {
   // A stuck task's error never leaves the app; its title already names the task.
   const where = item.kind === "stuck" ? product : product ? `${task}, ${product}` : task;
   const owner = state.tasks.find((entry) => entry.id === item.taskId);
-  const unsettled = item.kind === "delivery" && (owner?.acceptanceUnverified === true || (owner?.findings.some((finding) => finding.status === "open" && finding.severity === "blocking") ?? false));
-  const checks = item.kind === "delivery" && owner ? deliveryDecisionProblem(owner) : undefined;
   return {
-    title: checks ? `${who}: checks ${checks === "failing" ? "still failing" : "unverified"}, your call` : unsettled ? `${who}: review rounds ran out with blocking findings open, your call` : NEED[item.kind](
-      who,
-      task
-    ),
+    title: describeInboxNoticeTitle(item, who, task, owner),
     lines: [detail, where].filter((line): line is string => Boolean(line)),
     itemIds: [item.id],
     target: { kind: "item", id: item.id },

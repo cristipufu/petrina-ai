@@ -1,6 +1,6 @@
 import { forwardRef, useEffect, useState } from "react";
 import { BellRing, PanelRightClose, PartyPopper } from "lucide-react";
-import { inboxOrder, inboxSummary, type State } from "@petrina/core";
+import { countableInboxItems, inboxOrder, inboxSummary, type State } from "@petrina/core";
 import { desktop, useEngineStatus, useUnsent } from "../engine";
 import { type Lookup } from "../lib";
 import { useBrowserPermission } from "../notify/channels";
@@ -68,7 +68,7 @@ export const Inbox = forwardRef<HTMLElement, InboxProps>(function Inbox(
     >
       <div className="inbox-head">
         <h2>
-          Needs you <span className="n">{items.length}</span>
+          Needs you <span className="n">{countableInboxItems(items).length}</span>
         </h2>
         <button className="btn ghost icon" aria-label="Hide the inbox" title="Hide the inbox (I)" onClick={onClose}>
           <PanelRightClose size={18} />

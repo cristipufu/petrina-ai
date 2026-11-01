@@ -63,14 +63,49 @@ it("serializes app plan edits with decisions and returns the saved outcome after
 
 describe("focused coordination and durable decisions", () => {
 it("separates questions, once-only permissions, checkpoints, lessons and review-guide proposals", async () => {
-  return owners.use(async ({ e, c, offer, inspect }) => {
+  return owners.use(async ({ e, c, taskId, offer, inspect }) => {
 
-    for (const kind of ["question", "permission", "learnings", "guide", "screen", "stuck", "driving"] as const) {
+    for (const kind of ["maintenance-settings", "question", "permission", "learnings", "guide", "screen", "stuck", "driving"] as const) {
       const itemId = offer(kind, "- First useful lesson\n- Second useful lesson"),
         read = await inspect(itemId);
       expect((await c.call("inbox.approve", { itemId, revision: read.revision, requestId: `wrong-${kind}` })).outcome).toBe("invalid");
       expect(e.s.inbox.some((i) => i.id === itemId)).toBe(true);
     }
+    const maintTask = e.task(taskId)!;
+    const maintenanceRun = {
+      routineId: "routine-1",
+      routineName: "Nightly audit",
+      scheduledAt: 1,
+      queuedAt: 1,
+      zone: "UTC",
+      focus: "Security",
+      role: e.s.roles[0]!,
+      profile: e.s.profiles[0]!,
+      input: "Audit",
+      product: e.s.products[0]!,
+      settingsDecision: { requested: "high", actual: "medium", at: 1 },
+    };
+    maintTask.state = "needs-you";
+    maintTask.maintenance = maintenanceRun;
+    const maint = e.s.inbox.find((i) => i.kind === "maintenance-settings")!;
+    const maintRead = await inspect(maint.id);
+    expect(maintRead.decisions).toEqual(["inbox.maintenance-settings"]);
+    expect(
+      (
+        await c.call("inbox.maintenance-settings", {
+          itemId: maint.id,
+          revision: maintRead.revision,
+          choice: "keep",
+          requestId: "maint-keep",
+        })
+      ).outcome,
+    ).toBe("completed");
+    expect(maintTask.maintenance?.settingsDecision?.choice).toBe("keep");
+    maintTask.state = "needs-you";
+    maintTask.maintenance = { ...maintenanceRun, settingsDecision: { requested: "high", actual: "medium", at: 2 } };
+    const appMaint = offer("maintenance-settings");
+    e.approve(appMaint);
+    expect(maintTask.maintenance?.settingsDecision?.choice).toBe("keep");
     const question = e.s.inbox.find((i) => i.kind === "question")!;
     const qa = { itemId: question.id, revision: requestRevision(e, question), answer: "Blue", requestId: "answer-once" };
     const answered = await c.call("inbox.answer", qa);

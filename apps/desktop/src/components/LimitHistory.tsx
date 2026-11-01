@@ -12,6 +12,7 @@ import {
   type UsagePeriod
 } from "@petrina/core";
 import { sim } from "../engine";
+import { hasBlockingLayer } from "../modalLayer";
 import { Select } from "./Select";
 import { ToolIcon } from "./ToolIcon";
 import { ViewToggle, dayWords } from "./Charts";
@@ -313,7 +314,7 @@ function ReadingPages({ scope, back }: { scope: DetailScope; back: () => void })
   // Plain reading text focuses its containing panel; paging controls keep focus even
   // while loading or at an end, so Escape stays local without losing its target.
   return <section className="limit-history-readings-view" aria-label="Usage readings" tabIndex={-1} onKeyDown={event => {
-    if (event.key === "Escape" && !event.defaultPrevented && !document.querySelector('[role="dialog"], .popover, .menu')) {
+    if (event.key === "Escape" && !event.defaultPrevented && !hasBlockingLayer()) {
       event.preventDefault();
       event.stopPropagation();
       back();

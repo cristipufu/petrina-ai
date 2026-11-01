@@ -1,4 +1,9 @@
 export * from "./model.js";
+export * from "./stage-kinds.js";
+export * from "./result-contracts.js";
+export * from "./delivery-modes.js";
+export * from "./inbox-catalog.js";
+export * from "./providers.js";
 export { isGitObjectId } from "./git-object-id.js";
 export { shipsUnasked, type DeliveryPolicyContext, type DeliveryPolicyTask } from "./delivery-policy.js";
 export { applyAcceptanceVersions, hasAcceptanceVersionConsumers } from "./acceptance-versions.js";
@@ -30,6 +35,7 @@ export * from "./check-evidence.js";
 export * from "./commands.js";
 export * from "./worklog.js";
 export * from "./numbers.js";
+export * from "./usage-windows.js";
 export * from "./usage.js";
 export * from "./usage-history.js";
 export * from "./charts.js";

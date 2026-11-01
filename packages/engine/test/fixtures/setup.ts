@@ -1,6 +1,6 @@
 import { afterAll } from "bun:test";
 import { join } from "node:path";
-import { checkOf, type AgentProfile, type CheckId, type State, type Task } from "@petrina/core";
+import { checkOf, EXTRA_PROVIDER_IDS, type AgentProfile, type CheckId, type State, type Task } from "@petrina/core";
 import type { ToolProbe } from "@petrina/orchestrator";
 import { NativeToolProbe } from "../../src/tool-probe.js";
 import { Engine, type EngineOptions } from "../engine.js";
@@ -38,7 +38,7 @@ export function setupFixtures() {
    */
   type Behaviour = "ok" | "logged-out" | "not-logged-in" | "silent-login" | "wont-start" | "hang" | "stubborn" | "silent-stubborn";
   const toolFlags = (tools: Partial<Record<CheckId, Behaviour>>, toolId: string): string[] => {
-    const behaviour = tools[toolId as CheckId] ?? (["grok", "antigravity", "opencode", "pi"].includes(toolId) ? "logged-out" : "ok");
+    const behaviour = tools[toolId as CheckId] ?? ((EXTRA_PROVIDER_IDS as readonly string[]).includes(toolId) ? "logged-out" : "ok");
     const flags = behaviour === "ok" ? [] : behaviour === "stubborn" ? ["--hang", "--stubborn"] : behaviour === "silent-stubborn" ? ["--silent-login", "--stubborn"] : [`--${behaviour}`];
     if (toolId === "grok" && !flags.includes("--silent-login")) flags.push("--silent-login");
     return flags;

@@ -19,7 +19,7 @@ export function productRenameAgents() {
     return scriptedResult({ summary: "Read the current product display name.", notes: [] });
   });
   const received = (role: string) => agents.received().filter(prompt => prompt.roleId === role).map(prompt => ({ ...prompt, session: prompt.sessionId }));
-  return { startAgentSession: agents.start, toolProbe: scriptedToolProbe({ "claude-code": { status: "ready" }, codex: { status: "ready" }, grok: { status: "ready" }, antigravity: { status: "not-installed" }, opencode: { status: "not-installed" }, pi: { status: "not-installed" }, gh: { status: "ready" }, git: { status: "ready" } }),
+  return { startAgentSession: agents.start, toolProbe: scriptedToolProbe({ "claude-code": { status: "ready" }, codex: { status: "ready" }, grok: { status: "ready" }, gh: { status: "ready" }, git: { status: "ready" } }),
     release: (session: string) => release.release(session), received, prompts: (role: string) => received(role).map(prompt => prompt.text),
   };
 }

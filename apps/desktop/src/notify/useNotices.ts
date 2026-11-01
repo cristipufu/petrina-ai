@@ -3,6 +3,7 @@
 // (browser) equal to the Inbox button's. The demo never sends notifications or sets the icon.
 
 import { useEffect, useRef } from "react";
+import { countableInboxItems } from "@petrina/core";
 import { desktop, mode, sim } from "../engine";
 import { askBrowser, BrowserNotices, browserPermission, platform, shell, type BrowserPermission } from "./channels";
 import { Notifier } from "./notifier";
@@ -60,7 +61,7 @@ export function useNotices({ onJump, onToast }: Handlers): void {
     const update = () => {
       const state = sim.getState();
       notifier.update(state, sim.synced());
-      const visible = state.inbox.filter(item => item.kind !== "screen").length;
+      const visible = countableInboxItems(state.inbox).length;
       if (visible === count) return;
       count = visible;
       // The same number as the Inbox button, with notifications on or off.

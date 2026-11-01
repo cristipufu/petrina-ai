@@ -166,6 +166,50 @@ describe("The squad", () => {
     expect(squad.stageKinds).toEqual([expect.objectContaining({ key: "fixes", label: "Fixes after review", runs: 1 })]);
   });
 
+  it("orders custom read-only and editable notes roles in workflow stage order around Build", () => {
+    const current = state([task("notes-order", "shop")]);
+    const baseNotes = current.roles.find((role) => role.result === "notes")!;
+    current.roles = [
+      ...current.roles,
+      {
+        ...baseNotes,
+        id: "added-domain-analyst",
+        name: "Domain analyst",
+        added: true,
+        canEdit: false,
+        analyticsLabel: undefined,
+        analyticsOrder: undefined,
+      },
+      {
+        ...baseNotes,
+        id: "added-copywriter",
+        name: "Copywriter",
+        added: true,
+        canEdit: true,
+        column: "building",
+        analyticsLabel: undefined,
+        analyticsOrder: undefined,
+      },
+    ];
+    const at = NOW - HOUR;
+    const base = { taskId: "notes-order", productId: "shop", at, kind: "stage-end" as const, outcome: "done" as const, durationMs: MIN, workMs: MIN };
+    const moments: WorkMoment[] = [
+      { ...base, id: "m-ship", stageKind: "do", roleId: "release-manager" },
+      { ...base, id: "m-review", stageKind: "review-chain", roleId: "code-reviewer" },
+      { ...base, id: "m-copy", stageKind: "do", roleId: "added-copywriter", round: 1 },
+      { ...base, id: "m-build", stageKind: "do", roleId: "builder", round: 1 },
+      { ...base, id: "m-analyst", stageKind: "do", roleId: "added-domain-analyst", round: 1 },
+    ];
+    const squad = usageView(logWith([], moments), { view: "analytics", period: "today" }, { now: NOW, state: current }).squad;
+    expect(squad.stageKinds.map((entry) => entry.label)).toEqual([
+      "Domain analyst",
+      "Build",
+      "Copywriter",
+      "Review",
+      "Delivery",
+    ]);
+  });
+
   it("counts stages, deliveries, send-backs, design rounds, questions and failures", () => {
     const at = NOW - 2 * HOUR;
     const base = { taskId: "k", productId: "shop" };

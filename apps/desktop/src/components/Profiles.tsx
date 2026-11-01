@@ -3,6 +3,8 @@ import { useEffect, useId, useRef, useState } from "react";
 import { Cpu, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import {
   CHECK_NAMES,
+  EFFORTS,
+  PROVIDER_IDS,
   profileModelName,
   profileReferences,
   type AgentProfile,
@@ -19,8 +21,7 @@ import { EditorPanel, FormSection } from "./EditorPanel";
 import { ToolIcon } from "./ToolIcon";
 
 const toolName = (state: State, id: string) => state.tools.find(tool => tool.id === id)?.name ?? CHECK_NAMES[id as CheckId] ?? id;
-const EFFORTS: Effort[] = ["low", "medium", "high", "xhigh", "ultra"];
-export function Profiles({ state, onDialogChange }: { state: State; onDialogChange?: (open: boolean) => void }) {
+export function Profiles({ state }: { state: State }) {
   const connected = useEngineStatus().link === "live";
   const [editing, setEditing] = useState<AgentProfile | "new">();
   const groups = new Map<string, AgentProfile[]>();
@@ -28,10 +29,6 @@ export function Profiles({ state, onDialogChange }: { state: State; onDialogChan
     const key = JSON.stringify([profile.toolId, profile.modelId ?? profile.model]);
     groups.set(key, [...groups.get(key) ?? [], profile]);
   }
-  useEffect(() => {
-    onDialogChange?.(Boolean(editing));
-    return () => onDialogChange?.(false);
-  }, [Boolean(editing), onDialogChange]);
   return <>
     <div className="profiles-heading"><div><h2>Profiles</h2><p className="note">Choose which tool, model and effort your agents can use.</p></div><button
       className="btn"
@@ -75,7 +72,7 @@ export function Profiles({ state, onDialogChange }: { state: State; onDialogChan
 
 function ProfileEditor({ state, profile, onClose }: { state: State; profile?: AgentProfile; onClose: () => void }) {
   const initial: ProfileDraft = {
-    toolId: profile?.toolId ?? state.tools.find(tool => tool.models.length)?.id ?? "codex",
+    toolId: profile?.toolId ?? state.tools.find(tool => tool.models.length)?.id ?? state.tools[0]?.id ?? PROVIDER_IDS[0]!,
     modelId: profile?.modelId ?? "",
     effort: profile?.effort ?? "high",
     standby: Boolean(profile?.standby)

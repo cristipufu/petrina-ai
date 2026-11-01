@@ -1,9 +1,16 @@
 import { describe, expect, it } from "bun:test";
-import { createProviderInterruptions, GROK_OVERLOADED } from "../../../src/provider-interruptions.js";
+import {
+  claudeInterruptions,
+  createCodexInterruptions,
+  GROK_OVERLOADED,
+  grokInterruptions,
+} from "../../../src/provider-interruptions.js";
 import { createLimitParsing } from "../../../src/provider-refusals.js";
 import { UsageLimited, isAuthRequired } from "../../../src/failures.js";
 import { claudeLimit, codexLimit, grokLimit } from "../../../src/provider-limits.js";
-const { claude: claudeInterruptions, codex: codexInterruptions, grok: grokInterruptions } = createProviderInterruptions(() => Object.assign(new Error("Authentication required"), { code: -32000 }));
+const codexInterruptions = createCodexInterruptions(() =>
+  Object.assign(new Error("Authentication required"), { code: -32000 }),
+);
 const providerLimits = { "claude-code": { name: "Claude Code", parseLimitError: claudeLimit }, codex: { name: "Codex", parseLimitError: codexLimit }, grok: { name: "Grok", parseLimitError: grokLimit }, antigravity: { name: "Antigravity" } };
 const { limitFromFailure } = createLimitParsing(id => providerLimits[id as keyof typeof providerLimits]);
 import { PROFILES, codexRetry, STREAM_LOST, CONNECT_FAILED, grokRetry, DNS, RESET, GARBLED, update, extension, air } from "../../fixtures/provider-envelopes.js";

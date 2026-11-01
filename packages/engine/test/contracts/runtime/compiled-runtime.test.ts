@@ -2,8 +2,8 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { defaultBrowserServerLaunch } from "@petrina/agent-runtime/browser";
-import { ADAPTERS, codexWrapperPath } from "@petrina/agent-runtime/tool-catalog";
-import { adapterLaunchCommand, GROK_AGENT_COMMAND, OPENCODE_AGENT_COMMAND, resolveAdapterEntry } from "@petrina/agent-runtime/tool-entry";
+import { ADAPTERS, codexWrapperPath, EMBEDDED_ACP_TARGETS } from "@petrina/agent-runtime/tool-catalog";
+import { adapterLaunchCommand, resolveAdapterEntry } from "@petrina/agent-runtime/tool-entry";
 import {
   compiledExecutableDir,
   findBunRuntime,
@@ -82,40 +82,20 @@ describe("standalone compiled engine runtime contracts", () => {
     expect(codexWrapperPath(realBinaryExec, "/$bunfs/root", "darwin")).toBe(join(realBundleDir, "codex-background"));
     expect(codexWrapperPath(realBinaryExec, "B:\\~BUN\\root", "win32")).toBe(join(realBundleDir, "codex-background.cmd"));
 
-    expect(adapterLaunchCommand(ADAPTERS["claude-code"]!, "/usr/bin/bun", "/repo/packages/agent-runtime/src")).toEqual([
-      "/usr/bin/bun",
-      join("/repo/packages/agent-runtime/src", "claude-acp.ts"),
-    ]);
-    expect(adapterLaunchCommand(ADAPTERS.codex!, "/usr/bin/bun", "/repo/packages/agent-runtime/src")).toEqual([
-      "/usr/bin/bun",
-      join("/repo/packages/agent-runtime/src", "codex-acp.ts"),
-    ]);
-    expect(adapterLaunchCommand(ADAPTERS.antigravity!, "/usr/bin/bun", "/repo/packages/agent-runtime/src")).toEqual([
-      "/usr/bin/bun",
-      join("/repo/packages/agent-runtime/src", "agy-acp.ts"),
-    ]);
-    expect(adapterLaunchCommand(ADAPTERS.pi!, "/usr/bin/bun", "/repo/packages/agent-runtime/src")).toEqual([
-      "/usr/bin/bun",
-      join("/repo/packages/agent-runtime/src", "pi-acp.ts"),
-    ]);
-    expect(adapterLaunchCommand(ADAPTERS["claude-code"]!, realBinaryExec, "/$bunfs/root")).toEqual([
-      realBinaryExec,
-      "__internal-claude-acp",
-    ]);
-    expect(adapterLaunchCommand(ADAPTERS.codex!, realBinaryExec, "B:\\~BUN\\root")).toEqual([
-      realBinaryExec,
-      "__internal-codex-acp",
-    ]);
-    expect(adapterLaunchCommand(ADAPTERS.antigravity!, realBinaryExec, "/$bunfs/root")).toEqual([
-      realBinaryExec,
-      "__internal-agy-acp",
-    ]);
-    expect(adapterLaunchCommand(ADAPTERS.pi!, realBinaryExec, "/$bunfs/root")).toEqual([
-      realBinaryExec,
-      "__internal-pi-acp",
-    ]);
-    expect(adapterLaunchCommand(ADAPTERS.grok!, realBinaryExec, "/$bunfs/root")).toEqual([...GROK_AGENT_COMMAND]);
-    expect(adapterLaunchCommand(ADAPTERS.opencode!, realBinaryExec, "/$bunfs/root")).toEqual([...OPENCODE_AGENT_COMMAND]);
+    for (const { id, subcommand } of EMBEDDED_ACP_TARGETS) {
+      const adapter = ADAPTERS[id]!;
+      expect(adapterLaunchCommand(adapter, "/usr/bin/bun", "/repo/packages/agent-runtime/src")).toEqual([
+        "/usr/bin/bun",
+        join("/repo/packages/agent-runtime/src", adapter.internalSourceFile!),
+      ]);
+      expect(adapterLaunchCommand(adapter, realBinaryExec, id === "codex" ? "B:\\~BUN\\root" : "/$bunfs/root")).toEqual([
+        realBinaryExec,
+        subcommand,
+      ]);
+    }
+    for (const adapter of Object.values(ADAPTERS).filter((entry) => entry.command !== undefined)) {
+      expect(adapterLaunchCommand(adapter, realBinaryExec, "/$bunfs/root")).toEqual([...adapter.command!]);
+    }
 
     expect(resolveDefaultUiDir("/usr/bin/bun", "/repo/packages/engine/src")).toBe(resolve("/repo/apps/desktop/dist"));
     expect(resolveDefaultUiDir(realBinaryExec, "/$bunfs/root")).toBe(join(realBundleDir, "ui"));

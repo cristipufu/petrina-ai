@@ -88,7 +88,7 @@ export function turnCleanupFixtures() {
           agentCommand: () => [join(root, "unconfigured-agent-must-never-launch")],
           ...(input.nativeOpening ? {} : { startAgentSession: start }),
           toolProbe: scriptedToolProbe({ gh: { status: "ready" }, git: { status: "ready" },
-            codex: { status: "ready" }, "claude-code": { status: "ready" }, grok: { status: "ready" }, antigravity: { status: "not-installed" }, opencode: { status: "not-installed" }, pi: { status: "not-installed" } }),
+            codex: { status: "ready" }, "claude-code": { status: "ready" }, grok: { status: "ready" } }),
         });
         current.schedule = () => {};
         closeStore = current.store.close.bind(current.store);

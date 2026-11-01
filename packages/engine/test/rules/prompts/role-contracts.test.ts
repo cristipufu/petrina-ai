@@ -48,5 +48,28 @@ it("tells a role the coordinator made its purpose, and has it hand back notes", 
     expect(roleCard({ ...ctx(), role: customDelivery })).toBe("");
     const customPlanner = { ...BUILT_IN_ROLES.find((role) => role.result === "plan")!, id: "custom-planner" };
     expect(buildPrompt({ ...ctx(), role: customPlanner })).toContain("Your planning folder is /w. No task working copy exists yet.");
+    const customFullReviewer = {
+      ...BUILT_IN_ROLES.find((role) => role.id === "code-reviewer")!,
+      id: "custom-compliance-reviewer",
+      name: "Compliance reviewer",
+      fullReview: true,
+      instructions: "Check regulatory retention rules across the entire change.",
+    };
+    const fullContract = contractFor(customFullReviewer);
+    expect(fullContract.incrementalReview).toBe(false);
+    const roundTwoTask = {
+      ...ctx().task,
+      reviewedSha: "abc1234",
+      rounds: { review: 2 },
+      stageIndex: 0,
+      plan: {
+        rationale: "Review fixes",
+        plannerProfileId: "opus-high",
+        stages: [{ id: "review", kind: "review-chain" as const, title: "Review", roleId: "custom-compliance-reviewer", profileIds: ["opus-high"], maxRounds: 2 }],
+      },
+    };
+    const fullPrompt = buildPrompt({ ...ctx(), task: roundTwoTask, role: customFullReviewer });
+    expect(fullPrompt).toContain("This change was rated high risk");
+    expect(fullPrompt).not.toContain("review what changed since the last round");
   });
 });

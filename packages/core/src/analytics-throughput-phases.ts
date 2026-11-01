@@ -16,20 +16,10 @@ import type {
   ThroughputPhase,
   ThroughputTaskRecord,
 } from "./analytics-throughput-record.js";
+import { INBOX_CATALOG } from "./inbox-catalog.js";
 import type { Id, InboxItem } from "./model.js";
 import { count } from "./numbers.js";
 import type { WorkMoment, WorkTurn } from "./worklog.js";
-
-const BLOCKING_INBOX_KINDS: ReadonlySet<InboxItem["kind"]> = new Set([
-  "question",
-  "permission",
-  "plan",
-  "design",
-  "delivery",
-  "disagreement",
-  "stuck",
-  "screen",
-]);
 
 function pushMap(map: Map<Id, Interval[]>, taskId: Id, interval: Interval | undefined): void {
   if (!interval) return;
@@ -125,7 +115,7 @@ export function computePhasesAndCapacity(input: {
     const active = isLiveActiveState(task);
     const runningOrWaiting = active && task.state !== "pr-open";
     for (const item of inboxByTask.get(task.id) ?? []) {
-      if (!item.blocking && !BLOCKING_INBOX_KINDS.has(item.kind)) continue;
+      if (!item.blocking && !INBOX_CATALOG[item.kind]?.throughputPhaseWait) continue;
       if (item.kind === "permission") pushMap(permissionRawByTask, task.id, [item.at, winEnd]);
       pushMap(decisionRawByTask, task.id, clipInterval(item.at, winEnd, winStart, winEnd));
     }

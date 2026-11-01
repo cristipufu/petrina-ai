@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { setupFixtures } from "../../fixtures/setup.js";
-import { checkOf } from "@petrina/core";
+import { checkOf, PROVIDER_IDS } from "@petrina/core";
 import type { Engine } from "../../engine.js";
 import { privateAgentToolProbe } from "../../scripted-probes.js";
 
@@ -9,7 +9,7 @@ const { until, status, taskOf, toolsUsed, run } = setupFixtures();
 /** These existing native login journeys also calibrate the explicit one-tool workflow recipes. */
 async function calibrated(engine: Engine, only: "claude-code" | "codex" | "grok") {
   const expected = privateAgentToolProbe([only]);
-  for (const id of ["claude-code", "codex", "grok", "antigravity", "opencode", "pi", "git"] as const) {
+  for (const id of [...PROVIDER_IDS, "git"] as const) {
     const { status, account, detail } = checkOf(engine.s.setup?.checks, id);
     expect({ status, ...(account ? { account } : {}), ...(detail ? { detail } : {}) })
       .toEqual(await expected.run(id, { signal: engine.stopRequested.signal, onGone: () => {} }));

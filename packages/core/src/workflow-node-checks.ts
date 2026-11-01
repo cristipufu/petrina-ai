@@ -1,6 +1,7 @@
 // Journey node check, reuse, ask and settlement event emitters and check-basis helpers.
 import { checkOutcomeLabel } from "./check-outcome.js";
 import { outstandingReportsFirst } from "./finding-reports.js";
+import { INBOX_CATALOG, INBOX_KINDS } from "./inbox-catalog.js";
 import { JOURNEY_WORDS } from "./journey-words.js";
 import type { Id, InboxKind, Role } from "./model.js";
 import {
@@ -16,14 +17,12 @@ import {
 import { reconcile, resultRefs, type FindingBaseline } from "./workflow-reconcile.js";
 export type { FindingBaseline };
 
-export const LEGACY_KINDS: Partial<Record<InboxKind, string>> = {
-  plan: "plan",
-  design: "design",
-  delivery: "delivery",
-  disagreement: "call",
-  stuck: "stuck",
-  shipping: "shipping",
-};
+export const LEGACY_KINDS: Partial<Record<InboxKind, string>> = Object.fromEntries(
+  INBOX_KINDS.flatMap((kind) => {
+    const legacy = INBOX_CATALOG[kind].legacyWait;
+    return legacy ? ([[kind, legacy]] as const) : [];
+  }),
+);
 
 /**
  * The attempts recorded on a checks step, oldest first, each with its product. An attempt's entries are added

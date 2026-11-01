@@ -53,27 +53,16 @@ it("retains peer durations relative to the actual shared execution folder and pr
 
 it("the installed Bun executes every file and starts the measured slow file first", async () => {
   const f = fixture(), log = join(f.root, "order"), report = join(f.root, "report", "native.xml");
-  for (const name of ["fast", "slow"]) writeFileSync(join(f.folder, "test", `${name}.test.ts`), `import { expect, it } from "bun:test";
+  writeFileSync(join(f.folder, "package.json"), "{}");
+  for (const name of ["fast", "slow", "tail"]) writeFileSync(join(f.folder, "test", `${name}.test.ts`), `import { expect, it } from "bun:test";
 import { appendFileSync } from "node:fs";
 it(${JSON.stringify(name)}, () => { appendFileSync(${JSON.stringify(log)}, ${JSON.stringify(name + "\n")}); expect(process.cwd()).toBe(${JSON.stringify(f.folder)}); });`);
-  const seededFiles = (name: string, ms: number): Record<string, number> =>
-    process.platform === "win32"
-      ? {
-          [`test/${name}.test.ts`]: ms,
-          [`./test/${name}.test.ts`]: ms,
-          [`test\\${name}.test.ts`]: ms,
-          [`.\\test\\${name}.test.ts`]: ms,
-          [`./test\\${name}.test.ts`]: ms,
-          [join(f.folder, "test", `${name}.test.ts`)]: ms,
-          [join(f.folder, "test", `${name}.test.ts`).replaceAll("\\", "/")]: ms,
-        }
-      : { [`test/${name}.test.ts`]: ms };
-  writeFixtureJson(f.output, { version: 1, files: { ...seededFiles("fast", 1), ...seededFiles("slow", 1000) } });
-  // This tiny boundary probe uses one worker to observe dispatch order deterministically.
-  // The repository's required run keeps Bun's normal worker count.
-  const run = await runCommand([process.execPath, TEST_RUNNER, "./test", "--parallel=1", `--timings=${f.output}`, "--update-timings", "--reporter=junit", `--reporter-outfile=${report}`], { cwd: f.folder });
+  writeFixtureJson(f.output, { version: 1, files: { "test/fast.test.ts": 1, "test/slow.test.ts": 1000, "test/tail.test.ts": 1000 } });
+  // Bun skips the parallel coordinator and --timings sorting when min(parallel, files) <= 1;
+  // --parallel=2 enters the coordinator while --parallel-delay keeps dispatch on the first worker.
+  const run = await runCommand([process.execPath, TEST_RUNNER, "./test", "--parallel=2", "--parallel-delay=60000", `--timings=${f.output}`, "--update-timings", "--reporter=junit", `--reporter-outfile=${report}`], { cwd: f.folder });
   expect(run.code, run.stderr).toBe(0);
-  expect(readFileSync(log, "utf8").trim().split("\n")).toEqual(["slow", "fast"]);
+  expect(readFileSync(log, "utf8").trim().split("\n")).toEqual(["slow", "fast", "tail"]);
   const parsed = testResults(readFileSync(report, "utf8"), f.workspace, "bun", f.root);
-  expect(parsed).toMatchObject({ tests: 2, passed: 2, failed: 0, skipped: 0, files: f.expected });
+  expect(parsed).toMatchObject({ tests: 3, passed: 3, failed: 0, skipped: 0, files: [...f.expected, `${f.workspace}/test/tail.test.ts`] });
 });

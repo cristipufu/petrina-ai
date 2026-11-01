@@ -11,11 +11,16 @@ import { Unreachable, type Connections } from "./connection.js";
 import { Aborted, type Kernel, type MutableStage, type RuntimeTask } from "./kernel.js";
 import { PrMonitor } from "./pr-monitor.js";
 import type { ProductChecks } from "./product-checks.js";
+import {
+  destination,
+  isProofApprovalCurrent,
+  prepareDelivery,
+  publishDelivery,
+} from "./delivery-strategies.js";
 import { ReleasePrep } from "./release-prep.js";
 import {
-  DecisionNeeded, destination, formatPullRequestBody, isProofApprovalCurrent, landLocalDelivery,
-  needsReleaseManager, noteCancelledLocalDelivery, prepareDelivery, PrerequisiteRefresh,
-  publishLocalDelivery, publishPrUpdateDelivery, publishPullRequestDelivery, publishReleaseDelivery,
+  DecisionNeeded, formatPullRequestBody, landLocalDelivery,
+  needsReleaseManager, noteCancelledLocalDelivery, PrerequisiteRefresh, publishLocalDelivery,
   pushMainBranch, rememberConfirmedDelivery, resetBackToWork, SourceMoved, type ShippingPublishHooks,
 } from "./shipping-publishers.js";
 import { ShippingVerifier, type DeliveryEvidence } from "./shipping-verifier.js";
@@ -203,6 +208,7 @@ export class Shipping {
       publishStep: (scope, signal, step, status, run) => this.publishStep(scope, signal, step, status, run),
       recordPr: (scope, pr, how) => this.recordPr(scope, pr, how),
       recordLanded: (scope, branch, sha, how) => this.recordLanded(scope, branch, sha, how),
+      publishLocal: (scope, signal) => this.publishLocal(scope, signal),
       landLocal: (scope, signal, tested, how) => this.landLocal(scope, signal, tested, how),
       pushMain: (scope, signal, branch, at) => this.pushMain(scope, signal, branch, at),
     };
@@ -269,16 +275,8 @@ export class Shipping {
     this.workflow.clearApproval(scope);
   }
 
-  private async publish(scope: RepositoryContext, signal: AbortSignal): Promise<"done" | "again" | "continue" | "stop"> {
-    const { work: repository } = scope;
-    const hooks = this.publishHooks();
-    if (repository.source?.start.kind === "pull-request") return publishPrUpdateDelivery(hooks, scope, signal);
-    if (repository.source?.start.kind === "branch" && repository.delivery !== "release" && !(await this.verifier.sourceCurrent(scope, signal))) {
-      return this.prepareAgain(scope, "The approved starting branch moved on GitHub");
-    }
-    if (repository.delivery === "pull-request") return publishPullRequestDelivery(hooks, scope, signal);
-    if (repository.delivery === "release") return publishReleaseDelivery(hooks, scope, signal);
-    return this.publishLocal(scope, signal);
+  private publish(scope: RepositoryContext, signal: AbortSignal): Promise<"done" | "again" | "continue" | "stop"> {
+    return publishDelivery(this.publishHooks(), scope, signal);
   }
 
   private saveStep(scope: RepositoryContext, step: ShippingStep, status: string): void {

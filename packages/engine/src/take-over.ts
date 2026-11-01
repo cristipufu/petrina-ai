@@ -24,7 +24,6 @@ import {
 import * as git from "@petrina/repositories/git";
 import { handBackNote } from "./prompts.js";
 import {
-  askMode,
   clearEnded,
   type FoundTerminal,
   launchPlan,
@@ -453,7 +452,8 @@ export class TakeOver {
       : undefined;
     if (!adapter || !path) throw new Error(TAKE_OVER_WORDS.missing(toolName(toolId)));
     const id = toolId as LaunchInput["tool"]["id"];
-    return { id, name: adapter.name, path, ...(id === "claude-code" ? { mode: await askMode(path) } : {}) };
+    const mode = adapter.resolveTerminalMode ? await adapter.resolveTerminalMode(path) : undefined;
+    return { id, name: adapter.name, path, ...(mode ? { mode } : {}) };
   }
 
   /** The launcher's folder: only the coordinator can read it, and it goes at hand back. */

@@ -1,6 +1,7 @@
 import { findingCount } from "./findings.js";
 import { followUpDescription, followUpTitle } from "./follow-ups.js";
-import { DEFAULT_PROFILES, KNOWN_TOOLS } from "./library.js";
+import { DEFAULT_PROFILES } from "./library.js";
+import { CATALOG_TOOLS } from "./providers.js";
 import type {
   DeliveryMode,
   Finding,
@@ -242,13 +243,7 @@ export function baseState(now: number, tasks: Task[] = [], inbox: InboxItem[] = 
     seq: 0,
     products: DEMO_PRODUCTS,
     roles: libraryRoles(NO_ROLE_CHANGES),
-    tools: [
-      ...KNOWN_TOOLS,
-      { id: "grok", name: "Grok", command: ["grok"], status: "not-installed", models: ["Grok 4.7"] },
-      { id: "antigravity", name: "Antigravity", command: ["agy"], status: "not-installed", models: ["Gemini 4 Argon"] },
-      { id: "opencode", name: "OpenCode", command: ["opencode"], status: "not-installed", models: ["Claude Sonnet 4.5", "GPT-5"] },
-      { id: "pi", name: "Pi", command: ["pi"], status: "not-installed", models: ["Claude Sonnet 4.5", "GPT-5"] },
-    ],
+    tools: [...CATALOG_TOOLS],
     profiles: DEFAULT_PROFILES,
     tasks,
     inbox,

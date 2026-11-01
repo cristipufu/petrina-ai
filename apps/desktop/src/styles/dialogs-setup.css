@@ -218,10 +218,8 @@
 .tool-row + .tool-row { border-top: 1px solid var(--line); }
 .tool-icon { display: grid; place-items: center; flex: none; width: 2rem; height: 2rem; color: var(--text-2); }
 .tool-icon img { display: block; width: 1.5rem; height: 1.5rem; object-fit: contain; }
-[data-theme="dark"] .tool-icon-codex img { filter: invert(1); }
-[data-theme="dark"] .tool-icon-grok img { filter: invert(1); }
-.tool-icon-antigravity img { width: 2rem; height: 2rem; }
-[data-theme="dark"] .tool-icon-gh img { filter: invert(1); }
+[data-theme="dark"] .tool-icon[data-dark-invert="true"] img { filter: invert(1); }
+.tool-icon[data-icon-size="large"] img { width: 2rem; height: 2rem; }
 .tool-body { display: grid; gap: 8px; min-width: 0; }
 .tool-head { display: flex; min-height: 2rem; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; overflow-wrap: anywhere; }
 .tool-head strong { font-weight: 600; }

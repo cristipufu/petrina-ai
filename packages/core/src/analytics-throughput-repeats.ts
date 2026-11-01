@@ -11,6 +11,7 @@ import type {
   ThroughputTaskRecord,
 } from "./analytics-throughput-record.js";
 import { checkActivityLine, inCheckLine } from "./check-activity.js";
+import { INBOX_CATALOG } from "./inbox-catalog.js";
 import { quoteTitles } from "./journey-words.js";
 import type { Id, InboxItem } from "./model.js";
 import { count, durationText } from "./numbers.js";
@@ -36,22 +37,6 @@ const BUILDER_CAUSE_ORDER: readonly { key: BuilderReturnCauseKey; label: string 
   { key: "coordinator", label: "Your change requests" },
   { key: "unrecorded", label: "Cause not recorded" },
 ];
-
-const INBOX_WAIT_WORDS: Readonly<Record<InboxItem["kind"], string>> = {
-  plan: "Plan check",
-  design: "Design check",
-  delivery: "Delivery check",
-  disagreement: "Design call",
-  question: "Agent question",
-  permission: "Permission request",
-  screen: "Screen request",
-  stuck: "Stuck task decision",
-  guide: "Review guide suggestion",
-  learnings: "Learnings suggestion",
-  driving: "Driving task",
-  "maintenance-settings": "Routine settings",
-  shipping: "Shipping decision",
-};
 
 function builderReturnCause(task: ThroughputTaskRecord, index: number, lookup: Names): BuilderReturnCauseKey {
   const step = task.journey[index]!;
@@ -475,7 +460,7 @@ export function computeHoldingUpNow(input: {
     }
     if (blockingItem) {
       coordinatorWaitingNow += 1;
-      const what = INBOX_WAIT_WORDS[blockingItem.kind] ?? "Your decision";
+      const what = INBOX_CATALOG[blockingItem.kind]?.waitLabel ?? "Your decision";
       const waited = durationText(Math.max(0, ctx.now - blockingItem.at));
       addBlocker(80, "coordinator", "Needs you", `${what} waiting ${waited}.`, `Inbox · ${what}`);
       continue;

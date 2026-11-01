@@ -1,4 +1,4 @@
-import { prNumber, type Product, type TaskSource, type WorkChoice } from "@petrina/core";
+import { assertValidDeliveryStart, prNumber, resolveDestinationKind, type Product, type TaskSource, type WorkChoice } from "@petrina/core";
 import type { SourceQueries } from "./ports/source.js";
 import type { RepositoryContext } from "./repository-context.js";
 
@@ -21,7 +21,7 @@ export async function resolveSource(scope: RepositoryContext, choice: WorkChoice
     defaultBranch: registered.defaultBranch ?? "main"
   };
   const { startFrom, delivery } = choice;
-  if (delivery === "release" && startFrom.kind !== "default") throw new Error("Releases start from the default branch. Correct the starting point or choose another delivery mode.");
+  assertValidDeliveryStart(startFrom.kind, delivery);
   let start: TaskSource["start"];
   let repo = product.repo;
   let remote = product.remote;
@@ -42,7 +42,7 @@ export async function resolveSource(scope: RepositoryContext, choice: WorkChoice
     start,
     destination: {
     mode: delivery,
-    kind: start.kind === "pull-request" ? "update-pr" : delivery === "pull-request" ? "new-pr" : delivery === "release" ? "release" : "branch",
+    kind: resolveDestinationKind(start.kind, delivery),
     repo,
     branch: start.branch,
     ...(remote ? { remote } : {})

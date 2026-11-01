@@ -4,7 +4,10 @@ import { followingCall } from "./call.js";
 import { CLEANUP_WORDS, copyNoLongerNeeded } from "./cleanup.js";
 import { columnOf, type DeepMutable } from "./flow.js";
 import { beginPetrinaStep, endPetrinaStep, JOURNEY_WORDS, openStep, stepTag } from "./journey.js";
+import { INBOX_CATALOG, INBOX_KINDS } from "./inbox-catalog.js";
 import type { Column, DesignCall, Id, InboxItem, InboxKind, Stage, State, Task } from "./model.js";
+import { DEMO_PLANNER_PROFILE } from "./profiles.js";
+import { getProviderDescriptor } from "./providers.js";
 import { repositoryPublished } from "./repositories.js";
 import * as library from "./roles.js";
 import { SCREEN_WORDS, screenMode, screenWait } from "./screen.js";
@@ -27,9 +30,11 @@ import {
 export type Draft = DeepMutable<State>;
 export type DraftTask = DeepMutable<Task>;
 
-export const PLANNER_PROFILE = "sonnet-medium";
+export const PLANNER_PROFILE = DEMO_PLANNER_PROFILE;
 /** Requests are logged when raised and completed by an answer, as the engine does. */
-export const ASKS: ReadonlySet<string> = new Set(["question", "permission", "plan", "design", "delivery", "disagreement"]);
+export const ASKS: ReadonlySet<string> = new Set(
+  INBOX_KINDS.filter((kind) => INBOX_CATALOG[kind].worklogAsk !== undefined),
+);
 
 export interface SimRuntime {
   readonly triggers: Triggers;
@@ -344,7 +349,7 @@ export function simAnswered(rt: SimRuntime, d: Draft, task: DraftTask, item: Dee
 }
 
 export function simAskMoment(rt: SimRuntime, d: Draft, task: DraftTask, item: DeepMutable<InboxItem>, answer?: AskAnswer): void {
-  const ask = item.kind === "question" ? "question" : item.kind === "permission" ? "permission" : "checkpoint";
+  const ask = INBOX_CATALOG[item.kind].worklogAsk ?? "checkpoint";
   simMoment(
     rt,
     d,
@@ -386,7 +391,7 @@ export function simOpenTurn(rt: SimRuntime, d: Draft, task: DraftTask, reason: T
   const asked = profile?.modelId ?? profile?.model;
   const ran = quirk.notConfirmed ? undefined : (quirk.ran ?? (asked ? {
     model: asked,
-    name: toolId === "codex" ? asked : (profile?.model ?? asked),
+    name: getProviderDescriptor(toolId)?.simTokenProfile === "reasoning-single" ? asked : (profile?.model ?? asked),
     effort: profile?.effort ?? "high"
   } : undefined));
   const id = simEntryId(rt, `${task.id}-turn`);
@@ -449,19 +454,21 @@ export function simEndTurn(rt: SimRuntime, d: Draft, task: DraftTask, end: TurnE
   const reported = end === "finished" || end === "interrupted";
   const silent = !reported || (open.first && quirk.noTokens);
   const helpers = open.first ? (quirk.helpers ?? 0) : 0;
+  const roleResult = d.roles.find((role) => role.id === turn.roleId)?.result;
   const report = silent ? undefined : simReport(
     `${open.id}|${turn.profileId}`,
     turn.toolId,
     turn.modelChangedTo ?? turn.modelRan ?? turn.modelAsked ?? "",
     turn.roleId,
     workMs,
-    open.first ? quirk : {}
+    open.first ? quirk : {},
+    roleResult,
   );
   const counted = turnTokens({
     toolId: turn.toolId,
     ...(report ? { report } : {}),
     ...(turn.modelRanName ? { model: turn.modelRanName } : {}),
-    rerouted: turn.toolId === "codex" && turn.modelChangedTo !== undefined,
+    rerouted: getProviderDescriptor(turn.toolId)?.simTokenProfile === "reasoning-single" && turn.modelChangedTo !== undefined,
     helpers
   });
   rt.work.endTurn(

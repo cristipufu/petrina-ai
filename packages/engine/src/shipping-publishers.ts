@@ -1,9 +1,8 @@
 import {
-  checkOutcome, checkOutcomeLabel, completeAll, endAgentStep, JOURNEY_WORDS, proofDecision, refreshProofs,
-  reviewerAt, sameProofDecision, undecidedAcceptanceGap, type DeliveryMode, type Product, type ShippingStep, type TaskSource,
+  checkOutcome, checkOutcomeLabel, endAgentStep, JOURNEY_WORDS, reviewerAt, undecidedAcceptanceGap, type ShippingStep,
 } from "@petrina/core";
 import {
-  DeliveryRecovery, DeliveryWorkflow, needsReleaseManager as deliveryNeedsReleaseManager, scopesFor,
+  DeliveryRecovery, DeliveryWorkflow, needsReleaseManager as deliveryNeedsReleaseManager,
   type RepositoryContext, type RepositoryWork,
 } from "@petrina/orchestrator";
 import * as git from "@petrina/repositories/git";
@@ -23,23 +22,6 @@ export class SourceMoved extends Error {}
 export class DecisionNeeded extends Error {}
 /** A released prerequisite wait still owes the ordinary driver's source/evidence refresh. */
 export class PrerequisiteRefresh extends Error {}
-
-/** Where a delivery goes. Approval is for this destination only. */
-export function destination(
-  task: { delivery: DeliveryMode; source?: TaskSource },
-  product: Pick<Product, "path" | "repo" | "defaultBranch"> | undefined,
-): string {
-  if (task.source) {
-    const target = task.source.destination;
-    return target.kind === "update-pr" && task.source.start.kind === "pull-request"
-      ? `${task.source.product.repo}#pr/${task.source.start.number}:${target.repo}#${target.branch}`
-      : task.delivery === "local"
-        ? `${task.source.product.path ?? ""}#${target.branch}`
-        : `${target.repo}#${target.branch}`;
-  }
-  const branch = product?.defaultBranch ?? "main";
-  return task.delivery === "local" ? `${product?.path ?? ""}#${branch}` : `${product?.repo ?? ""}#${branch}`;
-}
 
 /** Whether the delivery step needs an agent now: only a release, for its notes, until they are written. */
 export function needsReleaseManager(task: RepositoryWork): boolean {
@@ -89,53 +71,6 @@ export function formatPullRequestBody(k: Kernel, scope: RepositoryContext): stri
     parts.push(`### Follow-ups\n${followUps.length === 1 ? "One older problem was" : `${followUps.length} older problems were`} noted for a follow-up, in Petrina.`);
   }
   return fit(`${builder}\n\n${parts.join("\n\n")}`, TEXT_LIMITS.body);
-}
-
-export async function isProofApprovalCurrent(
-  k: Kernel,
-  releases: ReleasePrep,
-  verifier: ShippingVerifier,
-  task: RuntimeTask,
-  signal: AbortSignal,
-  prepared = false,
-): Promise<boolean> {
-  const observed = Object.fromEntries(await completeAll(scopesFor(task).map(async ({ work }) => {
-    if (!work.worktree) return [work.productId, { head: undefined, tree: "unavailable" }] as const;
-    const version = await git.commitVersion(work.worktree);
-    return [work.productId, { head: version.head, tree: version.tree ?? "unavailable" }] as const;
-  })));
-  const versions: Record<string, string> = Object.fromEntries(Object.entries(observed).map(([id, entry]) => [id, entry.tree]));
-  for (const scope of scopesFor(task)) {
-    const { work } = scope;
-    const delivered = Boolean(work.pr || work.release || work.landed);
-    if (delivered && work.delivery !== "release") continue;
-    if (!work.worktree) return false;
-    const head = observed[work.productId]?.head ?? (await git.head(work.worktree));
-    if (!(await git.isClean(work.worktree))) return false;
-    const shipping = work.shipping;
-    if (prepared && shipping?.prepared && head !== shipping.prepared.tested) return false;
-    if (work.delivery === "release") {
-      if (work.approvedFor?.by !== "coordinator") return false;
-      const version = work.proofRelease;
-      if (version && head !== version.start) {
-        if (head !== version.tested || !(await releases.isVersionCommit(work.worktree, head, version.start))) return false;
-        if (versions[work.productId] !== task.approvedProofDecision?.versions[work.productId]) {
-          versions[work.productId] = (await git.treeOf(work.worktree, version.start)) ?? "unavailable";
-        }
-      }
-    }
-    if (!delivered && prepared && shipping?.base && !shipping.pushed) {
-      if (work.delivery === "local") {
-        const product = k.repositoryOf(scope)!;
-        const branch = work.source?.start.branch ?? product.defaultBranch ?? "main";
-        const current = await git.revParse(product.path!, `refs/heads/${branch}`);
-        const ownUpdate = current === shipping.localUpdated && current === shipping.prepared?.tested;
-        if (current && !ownUpdate && current !== shipping.base && !(await git.contains(product.path!, shipping.base, current))) return false;
-      } else if (work.source?.start.kind !== "pull-request" && !(await verifier.sourceCurrent(scope, signal))) return false;
-    }
-  }
-  refreshProofs(task, versions);
-  return sameProofDecision(task.approvedProofDecision, proofDecision(task, versions));
 }
 
 export async function resetBackToWork(
@@ -212,6 +147,7 @@ export interface ShippingPublishHooks {
     how?: "opened" | "updated"
   ): "done" | Promise<"done">;
   recordLanded(scope: RepositoryContext, branch: string, sha: string, how?: "found" | "moved"): "done" | Promise<"done">;
+  publishLocal(scope: RepositoryContext, signal: AbortSignal): Promise<"done" | "again" | "continue" | "stop">;
   landLocal(scope: RepositoryContext, signal: AbortSignal, tested: string, how?: "found" | "moved"): Promise<"done">;
   pushMain(scope: RepositoryContext, signal: AbortSignal, branch: string, at: string): Promise<boolean>;
 }
@@ -226,14 +162,12 @@ function checking(k: Kernel, scope: RepositoryContext, status: string): void {
   k.commit();
 }
 
-export async function prepareDelivery(
+export async function beginDeliveryPreparation(
   hooks: ShippingPublishHooks,
   scope: RepositoryContext,
-  stage: MutableStage,
-  signal: AbortSignal,
-): Promise<"ready" | "continue" | "stop"> {
-  const { k, releases, checks, workflow, turns } = hooks;
-  const { task, work: repository } = scope;
+): Promise<{ readonly start: string; readonly defaultBranch: string; readonly shipping: NonNullable<RepositoryWork["shipping"]> }> {
+  const { k } = hooks;
+  const { work: repository } = scope;
   hooks.beforePublishing(scope);
   const product = k.repositoryOf(scope)!;
   const defaultBranch = repository.source?.destination.branch ?? product.defaultBranch ?? "main";
@@ -242,29 +176,62 @@ export async function prepareDelivery(
     failures: repository.shipping?.failures ?? 0,
   });
   const start = await hooks.branchTip(scope);
-  if (!start) throw new Error(`The task's branch ${repository.branch} is gone, so Petrina published nothing. Send it back to the builder, or cancel it.`);
+  if (!start) {
+    throw new Error(
+      `The task's branch ${repository.branch} is gone, so Petrina published nothing. Send it back to the builder, or cancel it.`,
+    );
+  }
   shipping.start = start;
   if (repository.baseSha) shipping.base = repository.baseSha;
-  if (repository.delivery === "local" || repository.source?.start.kind === "pull-request") {
-    shipping.prepared = { tested: start, summary: `Ready to go onto ${defaultBranch}` };
-    k.log(scope, "status", `Ready to publish: ${start.slice(0, 7)}, on top of ${defaultBranch}`);
-    k.commitNow();
-    const remoteGate = await verifyRequiredRemoteChecks(hooks, scope, signal);
-    return remoteGate === "again" ? "continue" : remoteGate;
-  }
-  if (repository.delivery === "pull-request") {
-    shipping.prepared = { tested: start, summary: "Ready to open a pull request", title: formatPullRequestTitle(scope), body: hooks.pullRequestBody(scope) };
-    k.log(
-      scope,
-      "status",
-      `Ready to publish: ${start.slice(
-      0,
-      7
-    )}, with ${repository.report?.description ? "the builder's description" : "a description from the builder's report"}`
-    );
-    k.commitNow();
-    return "ready";
-  }
+  return { start, defaultBranch, shipping };
+}
+
+export async function prepareBranchOrPrUpdateCandidate(
+  hooks: ShippingPublishHooks,
+  scope: RepositoryContext,
+  _stage: MutableStage,
+  signal: AbortSignal,
+): Promise<"ready" | "continue" | "stop"> {
+  const { k } = hooks;
+  const { start, defaultBranch, shipping } = await beginDeliveryPreparation(hooks, scope);
+  shipping.prepared = { tested: start, summary: `Ready to go onto ${defaultBranch}` };
+  k.log(scope, "status", `Ready to publish: ${start.slice(0, 7)}, on top of ${defaultBranch}`);
+  k.commitNow();
+  const remoteGate = await verifyRequiredRemoteChecks(hooks, scope, signal);
+  return remoteGate === "again" ? "continue" : remoteGate;
+}
+
+export async function prepareNewPullRequestCandidate(
+  hooks: ShippingPublishHooks,
+  scope: RepositoryContext,
+): Promise<"ready"> {
+  const { k } = hooks;
+  const { work: repository } = scope;
+  const { start, shipping } = await beginDeliveryPreparation(hooks, scope);
+  shipping.prepared = {
+    tested: start,
+    summary: "Ready to open a pull request",
+    title: formatPullRequestTitle(scope),
+    body: hooks.pullRequestBody(scope),
+  };
+  k.log(
+    scope,
+    "status",
+    `Ready to publish: ${start.slice(0, 7)}, with ${repository.report?.description ? "the builder's description" : "a description from the builder's report"}`,
+  );
+  k.commitNow();
+  return "ready";
+}
+
+export async function prepareReleaseCandidate(
+  hooks: ShippingPublishHooks,
+  scope: RepositoryContext,
+  stage: MutableStage,
+  signal: AbortSignal,
+): Promise<"ready" | "continue" | "stop"> {
+  const { k, releases, checks, workflow, turns } = hooks;
+  const { task, work: repository } = scope;
+  const { start, shipping } = await beginDeliveryPreparation(hooks, scope);
   const declared = await releases.chooseVersion(scope, signal);
   k.log(scope, "status", `Getting the release ready: Petrina sets the version to ${shipping.version}`);
   k.commitNow();
@@ -273,11 +240,13 @@ export async function prepareDelivery(
   hooks.beforePublishing(scope);
   if (tested !== start) {
     const verified = await checks.failing(scope, signal, undefined, "publishing");
-    if (verified.kind === "product-failed") return hooks.preparationFailed(
-      scope,
-      `The product's checks fail with the version set to ${shipping.version}`,
-      signal
-    );
+    if (verified.kind === "product-failed") {
+      return hooks.preparationFailed(
+        scope,
+        `The product's checks fail with the version set to ${shipping.version}`,
+        signal,
+      );
+    }
     if (verified.kind === "blocked") {
       await hooks.backToWork(scope);
       delete repository.shipping;
@@ -292,28 +261,36 @@ export async function prepareDelivery(
   if (changedPreview) return changedPreview;
   const log = await releases.sincePreviousRelease(scope, signal);
   hooks.beforePublishing(scope);
+  const deliveryRoleId =
+    k.role(stage.roleId, task)?.result === "delivery"
+      ? stage.roleId
+      : (k.s.roles.find((role) => !role.removed && role.result === "delivery")?.id ?? "release-manager");
   const profileId = stage.profileIds[0] ?? RELEASE_MANAGER_PROFILE;
   let by = profileId;
-  const result = preview ?? (await turns.turn(scope, "release-manager", profileId, () => [log], ReleaseNotesResult, signal, {
-    initialHead: tested,
-    used: (id) => (by = id),
-    check: (value) => (!value.notes.trim() ? `"notes" is empty: write the release notes.` : value.notes.length > TEXT_LIMITS.notes ? `the release notes are longer than GitHub allows (${TEXT_LIMITS.notes} characters). Shorten them.` : undefined),
-  }));
+  const result =
+    preview ??
+    (await turns.turn(scope, deliveryRoleId, profileId, () => [log], ReleaseNotesResult, signal, {
+      initialHead: tested,
+      used: (id) => (by = id),
+      check: (value) =>
+        !value.notes.trim()
+          ? `"notes" is empty: write the release notes.`
+          : value.notes.length > TEXT_LIMITS.notes
+            ? `the release notes are longer than GitHub allows (${TEXT_LIMITS.notes} characters). Shorten them.`
+            : undefined,
+    }));
   shipping.prepared = { tested, summary: result.summary, notes: result.notes.trim() };
   endAgentStep(task, { outcome: JOURNEY_WORDS.notes, reason: JOURNEY_WORDS.releaseNotesReady }, Date.now());
   delete task.agent;
   task.holdsSlot = false;
   k.finishStep(scope);
-  k.participantSay(scope, "agent", `${result.summary}\n\n${k.describe("release-manager", by)}`, "release-manager", by, undefined);
+  k.participantSay(scope, "agent", `${result.summary}\n\n${k.describe(deliveryRoleId, by)}`, deliveryRoleId, by, undefined);
   k.log(
     scope,
     "done",
-    `Ready to publish: ${tested.slice(
-    0,
-    7
-  )}, as ${shipping.tag}, with notes on everything since ${shipping.after || "the start"}`,
-    "release-manager",
-    by
+    `Ready to publish: ${tested.slice(0, 7)}, as ${shipping.tag}, with notes on everything since ${shipping.after || "the start"}`,
+    deliveryRoleId,
+    by,
   );
   k.commitNow();
   const remoteGate = await verifyRequiredRemoteChecks(hooks, scope, signal);

@@ -2,7 +2,6 @@ import { LoaderCircle } from "lucide-react";
 import {
   checkEntryResult,
   checkOutcome,
-  checkOutcomeLabel,
   checkAttemptsOf,
   checkCounts,
   checkReasonWords,
@@ -13,7 +12,7 @@ import {
   type CheckRunReason,
   type JourneyProductCheck
 } from "@petrina/core";
-import { duration, type Lookup } from "../lib";
+import { checkBadge, duration, type Lookup } from "../lib";
 
 function outcome(checks: readonly JourneyProductCheck[]) {
   const { failed, passed } = checkCounts(checks);
@@ -87,16 +86,7 @@ function Attempt({ checks, find, now, taskId, onOriginal, evidence, activity, re
       const source = run?.source ?? check.source;
       const start = pending ? check.startedAt : run?.startedAt ?? check.startedAt;
       const end = pending ? undefined : run?.endedAt ?? check.endedAt;
-      const words = run && !lifecycle && result === "stopped" ? checkOutcomeLabel(checkOutcome(run)) : undefined;
-      const label = words ? words[0]!.toUpperCase() + words.slice(1) : result === "stopped" && !lifecycle ? "Unverified — execution details were not recorded" : ({
-        pass: "Passed",
-        fail: "Failed",
-        "did-not-finish": "Timed out",
-        running: "Running",
-        pending: "Pending",
-        stopped: "Stopped — verification incomplete",
-        skipped: "Skipped"
-      } as const)[result];
+      const badge = checkBadge(result, { ...(run ? { run } : {}), lifecycle });
       const href = new URL(window.location.href);
       if (taskId) href.pathname = `/tasks/${encodeURIComponent(taskId)}`;
       if (source) {
@@ -104,11 +94,11 @@ function Attempt({ checks, find, now, taskId, onOriginal, evidence, activity, re
         href.searchParams.set("attempt", source.attemptId);
       }
       return <li key={`${check.id ?? index}:${index}`}>
-        <span className={`label ${check.result === "pass" ? "ok" : check.result === "fail" || check.result === "did-not-finish" ? "bad" : check.result === "running" ? "running" : ""}`}>{check.result === "running" && <LoaderCircle
+        <span className={`label ${badge.tone}`}>{check.result === "running" && <LoaderCircle
           size={12}
           className="check-progress-spinner"
           aria-hidden="true"
-        />}{label}</span>
+        />}{badge.label}</span>
         <strong>{check.name}</strong>
         {check.reusedAt !== undefined ? <span className="quiet-text num">Previous result reused {new Date(check.reusedAt).toLocaleString()}; no new execution</span> : evidence && <span className="quiet-text">Original execution</span>}
         {check.result === "skipped" ? <span className="quiet-text">Skipped in the original check attempt; no execution</span> : (evidence || reused) && <span className="quiet-text num">Original execution: {start !== undefined ? new Date(start).toLocaleString() : "time unavailable"}{run && Number.isFinite(run.ms) ? ` · ${recordedDuration(run.ms)} recorded duration` : start !== undefined && end !== undefined ? ` · ${recordedDuration(end - start)} recorded duration` : " · duration unavailable"}</span>}

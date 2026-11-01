@@ -475,12 +475,14 @@ export const GENERAL_QUERY_HANDLERS: { readonly [K in GeneralQueryName]: General
   "product.list": ({ name, state, args }) =>
     paginate(
       state.products
-        .map(({ id, name: productName, repo, delivery, approveDelivery, requiredRemoteChecks }) => ({
+        .map(({ id, name: productName, repo, delivery, approveDelivery, shipLowRisk, releaseBump, requiredRemoteChecks }) => ({
           id,
           name: productName,
           repo,
           delivery,
           approveDelivery,
+          shipLowRisk: shipLowRisk ?? false,
+          releaseBump: releaseBump ?? "patch",
           requiredRemoteChecks: requiredRemoteChecks ?? [],
         }))
         .sort((left, right) => left.id.localeCompare(right.id)),
@@ -488,6 +490,14 @@ export const GENERAL_QUERY_HANDLERS: { readonly [K in GeneralQueryName]: General
       name,
     ),
   "product.inspect": ({ name, product, args }) => readText(product, args, [name, args.productId]),
+  "routine.list": ({ name, state, args }) =>
+    paginate(
+      (state.routines ?? [])
+        .filter((routine) => !args.productId || routine.productId === args.productId)
+        .sort((left, right) => left.id.localeCompare(right.id)),
+      args,
+      [name, args.productId],
+    ),
   "pool.inspect": ({ engine, state }) => ({ outcome: "completed", pool: state.pool, ...drainStatus(engine) }),
   "tools.inspect": ({ name, state, args }) =>
     readText(

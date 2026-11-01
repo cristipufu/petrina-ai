@@ -1,5 +1,6 @@
+import { PROVIDER_CATALOG, VENDOR_CATALOG } from "@petrina/core";
 import type { Theme, ThemeColors } from "./type";
-import { darkTones, lightTones } from "./tones";
+import { toneCssVars } from "./tones";
 
 const COLOR: Record<keyof ThemeColors, string> = {
   bg: "--bg",
@@ -75,5 +76,11 @@ export function cssVars(theme: Theme): Record<string, string> {
     "--scrim": theme.scrim,
   };
   for (const key of Object.keys(COLOR) as (keyof ThemeColors)[]) vars[COLOR[key]] = theme.colors[key];
-  return { ...vars, ...(theme.mode === "dark" ? darkTones : lightTones), ...theme.tones };
+  for (const provider of PROVIDER_CATALOG) {
+    vars[`--tool-${provider.id}`] = theme.mode === "dark" ? provider.theme.dark : provider.theme.light;
+  }
+  for (const vendor of VENDOR_CATALOG) {
+    vars[`--provider-${vendor.id}`] = theme.mode === "dark" ? vendor.theme.dark : vendor.theme.light;
+  }
+  return { ...vars, ...toneCssVars(theme.mode) };
 }

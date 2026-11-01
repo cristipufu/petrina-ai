@@ -55,6 +55,15 @@ describe("product settings in the engine", () => {
       expect((await act("updateProduct", id, { name: "shop api", delivery: "local", approveDelivery: false })).error).toBe("Another product is already called Shop API.");
       expect((await act("updateProduct", id, { name: " Petrina HQ ", delivery: "local", approveDelivery: false })).ok).toBe(true);
       expect(engine.getState().products[0]).toEqual({ ...original, name: "Petrina HQ", delivery: "local", approveDelivery: false });
+      expect((await act("updateProduct", id, { name: "Petrina HQ", delivery: "release", approveDelivery: true, shipLowRisk: true, releaseBump: "minor" })).ok).toBe(true);
+      expect((await act("updateProduct", id, { name: "Petrina HQ", delivery: "local", approveDelivery: false })).ok).toBe(true);
+      expect(engine.getState().products[0]).toMatchObject({
+        name: "Petrina HQ",
+        delivery: "local",
+        approveDelivery: false,
+        shipLowRisk: true,
+        releaseBump: "minor",
+      });
       expect(engine.getState().tasks.find((entry) => entry.id === task)).toEqual(before.tasks[0]);
       const next = engine.addTask({ productId: id, title: "New defaults" });
       expect(engine.getState().tasks.find((entry) => entry.id === next)).toMatchObject({ delivery: "local", approveDelivery: false });

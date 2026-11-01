@@ -1,3 +1,4 @@
+import type { RoleResult } from "@petrina/core";
 import { findingIds } from "../scripted-findings.js";
 import type { AgentScript, Scenario } from "../fake-agent.js";
 
@@ -48,6 +49,63 @@ export const defaultConfigOptions = (plan: Scenario): FakeConfigOption[] => [
 
 export const roleOf = (text: string): string =>
   /You are the ([A-Za-z -]+) in Petrina/.exec(text)?.[1]?.trim().toLowerCase() ?? "";
+
+const DIRECT_FAKE_ROLES = new Set([
+  "planner",
+  "architect",
+  "design reviewer",
+  "check finder",
+  "builder",
+  "code reviewer",
+  "security reviewer",
+  "verifier",
+  "guide keeper",
+  "tester",
+  "release manager",
+]);
+
+const RESULT_FAKE_ROLE: Readonly<Partial<Record<RoleResult, string>>> = {
+  plan: "planner",
+  brief: "architect",
+  objections: "design reviewer",
+  "check-discovery": "check finder",
+  build: "builder",
+  votes: "verifier",
+  guide: "guide keeper",
+  checks: "tester",
+  delivery: "release manager",
+};
+
+export function resultOf(text: string): RoleResult | undefined {
+  const blockText = /```petrina\n([\s\S]*?)\n```/.exec(text)?.[1];
+  if (!blockText) return undefined;
+  let shape: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(blockText) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+    shape = parsed as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
+  if ("stages" in shape) return "plan";
+  if ("forUsers" in shape) return "brief";
+  if ("objections" in shape) return "objections";
+  if ("changes" in shape) return "build";
+  if ("verdicts" in shape) return "votes";
+  if ("missed" in shape) return "guide";
+  if ("verdict" in shape) return "findings";
+  if ("checks" in shape) {
+    const first = Array.isArray(shape.checks) ? shape.checks[0] : undefined;
+    return first && typeof first === "object" && "argv" in first ? "check-discovery" : "checks";
+  }
+  if ("notes" in shape) return typeof shape.notes === "string" ? "delivery" : "notes";
+  return undefined;
+}
+
+export function dispatchFakeRole(role: string, result: RoleResult | undefined): string {
+  if (DIRECT_FAKE_ROLES.has(role)) return role;
+  return (result ? RESULT_FAKE_ROLE[result] : undefined) ?? role;
+}
 
 export const slug = (role: string): string => role.replace(/[^a-z0-9]+/g, "-");
 

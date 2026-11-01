@@ -1,6 +1,7 @@
 import type {
   CoordinationResult as Result,
   HistoryQuery,
+  InboxDecisionContextTask,
   InboxItem,
   InboxKind,
   Landing,
@@ -9,14 +10,13 @@ import type {
 } from "@petrina/core";
 import {
   CHECK_WORDS,
-  deliveryDecisionProblem,
+  decisionsForInboxItem,
   displayTask,
   finishedTask,
   inCheckLine,
   mainLine,
   nextSteps,
   originalCheck,
-  reviewDecisionPending,
   roleForTask,
   runtimeWaitView,
   seatRemaining,
@@ -354,6 +354,7 @@ export function requestRevision(engine: Engine, item: InboxItem): string {
           call: task.call,
           findings: task.findings,
           reviewDecision: task.reviewDecision,
+          maintenanceSettings: task.maintenance?.settingsDecision,
           repositories: task.repositories?.map((work) => ({
             productId: work.productId,
             source: work.source,
@@ -376,40 +377,8 @@ export function requestRevision(engine: Engine, item: InboxItem): string {
   });
 }
 
-export const decisionsForRequest = (
-  kind: string,
-  task?: Pick<
-    Task,
-    | "productId"
-    | "repositories"
-    | "checks"
-    | "checkSetup"
-    | "checkSetupInvalidated"
-    | "reviewDecision"
-    | "checkedSha"
-    | "checkedPatch"
-    | "journey"
-  >,
-): string[] =>
-  kind === "question"
-    ? ["inbox.answer"]
-    : kind === "permission"
-      ? ["inbox.allow", "inbox.deny"]
-      : kind === "stuck"
-        ? ["inbox.retry"]
-        : kind === "shipping"
-          ? ["inbox.recovery"]
-          : kind === "screen"
-            ? ["screen.allow"]
-            : kind === "learnings"
-              ? ["learning.accept", "learning.decline"]
-              : kind === "guide"
-                ? ["review-guide.accept", "review-guide.decline"]
-                : kind === "delivery" && task && !reviewDecisionPending(task) && deliveryDecisionProblem(task)
-                  ? ["inbox.rerun-checks", "inbox.changes"]
-                  : ["plan", "design", "delivery", "disagreement"].includes(kind)
-                    ? ["inbox.approve", "inbox.changes"]
-                    : [];
+export const decisionsForRequest = (kind: string, task?: InboxDecisionContextTask): string[] =>
+  decisionsForInboxItem(kind, task);
 
 /** A bounded health read: recorded facts about the current step, with no verdict and no action. */
 export function taskHealthView(engine: Engine, task: Task): Result {

@@ -57,7 +57,7 @@ export function testerAgents() {
   return {
     start,
     acceptedBuild: replies.acceptedBuild,
-    toolProbe: scriptedToolProbe({ "claude-code": { status: "ready" }, codex: { status: "ready" }, grok: { status: "ready" }, antigravity: { status: "not-installed" }, opencode: { status: "not-installed" }, pi: { status: "not-installed" }, gh: { status: "not-installed" }, git: { status: "ready" } }),
+    toolProbe: scriptedToolProbe({ "claude-code": { status: "ready" }, codex: { status: "ready" }, grok: { status: "ready" }, gh: { status: "not-installed" }, git: { status: "ready" } }),
     scenario(next: Scenario) {
       for (const key of Object.keys(next)) if (!["planner", "builder", "tester", "risk", "fixes", "reviewer", "learnings", "limited"].includes(key)) throw new Error(`Unsupported acceptance reply recipe: ${key}`);
       script = structuredClone(next);

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { ADAPTERS } from "@petrina/agent-runtime/tools";
 import type { ModelAtCapacity, UsageInfo, UsageLimited } from "@petrina/agent-runtime/usage";
 import type { UsageReader } from "@petrina/agent-runtime/usage-reader";
-import type { AgentProfile, CheckId, Id, Role, State, Task, UsageReport } from "@petrina/core";
+import { getProviderDescriptor, type AgentProfile, type CheckId, type Id, type Role, type State, type Task, type UsageReport } from "@petrina/core";
 import {
   ProfileSelection,
   recordModelCapacity,
@@ -188,7 +188,10 @@ export class UsageCoordinator {
 
   recordUsage(info: UsageInfo): void {
     this.recording.record(info, Date.now());
-    if (info.toolId === "claude-code" || (info.status === "rejected" && !info.overage)) {
+    if (
+      getProviderDescriptor(info.toolId)?.usageReporting?.supportsOverageAllowances
+      || (info.status === "rejected" && !info.overage)
+    ) {
       this.armLimitTimer();
     }
     this.host.changed();

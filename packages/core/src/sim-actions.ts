@@ -6,6 +6,7 @@ import { afterChangesAsked, type DeepMutable } from "./flow.js";
 import { AFTER_WORDS, endYouStep, JOURNEY_WORDS, syncWait, withdrawAsks } from "./journey.js";
 import type { CheckPrerequisite, Id, InboxItem, Task } from "./model.js";
 import { configureProductChecks, configureProductCheckSetup } from "./products.js";
+import { supportsLiveGuidance } from "./providers.js";
 import { configureProductRemoteChecks } from "./remote-checks.js";
 import { involvesProduct, taskProductIds, withoutProduct } from "./repositories.js";
 import { queueOf } from "./scheduler.js";
@@ -266,7 +267,7 @@ export function simSendMessage(rt: SimRuntime, d: Draft, task: DraftTask, trimme
   }
   const message = { id: simId(d, task.id), text: trimmed, at: d.now, mode };
   const tool = d.profiles.find(profile => profile.id === task.agent?.profileId)?.toolId;
-  const noLiveInput = tool === "antigravity" || tool === "opencode";
+  const noLiveInput = !supportsLiveGuidance(tool);
   if (mode === "now" && task.agent && task.state === "running" && !noLiveInput) {
     simSay(d, task, "you", trimmed);
     task.session.at(-1)!.coordinatorMessageId = message.id;

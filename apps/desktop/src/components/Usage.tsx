@@ -3,8 +3,10 @@ import { useLimitClock } from "../usage";
 import { TOOL_COLORS } from "../lib";
 import {
   CHANGED_LABEL,
+  MODEL_FAMILY_CATALOG,
   NOT_CONFIRMED_LABEL,
   displayLimits,
+  getProviderDescriptor,
   usageLines,
   usagePauseWords,
   agoText,
@@ -29,15 +31,6 @@ export const providerColor = (providerId: string | undefined) => (providerId ? `
 const tone = (name: string) => `var(--t-${name})`;
 const hashOf = (text: string) => [...text].reduce((sum, char) => (sum * 31 + char.charCodeAt(0)) >>> 0, 7);
 
-/** Model families with a colour of their own; any other model takes a stable one from the rest. */
-const MODEL_FAMILIES: readonly [RegExp, string][] = [
-  [/opus/i, "indigo"],
-  [/sonnet/i, "orange"],
-  [/haiku/i, "green"],
-  [/fable/i, "pink"],
-  [/gemini/i, "blue"],
-  [/grok/i, "teal"],
-];
 const MODEL_TONES = ["purple", "blue", "teal", "amber", "pink", "green", "orange", "indigo"];
 
 /**
@@ -56,8 +49,8 @@ export function modelColors(labels: readonly string[]): Map<string, string> {
     if (label === NOT_CONFIRMED_LABEL || label === "Model not reported") claim(label, "slate");
     else if (label === CHANGED_LABEL) claim(label, "amber");
     else {
-      const family = MODEL_FAMILIES.find(([pattern]) => pattern.test(label));
-      if (family) claim(label, family[1]);
+      const family = MODEL_FAMILY_CATALOG.find((entry) => entry.pattern.test(label));
+      if (family) claim(label, family.tone);
     }
   }
   for (const label of labels) {
@@ -325,7 +318,12 @@ export function UsageList({ state, expanded = false }: { state: State; expanded?
   const now = useLimitClock(reports, state.now);
   const lines = usageLines(state, now);
   if (expanded) {
-    const tools = state.tools.filter((tool) => tool.status === "ready" || reports.some((report) => report.toolId === tool.id) || tool.id === "claude-code" || tool.id === "codex");
+    const tools = state.tools.filter(
+      (tool) =>
+        tool.status === "ready"
+        || reports.some((report) => report.toolId === tool.id)
+        || Boolean(getProviderDescriptor(tool.id)?.starter),
+    );
     const limits = displayLimits(state.pool, now);
     return (
       <div className="usage-limits">

@@ -38,9 +38,10 @@ export class ReleasePrep {
     try {
       await this.chooseVersion(scope, signal);
       const log = await this.sincePreviousRelease(scope, signal);
+      const deliveryRoleId = stage.roleId || "release-manager";
       const result = await this.turns.turn(
         scope,
-        "release-manager",
+        deliveryRoleId,
         stage.profileIds[0] ?? RELEASE_MANAGER_PROFILE,
         () => [log],
         ReleaseNotesResult,
