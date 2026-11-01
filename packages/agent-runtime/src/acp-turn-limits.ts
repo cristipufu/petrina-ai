@@ -30,7 +30,6 @@ export async function stopAll(
 ): Promise<boolean> {
   if (child.pid === undefined) return true;
   if (processHost.stopTree) {
-    if (!isChildRunning(child)) return true;
     const pid = child.pid;
     const missing = () => {
       try {
@@ -40,19 +39,31 @@ export async function stopAll(
         return (error as NodeJS.ErrnoException).code === "ESRCH";
       }
     };
-    const stopped = await processHost.stopTree(pid, 3000);
-    if (isChildRunning(child)) {
+    const forceKill = () => {
+      if (!isChildRunning(child)) return;
       try {
         child.kill("SIGKILL");
       } catch {
         /* Already gone. */
       }
+      if (isChildRunning(child) && !missing()) {
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {
+          /* Already gone. */
+        }
+      }
+    };
+    if (isChildRunning(child)) {
+      if (collectPrograms) await processHost.stopTree(pid, 2_000);
+      forceKill();
     }
     const deadline = Date.now() + 2_000;
     while ((isChildRunning(child) || !missing()) && Date.now() < deadline) {
+      forceKill();
       await Bun.sleep(10);
     }
-    return !isChildRunning(child) && (stopped || missing());
+    return !isChildRunning(child) && missing();
   }
   return stopAgentPrograms({ pid: child.pid, running: () => isChildRunning(child) }, graceMs, collectPrograms, {
     now: () => Date.now(),

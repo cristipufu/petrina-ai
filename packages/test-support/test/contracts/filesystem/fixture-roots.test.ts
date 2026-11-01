@@ -29,6 +29,43 @@ it("removes an actual nested private root and accepts an already absent root", a
   expect(fs.existsSync(root)).toBe(false);
 }));
 
+it("retries transient EBUSY handle-rundown errors and preserves the cause if the lock persists", async () => {
+  await withRoot((root, restore) => {
+    const native = fs.rmSync, remove = spyOn(fs, "rmSync");
+    restore(() => remove.mockRestore());
+    let attempts = 0;
+    remove.mockImplementation(((path: fs.PathLike, ...args: unknown[]) => {
+      if (path === root && ++attempts <= 2) throw Object.assign(new Error("resource busy or locked"), { code: "EBUSY" });
+      return Reflect.apply(native, fs, [path, ...args]);
+    }) as typeof fs.rmSync);
+    removeFixtureRoot(root);
+    expect(attempts).toBe(3);
+    expect(fs.existsSync(root)).toBe(false);
+  });
+
+  await withRoot(async (root, restore) => {
+    const native = fs.rmSync, remove = spyOn(fs, "rmSync");
+    restore(() => remove.mockRestore());
+    const busy = Object.assign(new Error("resource busy or locked"), { code: "EBUSY" });
+    let attempts = 0;
+    remove.mockImplementation(((path: fs.PathLike, ...args: unknown[]) => {
+      if (path === root) {
+        attempts++;
+        throw busy;
+      }
+      return Reflect.apply(native, fs, [path, ...args]);
+    }) as typeof fs.rmSync);
+    const f = fixtureOperationControl();
+    f.effects.disposeEffect = () => removeFixtureRoot(root);
+    const error = await rejectionOf(f.owner.close());
+    expect(attempts).toBe(6);
+    expect(error).toBeInstanceOf(Error);
+    if (!(error instanceof Error)) throw new Error("Persistent EBUSY lost its error wrapper");
+    expect(error.cause).toBe(busy);
+    expect(fs.lstatSync(root).isDirectory()).toBe(true);
+  });
+});
+
 for (const [label, failure] of [["Error", Object.assign(new Error("Removal denied"), { code: "EACCES" })], ["undefined", undefined]] as const) {
   it(`retains a failed owner's actual root and preserves the removal cause ${label}`, async () => withRoot(async (root, restore) => {
     const native = fs.rmSync, remove = spyOn(fs, "rmSync");

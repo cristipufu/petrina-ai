@@ -3,9 +3,11 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { State } from "@petrina/core";
 import { executionFor } from "@petrina/orchestrator";
+import { childState } from "@petrina/platform/process-tree";
 import * as gitOps from "@petrina/repositories/git";
+import { readConnection } from "../../src/instance.js";
 import { EngineClient } from "../client.js";
-import { CLI, Fakes, makeProduct, tempDir, SLOW } from "../support.js";
+import { CLI, Fakes, makeProduct, tempDir, waitFor, SLOW } from "../support.js";
 import { privateAgentToolProbe } from "../scripted-probes.js";
 import { coordinatorLifetimes } from "./coordinator-lifetime.js";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
@@ -77,11 +79,16 @@ export async function lifecycleFixture(lifetimes: ReturnType<typeof coordinatorL
     });
     const stop = async () => {
       await setupWithCleanup(() => lifetime.prepare(async () => {
+        const activePid = readConnection(home)?.pid;
         try {
           const state = await engine.state();
           for (const entry of state.tasks) if (!["done", "cancelled", "pr-open"].includes(entry.state)) await engine.act("cancel", entry.id);
         } catch { /* The native owner may have already stopped; independent command/lease cleanup still confirms it. */ }
         await client.call("engine.stop", { requestId: "cleanup-review-lifecycle", wait: true, timeoutMs: 3000 * SLOW });
+        const finalPid = readConnection(home)?.pid ?? activePid;
+        if (finalPid !== undefined && finalPid !== engine.proc.pid) {
+          await waitFor(async () => (await childState(finalPid)) === "ended", "the restarted engine process to exit", 10_000);
+        }
       }), () => lifetime.close());
       await lifetime.close();
     };

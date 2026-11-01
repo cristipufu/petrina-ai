@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   checkActivityDetails,
@@ -95,17 +95,22 @@ const [started, release] = process.argv.slice(2); writeFileSync(started + ".tmp"
 while (!existsSync(release)) await Bun.sleep(10);
 process.exit(Bun.file(release).size ? 1 : 0);`,
       );
+      const publish = (value: string) => {
+        const tmp = `${release}.${process.pid}.${counter++}.tmp`;
+        writeFileSync(tmp, value);
+        renameSync(tmp, release);
+      };
       caseOwner.onStop(() => {
         try {
-          writeFileSync(release, "");
+          publish("");
         } catch {}
       });
       const check: ProductCheck = { name, argv: [process.execPath, script, started, release] };
       return {
         check,
         started,
-        pass: () => writeFileSync(release, ""),
-        fail: () => writeFileSync(release, "fail"),
+        pass: () => publish(""),
+        fail: () => publish("fail"),
       };
     };
     return { root, options, engine, add, turn, held, checks, coordination: new Coordination(engine) };

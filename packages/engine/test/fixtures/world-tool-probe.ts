@@ -18,7 +18,9 @@ export function worldToolProbe(state: string, remote: string, native: () => Tool
       if (id !== "gh") return native().run(id, request);
       request.signal.throwIfAborted();
       try {
-        const observed = await fakeGitHubRequest(state, remote, ["auth", "status", "--hostname", "github.com"]);
+        const pending = fakeGitHubRequest(state, remote, ["auth", "status", "--hostname", "github.com"]);
+        request.onGone(pending.then(() => undefined, () => undefined));
+        const observed = await pending;
         return gitHubReadiness({ ...observed, stdout: observed.stdout.trim(), stderr: observed.stderr.trim() });
       } catch (error) {
         // Match the explicit CLI stand-in's failed-command response, never a successful account observation.

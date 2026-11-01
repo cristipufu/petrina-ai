@@ -1,6 +1,7 @@
-import { existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
+import { removeTreeWithRetries } from "./fixture-roots.js";
 import { shortTempParent, TEST_BROWSERS } from "./temp-parent.js";
 import { currentSlow } from "./slow.js";
 import { completionOf, completedBeforeProgress, waitForProgress, type ProgressClock } from "./progress-wait.js";
@@ -13,7 +14,7 @@ export function tempDir(prefix: string): string {
 /** Windows can retain handles briefly after exit; the outer runner also owns final reclamation. */
 export function removeDir(path: string): void {
   try {
-    rmSync(path, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    removeTreeWithRetries(path);
   } catch {
     // Left for the system's temp cleanup.
   }

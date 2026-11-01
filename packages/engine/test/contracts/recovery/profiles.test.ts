@@ -48,6 +48,7 @@ it("upgrades saved catalogs with newly added providers, reconciles toolCaps and 
       usageCommands: { codex: null, grok: null, antigravity: null },
       terminals: () => [],
     };
+    const probeCleanups: Promise<void>[] = [];
     let engine = owner.open(dataDir, options);
     try {
       engine.s.profiles = engine.s.profiles.filter(
@@ -77,10 +78,14 @@ it("upgrades saved catalogs with newly added providers, reconciles toolCaps and 
       const probe = new NativeToolProbe(engine);
       const result = await probe.run("opencode", {
         signal: engine.stopRequested.signal,
-        onGone: () => {},
+        onGone: (gone) => {
+          probeCleanups.push(gone);
+        },
       });
       expect(result.status).toBe("ready");
+      await Promise.all(probeCleanups);
     } finally {
+      await Promise.allSettled(probeCleanups);
       await owner.stop(engine);
     }
   });

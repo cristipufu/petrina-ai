@@ -135,6 +135,7 @@ export async function launch(options: LaunchOptions): Promise<void> {
       message: `${BUSY}.`
     });
     else process.stderr.write(claim.kind === "running" ? `${ALREADY_RUNNING}\n` : `${BUSY}.\n`);
+    lifecycleStore.close();
     process.exit(app && claim.kind === "running" ? 0 : 1);
   }
 
@@ -174,7 +175,7 @@ export async function launch(options: LaunchOptions): Promise<void> {
     if (stopping) return;
     stopping = true;
     // Never hang on the way out: the shell stops waiting after a few seconds anyway.
-    setTimeout(() => process.exit(code), 7000).unref();
+    setTimeout(() => process.exit(code), 9000).unref();
     try {
       server?.stop(true);
       lifecycle?.close();
@@ -185,6 +186,9 @@ export async function launch(options: LaunchOptions): Promise<void> {
     // An app engine takes its connection file with it. One started by hand leaves it, so the next
     // start keeps the key and open browser windows reconnect; a stale file is never trusted alone.
     if (app && !process.env.PETRINA_LIFECYCLE_REPLACEMENT) removeConnection(home, process.pid);
+    try {
+      lifecycleStore.close();
+    } catch {}
     lock.release();
     console.log(`${new Date().toISOString()} Petrina engine stopped`);
     log.close();
@@ -256,6 +260,9 @@ export async function launch(options: LaunchOptions): Promise<void> {
         lock.release();
         lifecycleStore.finish("completed");
       }
+      try {
+        lifecycleStore.close();
+      } catch {}
       log.close();
       process.exit(0);
     }, app ? signalDesktopHandoff : undefined);

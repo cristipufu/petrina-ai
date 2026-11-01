@@ -67,14 +67,29 @@ await import(${JSON.stringify(HARNESS)});
   let recovery: CoordinatorProcess | undefined;
 
   cleanup = async () => {
+    const activePids = new Set<number>([before.pid]);
+    const recordPids = () => {
+      const connPid = readConnection(home)?.pid;
+      if (connPid !== undefined) activePids.add(connPid);
+      if (existsSync(replacement)) {
+        const repPid = Number(readFileSync(replacement, "utf8").trim());
+        if (Number.isSafeInteger(repPid) && repPid > 0) activePids.add(repPid);
+      }
+    };
     try {
+      recordPids();
       writeFileSync(release, "go");
       await lifetime.prepare(() => client.call("engine.stop", { requestId: "stop-desktop-test", wait: true, timeoutMs: 10000 * SLOW }));
-    } finally { await lifetime.close(); }
-    await recovery?.exited;
-    await requested?.exited;
-    await original.exited(10000 * SLOW);
-
+      recordPids();
+      await recovery?.exited;
+      await requested?.exited;
+      await original.exited(10000 * SLOW);
+      for (const pid of activePids) {
+        await waitFor(() => !processAlive(pid), "the handoff engine process to exit", 10_000);
+      }
+    } finally {
+      await lifetime.close();
+    }
   };
     if (kind === "start") expect((await client.call("engine.stop", { requestId: "stop-before-start", wait: true, timeoutMs: 10000 * SLOW })).outcome).toBe("completed");
     expect((await client.call(`engine.${kind}`, { requestId: "desktop-handoff" })).outcome).toBe("pending");
