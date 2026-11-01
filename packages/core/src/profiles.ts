@@ -26,7 +26,18 @@ export const profileConfiguration = (profile: AgentProfile): string => JSON.stri
 
 /** Retain removed definitions for history; only profiles remains available for new work. */
 export function restoreProfileCatalog(state: import("./flow.js").DeepMutable<State>, catalog: readonly AgentProfile[] = DEFAULT_PROFILES): void {
-  if (state.profileCatalogSaved) return;
+  if (state.profileCatalogSaved) {
+    const knownTools = new Set([
+      ...state.profiles.map((profile) => profile.toolId),
+      ...(state.retiredProfiles ?? []).map((profile) => profile.toolId),
+    ]);
+    for (const entry of catalog) {
+      if (!knownTools.has(entry.toolId)) {
+        state.profiles.push(JSON.parse(JSON.stringify(entry)) as AgentProfile);
+      }
+    }
+    return;
+  }
   state.profileCatalogSaved = true;
   const retired = new Map((state.retiredProfiles ?? []).map(profile => [profile.id, profile]));
   const replacements = new Map<string, string>();

@@ -6,7 +6,7 @@ import type { Kernel } from "./kernel.js";
 import { agentEnv } from "@petrina/platform/process-environment";
 import { checkGh, checkGit, type Which } from "@petrina/repositories/tool-readiness";
 import { checkAgentTool } from "@petrina/agent-runtime/probe";
-import { ADAPTERS, agentCommandFor, findProgram } from "@petrina/agent-runtime/tools";
+import { ADAPTERS, agentCommandFor, ENGINE_PROFILES, findProgram } from "@petrina/agent-runtime/tools";
 
 /** Native installation/login observations; no admission, shared-check or workflow decisions. */
 export class NativeToolProbe implements ToolProbe {
@@ -36,7 +36,10 @@ export class NativeToolProbe implements ToolProbe {
       const gh = this.k.options.gh ?? [which("gh")].filter((path): path is string => path !== null);
       return gh.length ? checkGh(gh, timeoutMs) : { status: "not-installed" };
     }
-    const profile = this.k.s.profiles.find((entry) => entry.toolId === id) as AgentProfile;
+    const profile: AgentProfile =
+      this.k.s.profiles.find((entry) => entry.toolId === id)
+      ?? ENGINE_PROFILES.find((entry) => entry.toolId === id)
+      ?? { id: `${id}-probe`, toolId: id, model: "Default", effort: "high" };
     const command = agentCommandFor(this.k.options, profile);
     // An empty owned folder: no product settings are read by an identity probe.
     const cwd = join(this.k.dataDir, "checks");

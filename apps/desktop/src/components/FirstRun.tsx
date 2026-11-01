@@ -253,6 +253,7 @@ function ProductStep({ state, clones, live, onBack, onNext }: {
 }) {
   const [path, setPath] = useState("");
   const [adding, setAdding] = useState<string>();
+  const [picking, setPicking] = useState(false);
   const [error, setError] = useState<string>();
   const [added, setAdded] = useState<string>();
   const busy = useRef(false);
@@ -287,6 +288,22 @@ function ProductStep({ state, clones, live, onBack, onNext }: {
     }
   };
 
+  const chooseFolder = async () => {
+    if (busy.current || picking || !live) return;
+    setPicking(true);
+    setError(undefined);
+    try {
+      const chosen = await sim.pickFolder();
+      if (!chosen) return;
+      setPath(chosen);
+      await add(chosen);
+    } catch (failure) {
+      setError(failureText(failure));
+    } finally {
+      setPicking(false);
+    }
+  };
+
   const earlier = state.products.filter((entry) => entry.id !== added);
 
   return (
@@ -307,7 +324,9 @@ function ProductStep({ state, clones, live, onBack, onNext }: {
               Looking for GitHub projects in your usual code folders…
             </p>
           ) : found.length === 0 ? (
-            <p className="quiet">Petrina didn't find GitHub projects in your usual code folders. Paste the folder of one below.</p>
+            <p className="quiet">
+              Petrina didn't find GitHub projects in your usual code folders. Choose a folder or paste its path below.
+            </p>
           ) : (
             <ul className="clone-list" aria-label="GitHub projects on this machine">
               {found.map((clone) => (
@@ -338,7 +357,9 @@ function ProductStep({ state, clones, live, onBack, onNext }: {
               void add(path);
             }}
           >
-            <label htmlFor="setup-path">{found.length ? "Or paste the folder of a clone" : "Folder of a clone"}</label>
+            <label htmlFor="setup-path">
+              {found.length ? "Or choose or paste the folder of a clone" : "Folder of a clone"}
+            </label>
             <div className="paste-row">
               <input
                 id="setup-path"
@@ -350,7 +371,15 @@ function ProductStep({ state, clones, live, onBack, onNext }: {
                 autoCapitalize="off"
                 autoCorrect="off"
               />
-              <button className="btn" type="submit" disabled={!path.trim() || !!adding || !live}>
+              <button
+                className="btn"
+                type="button"
+                onClick={() => void chooseFolder()}
+                disabled={picking || !!adding || !live}
+              >
+                {picking ? "Choosing…" : "Choose folder…"}
+              </button>
+              <button className="btn" type="submit" disabled={!path.trim() || picking || !!adding || !live}>
                 {adding === path ? "Adding…" : "Add"}
               </button>
             </div>

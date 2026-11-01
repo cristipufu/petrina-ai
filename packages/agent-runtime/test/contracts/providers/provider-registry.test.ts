@@ -66,10 +66,9 @@ describe("provider catalog and runtime plugin registry parity", () => {
       const cssTokenOrHex = /^(#[0-9a-f]{6}|var\(--[a-z0-9-]+\))$/i;
       expect(provider.theme.light).toMatch(cssTokenOrHex);
       expect(provider.theme.dark).toMatch(cssTokenOrHex);
-      if (provider.icon) {
-        const iconPath = resolve(import.meta.dir, "../../../../../apps/desktop/public/tools", provider.icon);
-        expect(existsSync(iconPath)).toBe(true);
-      }
+      expect(provider.icon.endsWith(".svg")).toBe(true);
+      const iconPath = resolve(import.meta.dir, "../../../../../apps/desktop/public/tools", provider.icon);
+      expect(existsSync(iconPath)).toBe(true);
 
       const providerProfiles = DEFAULT_PROFILES.filter((profile) => profile.toolId === provider.id);
       expect(providerProfiles.length).toBe(provider.profiles.length);

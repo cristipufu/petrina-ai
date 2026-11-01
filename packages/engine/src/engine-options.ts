@@ -264,6 +264,8 @@ export interface EngineOptions {
   developerTools?: () => Promise<DeveloperToolsResult>;
   /** Tests: the home folder: where the clone finder looks, and what ~ means in a pasted path. */
   home?: string;
+  /** Tests: a scripted folder picker instead of opening the operating system's GUI folder dialog. */
+  pickFolder?: () => Promise<string | null>;
   /** Tests: how often the once-a-minute checks run (pull requests, removing working copies). */
   checkEveryMs?: number;
   /** Tests: polling cadence and deadline for required GitHub checks before direct branch or release delivery. */

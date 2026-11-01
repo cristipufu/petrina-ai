@@ -18,13 +18,18 @@ export function AddProductDialog({ waiting, onClose, onAdded }: { waiting?: stri
   const status = useEngineStatus();
   const live = status.link === "live";
   const [busy, setBusy] = useState(false);
+  const [picking, setPicking] = useState(false);
   const [error, setError] = useState<string>();
   const [added, setAdded] = useState<{ id: string; already: boolean }>();
   const product = added && state.products.find((entry) => entry.id === added.id);
   const note = product && (added.already || product.delivery === "local");
   const [discard, setDiscard] = useState(false);
-  const close = () => { if (!busy) { if (!added && (path || name)) setDiscard(true);
-  else onClose(); } };
+  const close = () => {
+    if (!busy && !picking) {
+      if (!added && (path || name)) setDiscard(true);
+      else onClose();
+    }
+  };
 
   const done = useRef(onAdded);
   done.current = onAdded;
@@ -55,12 +60,29 @@ export function AddProductDialog({ waiting, onClose, onAdded }: { waiting?: stri
     setAdded(undefined);
     setError(undefined);
   };
+  const chooseFolder = async () => {
+    if (busy || picking || !live || sending.current) return;
+    setPicking(true);
+    setError(undefined);
+    try {
+      const chosen = await sim.pickFolder();
+      if (!chosen) return;
+      edit(() => {
+        setPath(chosen);
+        setName(suggestProductName(chosen));
+      });
+    } catch (failure) {
+      setError(failureText(failure));
+    } finally {
+      setPicking(false);
+    }
+  };
 
   return (
     <>
-      <EditorPanel title="Add a product" description="Connect a local repository so your agents can work on it." icon={<FolderGit2 size={24} />} busy={busy} onClose={close} footer={<>
+      <EditorPanel title="Add a product" description="Connect a local repository so your agents can work on it." icon={<FolderGit2 size={24} />} busy={busy || picking} onClose={close} footer={<>
 
-          <button className="btn quiet" disabled={busy} onClick={close}>
+          <button className="btn quiet" disabled={busy || picking} onClick={close}>
             {note ? "Close" : "Cancel"}
           </button>
           <span className="spacer" />
@@ -69,27 +91,49 @@ export function AddProductDialog({ waiting, onClose, onAdded }: { waiting?: stri
               {added.already ? "Show it" : "Done"}
             </button>
           ) : (
-            <button key="add" className="btn lead" disabled={!path.trim() || !name.trim() || busy || !live || !!added} onClick={() => void add()}>
+            <button key="add" className="btn lead" disabled={!path.trim() || !name.trim() || busy || picking || !live || !!added} onClick={() => void add()}>
               {busy || added ? "Adding…" : "Add product"}
             </button>
           )}
       </>}>
         <WaitingLine text={waiting} />
         <FormSection title="Repository" description="Choose an existing local clone. Agents work in separate copies, so your clone stays untouched.">
-          <label className="form-field"><span className="field-label">Folder of the local clone</span><input
-            autoFocus
-            className="field"
-            aria-label="Folder of the local clone"
-            aria-describedby={`${id}-folder-help`}
-            placeholder="~/code/my-product"
-            value={path}
-            onChange={event => edit(() => {
-            setPath(event.target.value);
-            setName(suggestProductName(event.target.value));
-          })}
-            onKeyDown={event => { if (event.key === "Enter") void add(); }}
-          /></label>
-          <p className="hint" id={`${id}-folder-help`}>Paste the folder path from Finder or your terminal.</p>
+          <div className="form-field">
+            <label className="field-label" htmlFor={`${id}-folder`}>
+              Folder of the local clone
+            </label>
+            <div className="paste-row">
+              <input
+                id={`${id}-folder`}
+                autoFocus
+                className="field"
+                aria-label="Folder of the local clone"
+                aria-describedby={`${id}-folder-help`}
+                placeholder="~/code/my-product"
+                value={path}
+                onChange={(event) =>
+                  edit(() => {
+                    setPath(event.target.value);
+                    setName(suggestProductName(event.target.value));
+                  })
+                }
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") void add();
+                }}
+              />
+              <button
+                className="btn"
+                type="button"
+                disabled={busy || picking || !live}
+                onClick={() => void chooseFolder()}
+              >
+                {picking ? "Choosing…" : "Choose folder…"}
+              </button>
+            </div>
+          </div>
+          <p className="hint" id={`${id}-folder-help`}>
+            Choose a folder or paste its path from Finder or your terminal.
+          </p>
         </FormSection>
         <FormSection title="Product details" description="The name your squad uses throughout Petrina.">
           <label className="form-field"><span className="field-label">Name</span><input

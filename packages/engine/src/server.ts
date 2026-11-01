@@ -131,6 +131,7 @@ const ARGS = {
   updateBacklog: z.tuple([TaskIdSchema, BacklogUpdateSchema]),
   checkTools: z.tuple([]),
   findClones: z.tuple([]),
+  pickFolder: z.tuple([]),
   setSetupStep: z.tuple([z.enum(["welcome", "tools", "product", "task"])]),
   skipSetup: z.tuple([]),
   startFirstTask: z.tuple([NewTaskWindowSchema.extend({ clientId: ClientIdSchema })]),

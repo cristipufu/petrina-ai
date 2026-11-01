@@ -17,6 +17,8 @@ let simulator: Simulator;
 let submitted: Record<string, unknown> | undefined;
 
 let answer: { resolve: (id: string) => void; reject: (error: Error) => void } | undefined;
+let pickedFolder: string | null = null;
+let addedPaths: string[] = [];
 
 const live = { link: 'live', desktop: false, synced: true };
 
@@ -31,6 +33,13 @@ vi.mock('../../../src/engine', () => {
     synced: () => true,
     checkTools: () => undefined,
     findClones: async () => [],
+    pickFolder: async () => pickedFolder,
+    addProduct: async (chosenPath: string) => {
+      addedPaths.push(chosenPath);
+      const product = { id: 'petrina-ai', name: 'Petrina AI', repo: 'cristipufu/petrina-ai', path: chosenPath, tone: 'blue' as const };
+      simulator.addProduct(product);
+      return product.id;
+    },
   };
   return {
     mode: 'demo', desktop: false, Lost, Late,
@@ -71,7 +80,7 @@ async function mount(state: State) {
   await act(async () => root.render(<App />));
 }
 
-beforeEach(() => { localStorage.clear(); history.replaceState(null, '', '/'); answer = undefined; submitted = undefined; });
+beforeEach(() => { localStorage.clear(); history.replaceState(null, '', '/'); answer = undefined; submitted = undefined; pickedFolder = null; addedPaths = []; });
 
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); });
 
@@ -322,5 +331,36 @@ describe('first run', () => {
     expect(text('.setup-error')).toContain('Try again');
     expect(choices().every((entry) => !entry.disabled)).toBe(true);
     expect(host.querySelector<HTMLInputElement>('input[aria-label="What do you want done?"]')!.value).toBe('Add a greeting');
+  });
+
+  it('picks a folder via Choose folder… in First-Run and in Add a product, ignoring cancelled dialogs', async () => {
+    const demo = createFirstRunDemo(1_000_000_000).state;
+    await mount({ ...demo, setup: { ...demo.setup!, step: 'product' } });
+
+    // Cancelled picker leaves input empty and adds nothing.
+    pickedFolder = null;
+    await click(button('Choose folder…'));
+    expect(addedPaths).toEqual([]);
+    expect(host.querySelector<HTMLInputElement>('#setup-path')!.value).toBe('');
+
+    // Selecting a repository folder adds the product and advances to First task.
+    pickedFolder = '/Users/dev/Documents/Github/petrina-ai';
+    await click(button('Choose folder…'));
+    expect(addedPaths).toEqual(['/Users/dev/Documents/Github/petrina-ai']);
+    expect(host.querySelector('input[aria-label="What do you want done?"]')).not.toBeNull();
+  });
+
+  it('fills Folder of the local clone and suggests the product Name via Choose folder… in Add a product', async () => {
+    await mount(createFirstRunDemo(1_000_000_000).state);
+    await click(button('Skip setup'));
+    await click(button('Add a product'));
+
+    pickedFolder = '/Users/dev/Documents/Github/petrina-ai';
+    await click(button('Choose folder…'));
+
+    const folderInput = host.querySelector<HTMLInputElement>('input[aria-label="Folder of the local clone"]')!;
+    const inputs = [...host.querySelectorAll<HTMLInputElement>('[role=dialog] input.field')];
+    expect(folderInput.value).toBe('/Users/dev/Documents/Github/petrina-ai');
+    expect(inputs[1]!.value).toBe('Petrina AI');
   });
 });

@@ -93,8 +93,8 @@ export interface ProviderDescriptor {
   readonly cli: string;
   /** Starter tools always appear on First Run; optional tools join once detected on the machine. */
   readonly starter: boolean;
-  /** Bundled brand SVG under `apps/desktop/public/tools/`, when available. */
-  readonly icon?: string;
+  /** Bundled brand SVG under `apps/desktop/public/tools/`. */
+  readonly icon: string;
   readonly iconStyle?: ProviderIconStyle;
   /** Primary model vendor for Analytics provider charts, when one vendor backs the tool. */
   readonly vendor?: ProviderVendor;
@@ -326,6 +326,8 @@ export const PROVIDER_CATALOG = [
     name: "OpenCode",
     cli: "opencode",
     starter: false,
+    icon: "opencode.svg",
+    iconStyle: { darkInvert: true },
     setup: {
       guides: {
         install: "https://opencode.ai/docs",
@@ -364,6 +366,7 @@ export const PROVIDER_CATALOG = [
     name: "Pi",
     cli: "pi",
     starter: false,
+    icon: "pi.svg",
     setup: {
       guides: {
         install: "https://pi.dev",

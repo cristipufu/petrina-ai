@@ -96,6 +96,7 @@ export function bindEngineCommands(owners: EngineCommandOwners): EngineBoundComm
         if (!kernel.stopped) kernel.schedule();
       }),
     findClones: () => catalogCommands.findClones(),
+    pickFolder: () => catalogCommands.pickFolder(),
     setSetupStep: (step) => catalogCommands.setSetupStep(step),
     skipSetup: () => catalogCommands.skipSetup(),
     dismissTip: () => catalogCommands.dismissTip(),

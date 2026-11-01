@@ -196,8 +196,8 @@
 .clone-adding { grid-column: 3; grid-row: 1 / span 2; color: var(--text-2); font-size: var(--fs-control); }
 .paste { display: grid; gap: 8px; }
 .paste label { color: var(--text-2); font-size: var(--fs-control); line-height: var(--lh-control); font-weight: 500; }
-.paste-row { display: flex; gap: 8px; }
-.paste-row .field { flex: 1; min-width: 0; }
+.paste-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.paste-row .field { flex: 1 1 14rem; min-width: 0; }
 
 .task-form { display: grid; gap: 8px; }
 .product-pick { display: flex; align-items: center; gap: 12px; color: var(--text-2); font-size: var(--fs-control); line-height: var(--lh-control); }

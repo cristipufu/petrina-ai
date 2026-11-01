@@ -23,6 +23,7 @@ import {
   type SetupStep,
 } from "@petrina/core";
 import { resolveMaintenanceSettings, scopesFor } from "@petrina/orchestrator";
+import { pickLocalFolder } from "@petrina/platform/folder-picker";
 import { expandPath, findClones } from "@petrina/repositories/discovery";
 import * as git from "@petrina/repositories/git";
 import type { Engine } from "./engine.js";
@@ -31,6 +32,8 @@ import { browserCommand } from "./setup.js";
 import type { ToolChecks } from "./tool-checks.js";
 
 export class CatalogCommands {
+  private pickingFolder: Promise<string | null> | undefined;
+
   constructor(
     private readonly engine: Engine,
     private readonly tools: ToolChecks,
@@ -369,6 +372,22 @@ export class CatalogCommands {
       ...(this.engine.options.home ? { home: this.engine.options.home } : {}),
       skip: (path) => added.has(real(path)),
     });
+  }
+
+  pickFolder(): Promise<string | null> {
+    if (this.pickingFolder) return this.pickingFolder;
+    const run = (
+      this.engine.options.pickFolder
+        ? this.engine.options.pickFolder()
+        : pickLocalFolder({
+            signal: this.engine.stopRequested.signal,
+            ...(this.engine.options.home ? { home: this.engine.options.home } : {}),
+          })
+    ).finally(() => {
+      if (this.pickingFolder === run) this.pickingFolder = undefined;
+    });
+    this.pickingFolder = run;
+    return run;
   }
 
   setSetupStep(step: SetupStep): void {

@@ -24,6 +24,7 @@ export const CODE_FOLDERS: readonly string[] = [
   "work",
   "Sites",
   join("Documents", "GitHub"),
+  join("Documents", "Github"),
   join("source", "repos"),
 ];
 

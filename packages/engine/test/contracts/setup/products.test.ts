@@ -6,6 +6,7 @@ import { describe, expect, it } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join, sep } from "node:path";
 import { Connections } from "../../../src/connection.js";
+import { dispatch } from "../../../src/server.js";
 import { findClones } from "@petrina/repositories/discovery";
 import { git } from "@petrina/test-support/commands";
 import { makeProduct } from "@petrina/test-support/repositories";
@@ -119,5 +120,50 @@ it("adds an http or git-protocol GitHub clone as a pull request", async () => {
 
   });
 });
+
+  it("deduplicates concurrent pickFolder calls and defaults to null in fixture mode without GUI dialogs", async () => {
+    return engineCases.use("petrina-pick-folder-", async (caseOwner) => {
+      const defaultEngine = caseOwner.open(fresh("default-data", caseOwner.root), {
+        agentCommand: agents({}),
+        toolProbe: privateAgentToolProbe(),
+      });
+      try {
+        expect(await caseOwner.run(defaultEngine, () => dispatch(defaultEngine, { name: "pickFolder", args: [] }))).toBeNull();
+      } finally {
+        await caseOwner.stop(defaultEngine);
+      }
+
+      let calls = 0;
+      let release: ((value: string | null) => void) | undefined;
+      caseOwner.onStop(() => release?.(null));
+      const customEngine = caseOwner.open(fresh("custom-data", caseOwner.root), {
+        agentCommand: agents({}),
+        toolProbe: privateAgentToolProbe(),
+        pickFolder: () => {
+          calls += 1;
+          return new Promise<string | null>((resolve) => {
+            release = resolve;
+          });
+        },
+      });
+      try {
+        const first = caseOwner.run(customEngine, () => dispatch(customEngine, { name: "pickFolder", args: [] }));
+        const second = caseOwner.run(customEngine, () => dispatch(customEngine, { name: "pickFolder", args: [] }));
+        expect(calls).toBe(1);
+        release?.("/Users/dev/Documents/Github/petrina-ai");
+        expect(await Promise.all([first, second])).toEqual([
+          "/Users/dev/Documents/Github/petrina-ai",
+          "/Users/dev/Documents/Github/petrina-ai",
+        ]);
+
+        const third = caseOwner.run(customEngine, () => dispatch(customEngine, { name: "pickFolder", args: [] }));
+        expect(calls).toBe(2);
+        release?.(null);
+        expect(await third).toBeNull();
+      } finally {
+        await caseOwner.stop(customEngine);
+      }
+    });
+  });
 });
-;
+

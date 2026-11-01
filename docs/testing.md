@@ -38,7 +38,7 @@ Each run saves `impact.json`, the expected `files.json` manifest and `results.js
 
 Petrina runs this as one Tests check. A failed quick phase is an ordinary failed check, returned to the Builder under the same rules, failure reuse and two-return allowance; only a later complete pass ends the failure episode. Petrina's forced stop ends the runner without a final report, and its own stopped-check record is the evidence. Each CI platform runs the same command independently, so an engine failure specific to one platform appears once that platform's preliminary suites pass.
 
-UI changes also need light and dark and all three demos: `?demo`, `?demo=portfolio`, `?demo=first-run`.
+UI changes also need light and dark and all three demos: `?demo`, `?demo=portfolio`, `?demo=first-run`. The app paints its saved `petrina.theme` (`light`, `dark`, or a theme id such as `ink` or `midnight`) as inline root CSS variables on load, so headless checks must set `petrina.theme` in `localStorage` before loading (or reload after changing it); toggling `prefers-color-scheme` or `data-theme` on an already-loaded page does not restyle it.
 
 The workspace registry in `packages/engine/test/quality/workspaces.ts` supplies package aliases, required suite paths, runner types and required execution membership. Add new test workspaces there; a new package must not disappear from the complete check. Production package dependency boundaries across all workspaces, acyclic intra-package runtime imports and lower test-layer resource restrictions are enforced before suites launch.
 

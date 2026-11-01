@@ -90,6 +90,11 @@ const DEMO_OWN = {
   checkTools: () => async () => undefined,
   findClones: (simulator: Simulator) => async () =>
     demoClones(Date.now()).filter((clone) => !simulator.getState().products.some((product) => product.repo === clone.repo)),
+  pickFolder: (simulator: Simulator) => async (): Promise<string | null> => {
+    const clones = demoClones(Date.now());
+    const unadded = clones.find((clone) => !simulator.getState().products.some((product) => product.repo === clone.repo));
+    return (unadded ?? clones[0])?.path ?? null;
+  },
   openGuide: () => () => undefined,
   takeOver: () => async (): Promise<Launched> => { throw new Error(NOT_IN_DEMO); },
   reopenTerminal: () => async (): Promise<Launched> => { throw new Error(NOT_IN_DEMO); },

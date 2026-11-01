@@ -14,6 +14,7 @@ export function writeFixtureEngineOptions(path: string, options: EngineOptions):
   if (options.containerInspection !== undefined) throw new TypeError("Container inspection is process-local. Configure it inside the child fixture instead of serializing it.");
   if (options.containerControl !== undefined) throw new TypeError("Container controls are process-local. Configure them inside the child fixture instead of serializing them.");
   if (options.validationSnapshots !== undefined) throw new TypeError("Validation snapshots are process-local. Configure them inside the child fixture instead of serializing them.");
+  if (options.pickFolder !== undefined) throw new TypeError("Folder picking is process-local. Configure it inside the child fixture instead of serializing it.");
   writeFixtureJson(path, options);
 }
 
@@ -22,6 +23,7 @@ export function fixtureEngineOptions(dataDir: string, options: EngineOptions = {
   const missing = (service: string) => [process.execPath, join(import.meta.dir, "unconfigured-service.ts"), service];
   return {
     home: join(dataDir, "home"),
+    pickFolder: async () => null,
     terminals: () => [],
     awakeObserver: () => {},
     // Native Git is a prerequisite. All account-bearing services need explicit stand-ins.

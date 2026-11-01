@@ -76,6 +76,8 @@ export interface Commands {
   checkTools(): Promise<void>;
   /** GitHub clones on this machine that are not added yet, most recently changed first. */
   findClones(): Promise<Clone[]>;
+  /** Open the operating system's native folder picker and return the chosen folder path, or null when cancelled. */
+  pickFolder(): Promise<string | null>;
   /** The furthest first-run screen reached, so closing Petrina partway reopens there. */
   setSetupStep(step: SetupStep): void;
   /** "Skip setup": first run never comes back. */
@@ -179,6 +181,7 @@ export const COMMAND_META = {
   setProductRemoteChecks: { changes: true },
   checkTools: { changes: true },
   findClones: { changes: false },
+  pickFolder: { changes: false },
   setSetupStep: { changes: true },
   skipSetup: { changes: true },
   startFirstTask: { changes: true },

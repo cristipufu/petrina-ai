@@ -76,3 +76,23 @@ it("protects selected verifier profiles while waiting, including the projected t
   task.state = "cancelled";
   expect(() => removeProfile(state, "grok-high")).not.toThrow();
 });
+
+it("seeds default profiles for newly introduced tools on a saved catalog without resurrecting edited or removed tools", () => {
+  const state = empty();
+  restoreProfileCatalog(state);
+  removeProfile(state, "sol-xhigh");
+  state.profiles = state.profiles.filter(
+    (profile) => profile.toolId !== "opencode" && profile.toolId !== "pi" && profile.toolId !== "grok",
+  );
+  state.retiredProfiles = [
+    ...(state.retiredProfiles ?? []),
+    ...DEFAULT_PROFILES.filter((profile) => profile.toolId === "grok"),
+  ];
+
+  restoreProfileCatalog(state);
+
+  expect(state.profiles.some((profile) => profile.toolId === "opencode")).toBe(true);
+  expect(state.profiles.some((profile) => profile.toolId === "pi")).toBe(true);
+  expect(state.profiles.some((profile) => profile.id === "sol-xhigh")).toBe(false);
+  expect(state.profiles.some((profile) => profile.toolId === "grok")).toBe(false);
+});

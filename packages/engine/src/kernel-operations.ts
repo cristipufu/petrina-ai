@@ -99,6 +99,14 @@ export function initializeKernelState(
         delete item.toolProblem;
       }
     }
+    for (const id of Object.keys(ADAPTERS)) {
+      state.pool.toolCaps[id] ??= 3;
+    }
+    for (const id of Object.keys(state.pool.toolCaps)) {
+      if (!(id in ADAPTERS)) {
+        delete state.pool.toolCaps[id];
+      }
+    }
   }
   state.roleChanges = (loaded?.roleChanges ?? structuredClone(NO_ROLE_CHANGES)) as RuntimeState["roleChanges"];
   state.roles = libraryRoles(state.roleChanges) as RuntimeState["roles"];
