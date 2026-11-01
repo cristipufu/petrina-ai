@@ -4,7 +4,7 @@ import { stateFixture } from "../../fixtures/state";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { NewTaskDialog } from "../../../src/components/NewTask";
+import { NewTaskDialog, TaskOptions } from "../../../src/components/NewTask";
 
 const add = vi.hoisted(() => vi.fn());
 
@@ -49,4 +49,15 @@ it("treats the empty form after Add another as a fresh draft", async () => {
   expect(host.querySelector<HTMLInputElement>("#task-title")!.value).toBe("");
   await click("Close new task");
   expect(closed).toHaveBeenCalledOnce(); expect(host.querySelector("[role=alertdialog]")).toBeNull();
+});
+
+
+it("keeps shared task options descriptions on hover and queue controls available by default", async () => {
+  const position = vi.fn();
+  await act(async () => root.render(<TaskOptions kind="feature" delivery="pull-request" position="bottom" onKind={() => {}} onDelivery={() => {}} onPosition={position} />));
+  expect(host.querySelector('.kind-description')).toBeNull();
+  expect(host.querySelector('[role=radio][title="Designed, built and reviewed"]')).not.toBeNull();
+  expect(host.textContent).toContain('Place in the queue');
+  await click('Top');
+  expect(position).toHaveBeenCalledWith('top');
 });

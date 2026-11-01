@@ -26,15 +26,15 @@
 .new-task-body { min-height: 0; min-width: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; padding: 0 24px; }
 .new-task-section { min-width: 0; margin: 0; padding: 22px 0; border: 0; border-bottom: 1px solid var(--line); display: grid; gap: 12px; }
 .new-task-section:last-child { border-bottom: 0; }
-.new-task-section h3, .new-task-section legend, .new-task-request > label { font-size: var(--fs-control); line-height: var(--lh-control); font-weight: 600; }
+.new-task-section h3, .new-task-section legend, .task-request-fields > label[for] { font-size: var(--fs-control); line-height: var(--lh-control); font-weight: 600; }
 .new-task-section h3 { margin: 0; }
 .new-task-section legend { padding: 0; float: left; width: 100%; }
 .new-task-section h3 .quiet-text { margin-left: 8px; font-weight: 400; }
 .new-task-section .note { margin: 0; font-size: var(--fs-meta); line-height: var(--lh-meta); }
-.new-task-request > label { display: flex; justify-content: space-between; gap: 8px; }
-.new-task-dialog .title-input, .new-task-dialog textarea.details { border: 1px solid var(--line-strong); background: var(--surface); padding: 12px; border-radius: 8px; font-size: var(--fs-body); line-height: var(--lh-body); }
-.new-task-dialog .title-input { font-weight: 500; }
-.new-task-dialog textarea.details { min-height: 104px; resize: vertical; }
+.task-request-fields > label[for] { display: flex; justify-content: space-between; gap: 8px; }
+.task-request-fields .title-input, .task-request-fields textarea.details { border: 1px solid var(--line-strong); background: var(--surface); padding: 12px; border-radius: 8px; font-size: var(--fs-body); line-height: var(--lh-body); }
+.task-request-fields .title-input { font-weight: 500; }
+.task-request-fields textarea.details { min-height: 104px; resize: vertical; }
 .new-task-product-controls { min-width: 0; margin: 0; padding: 0; border: 0; display: grid; gap: 12px; }
 .new-task-product-select { min-width: 0; }
 .new-task-product-trigger { width: 100%; display: flex; align-items: center; gap: 10px; text-align: left; }

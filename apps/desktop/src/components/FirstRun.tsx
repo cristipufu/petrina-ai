@@ -1,12 +1,12 @@
 import { Select } from "./Select";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ArrowLeft, Check, ChevronDown, ChevronRight, FolderGit2 } from "lucide-react";
-import { SETUP_STEPS, STARTER_IDEAS, toolsGate, type Clone, type DeliveryMode, type SetupStep, type State, type TaskKind } from "@petrina/core";
+import { DELIVERY_LABEL, SETUP_STEPS, STARTER_IDEAS, toolsGate, type Clone, type DeliveryMode, type SetupStep, type State, type TaskKind } from "@petrina/core";
 import { failureText, Late, Lost, mode, newClientId, plainReason, sim, type EngineStatus } from "../engine";
 import { ago } from "../lib";
 import { Logo } from "./bits";
 import { EngineRecovery } from "./EngineState";
-import { TaskOptions, type Position } from "./NewTask";
+import { TaskOptions, taskKindLabel } from "./NewTask";
 import { CheckAgain, shownChecks, ToolList, useCheckOnEnter } from "./Tools";
 
 // First run: four short screens in one window. Welcome, Tools, Product, First task. It shows only
@@ -24,7 +24,6 @@ interface Draft {
   description: string;
   approvePlan: boolean;
   kind: TaskKind;
-  position: Position;
   /** Unset: what the product does. */
   delivery?: DeliveryMode;
   approveDelivery?: boolean;
@@ -32,7 +31,7 @@ interface Draft {
   clientId?: string;
 }
 
-const NEW_DRAFT: Draft = { title: "", description: "", approvePlan: true, kind: "feature", position: "bottom" };
+const NEW_DRAFT: Draft = { title: "", description: "", approvePlan: true, kind: "feature" };
 
 function loadDraft(): Draft {
   try {
@@ -395,7 +394,12 @@ function FirstTask({ state, onBack }: { state: State; onBack: (() => void) | und
   const product = state.products.find((entry) => entry.id === productId);
   const delivery = draft.delivery ?? product?.delivery ?? "pull-request";
   const approveDelivery = draft.approveDelivery ?? product?.approveDelivery ?? true;
-  const ready = !!draft.title.trim() && !!productId;
+  const lengthProblem = draft.title.length > 200
+    ? "Shorten the task title to 200 characters or fewer."
+    : draft.description.length > 8000 ? "Shorten the details to 8,000 characters or fewer." : undefined;
+  const missing = !draft.title.trim() ? "Write what you want done, or pick an idea." : undefined;
+  const ready = !missing && !lengthProblem && !!productId;
+  const summary = `${taskKindLabel(draft.kind)} · ${DELIVERY_LABEL[delivery]} · ${approveDelivery ? "Asks before shipping" : "Ships without asking"}`;
 
   useEffect(() => titleRef.current?.focus(), []);
 
@@ -412,7 +416,7 @@ function FirstTask({ state, onBack }: { state: State; onBack: (() => void) | und
         title: draft.title.trim(),
         description: draft.description.trim(),
         kind: draft.kind,
-        position: draft.position,
+        position: "bottom",
         approvePlan: draft.approvePlan,
         delivery,
         approveDelivery,
@@ -438,9 +442,9 @@ function FirstTask({ state, onBack }: { state: State; onBack: (() => void) | und
       <Title focus={false}>Your first task</Title>
       <p className="setup-lead">Write it the way you'd say it to a teammate. The squad plans it, builds it and has it reviewed.</p>
 
-      <div className="task-form">
+      <div className="task-form task-request-fields">
         {state.products.length > 1 ? (
-          <label className="product-pick">
+          <label className="product-pick setup-product">
             <span>Product</span>
             <Select
               className="select"
@@ -461,16 +465,18 @@ function FirstTask({ state, onBack }: { state: State; onBack: (() => void) | und
           </label>
         ) : (
           product && (
-            <p className="quiet">
-              For <strong>{product.name}</strong>
-            </p>
+            <div className="product-pick setup-product"><span>Product</span><strong>{product.name}</strong></div>
           )
         )}
+        <label htmlFor="first-task-title">What do you want done?</label>
         <input
+          id="first-task-title"
+          maxLength={200}
+          aria-describedby={lengthProblem && draft.title.length > 200 ? "first-task-length" : undefined}
           ref={titleRef}
           className="title-input"
           aria-label="What do you want done?"
-          placeholder="What do you want done?"
+          placeholder="A short, specific task title"
           value={draft.title}
           readOnly={starting}
           onChange={(event) => setDraft({ title: event.target.value })}
@@ -481,7 +487,8 @@ function FirstTask({ state, onBack }: { state: State; onBack: (() => void) | und
             }
           }}
         />
-        <div className="ideas" role="group" aria-label="Starter ideas">
+        <p className="quiet starter-intro" id="starter-ideas">Not sure where to start? Try one of these small tasks:</p>
+        <div className="ideas" role="group" aria-labelledby="starter-ideas">
           {STARTER_IDEAS.map((idea) => (
             <button
               key={idea}
@@ -496,32 +503,50 @@ function FirstTask({ state, onBack }: { state: State; onBack: (() => void) | und
             </button>
           ))}
         </div>
+        <label htmlFor="first-task-details">Details <span className="quiet-text">Optional</span></label>
         <textarea
+          id="first-task-details"
+          maxLength={8000}
+          rows={4}
+          aria-describedby={lengthProblem && draft.description.length > 8000 ? "first-task-length" : undefined}
           className="details"
           aria-label="Details"
-          placeholder="Add details, links or how you'll judge it's done (optional)"
+          placeholder="What should change? Add context, links and how you’ll judge success."
           value={draft.description}
           readOnly={starting}
           onChange={(event) => setDraft({ description: event.target.value })}
         />
-        <label className="toggle">
-          <input type="checkbox" checked={draft.approvePlan} disabled={starting} onChange={(event) => setDraft({ approvePlan: event.target.checked })} />
-          Show me the plan first
-        </label>
-        <p className="quiet toggle-hint">{draft.approvePlan ? "The plan comes to Needs you for your OK before anyone starts work." : "The squad starts as soon as the plan is ready."}</p>
-        <button className="fold" aria-expanded={more} onClick={() => setMore((on) => !on)}>
-          {more ? <ChevronDown size={16} aria-hidden="true" /> : <ChevronRight size={16} aria-hidden="true" />}
-          More options
-        </button>
+        <div className="first-task-plan">
+          <label className="toggle">
+            <input type="checkbox" checked={draft.approvePlan} disabled={starting} onChange={(event) => setDraft({ approvePlan: event.target.checked })} />
+            Show me the plan first
+          </label>
+          <p className="quiet toggle-hint">{draft.approvePlan ? "You'll see the squad's plan and approve it before anyone starts work." : "The squad starts as soon as the plan is ready."}</p>
+        </div>
+        <div className="first-task-more">
+          <button
+            className="fold"
+            disabled={starting}
+            aria-describedby={!more ? "first-task-summary" : undefined}
+            aria-expanded={more}
+            onClick={() => setMore((on) => !on)}
+          >
+            {more ? <ChevronDown size={16} aria-hidden="true" /> : <ChevronRight size={16} aria-hidden="true" />}
+            More options
+          </button>
+          {!more && <span className="quiet" id="first-task-summary">{summary}</span>}
+        </div>
         {more && (
           <div className="more-options">
             <TaskOptions
               kind={draft.kind}
               delivery={delivery}
-              position={draft.position}
+              position="bottom"
+              hidePosition
+              showKindDescription
               onKind={(kind) => setDraft({ kind })}
               onDelivery={(value) => setDraft({ delivery: value })}
-              onPosition={(position) => setDraft({ position })}
+              onPosition={() => {}}
               disabled={starting}
             />
             <label className="toggle">
@@ -541,9 +566,17 @@ function FirstTask({ state, onBack }: { state: State; onBack: (() => void) | und
         </div>
       )}
 
+      {lengthProblem && <p className="error-text" id="first-task-length" role="alert">{lengthProblem}</p>}
       <Actions onBack={starting ? undefined : onBack}>
-        <button className="btn lead big" onClick={() => void start()} disabled={!ready || starting} aria-busy={starting}>
-          {starting ? "Starting…" : "Start"}
+        {missing && !starting && <p className="setup-missing" id="first-task-missing">{missing}</p>}
+        <button
+          className="btn lead big"
+          onClick={() => void start()}
+          disabled={!ready || starting}
+          aria-busy={starting}
+          aria-describedby={!starting ? lengthProblem ? "first-task-length" : missing ? "first-task-missing" : undefined : undefined}
+        >
+          {starting ? "Starting…" : "Start task"}
         </button>
       </Actions>
     </>

@@ -201,7 +201,7 @@
 
 .task-form { display: grid; gap: 8px; }
 .product-pick { display: flex; align-items: center; gap: 12px; color: var(--text-2); font-size: var(--fs-control); line-height: var(--lh-control); }
-.first-run .title-input { border-bottom: 1px solid var(--line-strong); }
+
 .ideas { display: flex; flex-wrap: wrap; gap: 8px; }
 .idea { border: 1px solid var(--line-strong); border-radius: 999px; background: var(--surface); color: var(--text-2); padding: 4px 12px; font-size: var(--fs-control); line-height: var(--lh-control); text-align: left; }
 .idea:hover:not(:disabled) { background: var(--hover); color: var(--text); }
@@ -337,3 +337,18 @@
 .switch:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .switch:disabled { opacity: 0.55; cursor: default; }
 
+
+/* First task shares its labelled, boxed fields with New task. */
+.first-run .setup-product { padding: 12px; background: var(--sunken); border-radius: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+.first-run .setup-product strong { color: var(--text); overflow-wrap: anywhere; }
+.first-run .setup-product .select-control { flex: 1; min-width: 0; width: auto; }
+.first-run .setup-product .select { min-width: 0; max-width: 100%; }
+.task-form > label[for="first-task-details"] { margin-top: 12px; }
+.first-task-plan { border-top: 1px solid var(--line); padding-top: 16px; margin-top: 8px; display: grid; gap: 8px; }
+.first-task-more { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 12px; }
+.first-task-more .fold { color: var(--text-2); font-size: var(--fs-control); line-height: var(--lh-control); font-weight: 400; }
+.first-task-more > span, .starter-intro, .kind-description { font-size: var(--fs-meta); line-height: var(--lh-meta); }
+.starter-intro { margin-top: 4px; }
+.more-options { padding: 16px; border: 1px solid var(--line); border-radius: 8px; }
+.more-options .options { padding: 0; border: 0; }
+.first-run .setup-missing { max-width: 22rem; }

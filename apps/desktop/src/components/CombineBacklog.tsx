@@ -49,7 +49,7 @@ export function CombineBacklog({ state, tasks, onClose, onCreated }: { state: St
   disabled={saving || (!!blocked && !attempted.current)}
   onClick={() => void combine()}
 >{saving ? "Combining…" : attempted.current && error ? "Retry confirmation" : "Combine and queue"}</button>    </>}>
-        <section className="new-task-section new-task-request"><label htmlFor="combined-title">Combined task title</label><input
+        <section className="new-task-section new-task-request task-request-fields"><label htmlFor="combined-title">Combined task title</label><input
           id="combined-title"
           className="title-input"
           autoFocus

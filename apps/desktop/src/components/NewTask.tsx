@@ -29,6 +29,8 @@ const KINDS: readonly { id: TaskKind; label: string; hint: string }[] = [
   { id: "chore", label: "Small change", hint: "Quick build, one reviewer" },
 ];
 
+export const taskKindLabel = (kind: TaskKind) => KINDS.find((entry) => entry.id === kind)!.label;
+
 export type Position = "bottom" | "top";
 
 function ProductPicker({ products, choices, onToggle, disabled }: {
@@ -119,12 +121,14 @@ interface TaskOptionsProps {
   disabled?: boolean;
   hideDelivery?: boolean;
   hidePosition?: boolean;
+  /** First run explains the selected kind without requiring hover. */
+  showKindDescription?: boolean;
   /** Replaces a delivery mode's usual label, for a chosen branch or pull request. */
   deliveryText?: (mode: DeliveryMode) => string;
 }
 
 /** The kind of work, what happens when it is ready, and its place in the queue: the same in this dialog and in first run's More options. */
-export function TaskOptions({ kind, delivery, position, onKind, onDelivery, onPosition, disabled = false, hideDelivery = false, hidePosition = false, deliveryText }: TaskOptionsProps) {
+export function TaskOptions({ kind, delivery, position, onKind, onDelivery, onPosition, disabled = false, hideDelivery = false, hidePosition = false, showKindDescription = false, deliveryText }: TaskOptionsProps) {
   return (
     <div className="options">
       <div className="opt">
@@ -144,6 +148,7 @@ export function TaskOptions({ kind, delivery, position, onKind, onDelivery, onPo
             </button>
           ))}
         </div>
+        {showKindDescription && <p className="kind-description quiet">{KINDS.find((entry) => entry.id === kind)?.hint}</p>}
       </div>
       {!hideDelivery && <div className="opt">
         <span id="new-delivery">When it's ready</span>
@@ -326,7 +331,7 @@ export function NewTaskDialog({ state, defaultProduct, initialTitle = "", waitin
         >{saving ? "Adding…" : pending.current ? "Retry confirmation" : backlog ? "Add to backlog" : "Add to queue"} <kbd>↵</kbd></button></div>
       </>}>
         <WaitingLine text={waiting} />
-        <section className="new-task-section new-task-request" aria-labelledby="request-heading">
+        <section className="new-task-section new-task-request task-request-fields" aria-labelledby="request-heading">
           <label id="request-heading" htmlFor="task-title">What do you want done?</label>
           <input
             id="task-title"

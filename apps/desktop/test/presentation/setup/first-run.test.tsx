@@ -14,6 +14,8 @@ import { App } from '../../../src/App';
 
 let simulator: Simulator;
 
+let submitted: Record<string, unknown> | undefined;
+
 let answer: { resolve: (id: string) => void; reject: (error: Error) => void } | undefined;
 
 const live = { link: 'live', desktop: false, synced: true };
@@ -24,7 +26,7 @@ vi.mock('../../../src/engine', () => {
   class Lost extends Error {}
   class Late extends Error {}
   const own: Record<string, (...args: never[]) => unknown> = {
-    startFirstTask: () => new Promise((resolve, reject) => (answer = { resolve, reject })),
+    startFirstTask: (input: Record<string, unknown>) => { submitted = input; return new Promise((resolve, reject) => (answer = { resolve, reject })); },
     setSetupStep: () => undefined,
     synced: () => true,
     checkTools: () => undefined,
@@ -69,7 +71,7 @@ async function mount(state: State) {
   await act(async () => root.render(<App />));
 }
 
-beforeEach(() => { localStorage.clear(); history.replaceState(null, '', '/'); answer = undefined; });
+beforeEach(() => { localStorage.clear(); history.replaceState(null, '', '/'); answer = undefined; submitted = undefined; });
 
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); });
 
@@ -212,7 +214,96 @@ describe('first run', () => {
     });
   }
 
-  it('keeps every choice as it was sent while Start shows Starting…, and gives them back with the draft if saving fails', async () => {
+
+  const firstTask = () => {
+    const demo = createFirstRunDemo(1_000_000_000).state;
+    return { ...demo, products: [createDemoState(1_000_000_000).products[0]!], setup: { ...demo.setup!, step: 'task' as const } };
+  };
+
+  it('labels fields and ideas, explains the empty button, and focuses a picked idea', async () => {
+    await mount(firstTask());
+    const title = host.querySelector<HTMLInputElement>('#first-task-title')!;
+    const details = host.querySelector<HTMLTextAreaElement>('#first-task-details')!;
+    expect(host.querySelector('label[for="first-task-title"]')!.textContent).toBe('What do you want done?');
+    expect(host.querySelector('label[for="first-task-details"]')!.textContent).toBe('Details Optional');
+    expect(title.maxLength).toBe(200);
+    expect(details.maxLength).toBe(8000);
+    expect(text('.setup-product')).toBe('Product' + firstTask().products[0]!.name);
+    expect(button('Start task').disabled).toBe(true);
+    expect(button('Start task').getAttribute('aria-describedby')).toBe('first-task-missing');
+    expect(text('#first-task-missing')).toBe('Write what you want done, or pick an idea.');
+    expect(host.querySelector('.ideas')!.getAttribute('aria-labelledby')).toBe('starter-ideas');
+    expect(text('#starter-ideas')).toBe('Not sure where to start? Try one of these small tasks:');
+    await click(host.querySelector<HTMLButtonElement>('.idea')!);
+    expect(title.value).toBe(text('.idea'));
+    expect(host.querySelector('.idea.on')).not.toBeNull();
+    expect(document.activeElement).toBe(title);
+    expect(button('Start task').disabled).toBe(false);
+    expect(host.querySelector('#first-task-missing')).toBeNull();
+    await type('#first-task-title', '   ');
+    expect(button('Start task').disabled).toBe(true);
+  });
+
+  it('explains the plan and summarises changes without offering a queue position', async () => {
+    await mount(firstTask());
+    expect(text('.toggle-hint')).toBe("You'll see the squad's plan and approve it before anyone starts work.");
+    await click(host.querySelector<HTMLInputElement>('.first-task-plan input')!);
+    expect(text('.toggle-hint')).toBe('The squad starts as soon as the plan is ready.');
+    expect(text('#first-task-summary')).toBe('Feature · Open a pull request · Asks before shipping');
+    expect(button('More options').getAttribute('aria-expanded')).toBe('false');
+    await click(button('More options'));
+    expect(button('More options').getAttribute('aria-expanded')).toBe('true');
+    expect(text('.task-form')).not.toContain('Place in the queue');
+    expect(text('.kind-description')).toBe('Designed, built and reviewed');
+    await click(button('Bug fix'));
+    expect(text('.kind-description')).toBe('Builder and two reviewers');
+    await click(button('Commit to main'));
+    await click(host.querySelector<HTMLInputElement>('.more-options input')!);
+    await click(button('More options'));
+    expect(text('#first-task-summary')).toBe('Bug fix · Commit to main · Ships without asking');
+    expect(button('More options').getAttribute('aria-describedby')).toBe('first-task-summary');
+  });
+
+  it('resets delivery choices to the selected product defaults', async () => {
+    const state = firstTask();
+    const other = { ...state.products[0]!, id: 'local-product', name: 'Local product', delivery: 'local' as const, approveDelivery: false };
+    await mount({ ...state, products: [state.products[0]!, other] });
+    expect(text('#first-task-summary')).toBe('Feature · Commit to main · Ships without asking');
+    const select = host.querySelector<HTMLSelectElement>('.setup-product select')!;
+    await act(async () => { select.value = state.products[0]!.id; select.dispatchEvent(new Event('change', { bubbles: true })); });
+    expect(text('#first-task-summary')).toBe('Feature · Open a pull request · Asks before shipping');
+  });
+
+  it('starts on Enter at the default queue place despite an older saved choice', async () => {
+    localStorage.setItem('petrina.demo.firstTask', JSON.stringify({ title: 'Saved task', description: 'Saved context', position: 'top' }));
+    await mount(firstTask());
+    await act(async () => host.querySelector('#first-task-title')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })));
+    expect(submitted).toMatchObject({ title: 'Saved task', description: 'Saved context', position: 'bottom', approvePlan: true, kind: 'feature' });
+    expect(button('Starting…').disabled).toBe(true);
+    expect(host.querySelector('#first-task-missing')).toBeNull();
+  });
+
+  for (const field of ['title', 'description']) {
+    it('preserves an older oversized ' + field + ' and explains how to recover', async () => {
+      const long = 'x'.repeat(field === 'title' ? 201 : 8001);
+      localStorage.setItem('petrina.demo.firstTask', JSON.stringify({ title: 'Saved task', [field]: long }));
+      await mount(firstTask());
+      const selector = field === 'title' ? '#first-task-title' : '#first-task-details';
+      expect(host.querySelector<HTMLInputElement>(selector)!.value).toBe(long);
+      expect(text('#first-task-length')).toContain(field === 'title' ? '200' : '8,000');
+      expect(button('Start task').disabled).toBe(true);
+      await act(async () => {
+        const input = host.querySelector<HTMLInputElement | HTMLTextAreaElement>(selector)!;
+        const proto = field === 'title' ? HTMLInputElement.prototype : HTMLTextAreaElement.prototype;
+        Object.getOwnPropertyDescriptor(proto, 'value')!.set!.call(input, 'x'.repeat(field === 'title' ? 200 : 8000));
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+      expect(host.querySelector('#first-task-length')).toBeNull();
+      expect(button('Start task').disabled).toBe(false);
+    });
+  }
+
+  it('keeps every choice as it was sent while Start task shows Starting…, and gives them back with the draft if saving fails', async () => {
     const demo = createFirstRunDemo(1_000_000_000).state;
     await mount({ ...demo, products: [createDemoState(1_000_000_000).products[0]!], setup: { ...demo.setup!, step: 'task' } });
     await type('input[aria-label="What do you want done?"]', 'Add a greeting');
@@ -221,7 +312,7 @@ describe('first run', () => {
     expect(choices().length).toBeGreaterThan(8);
     expect(choices().every((entry) => !entry.disabled)).toBe(true);
 
-    await click(button('Start'));
+    await click(button('Start task'));
     expect(button('Starting…').disabled).toBe(true);
     expect(choices().every((entry) => entry.disabled)).toBe(true);
     expect(host.querySelector<HTMLInputElement>('input[aria-label="What do you want done?"]')!.readOnly).toBe(true);
