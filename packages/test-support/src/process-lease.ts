@@ -13,6 +13,11 @@ export interface ProcessLeaseProgramOptions {
   monitor?: "worker";
 }
 
+export interface LeasedActor {
+  readonly id: number;
+  readonly pid: number;
+}
+
 /** An out-of-band lifetime for fixture actors, independent of the cleanup being tested. */
 export interface ProcessLease {
   /** No actor body runs before its owner answers. Losing that connection ends the actor. */
@@ -21,6 +26,32 @@ export interface ProcessLease {
   close(): Promise<void>;
 }
 
+/** A process lease that also tracks admitted actor instances across OS PID reuse. */
+export interface TrackedProcessLease extends ProcessLease {
+  actors(): readonly LeasedActor[];
+  isAlive(actor: LeasedActor): boolean;
+  isPidAlive(pid: number): boolean;
+}
+
+interface InternalActor extends LeasedActor {
+  connected: boolean;
+  confirmedExited: boolean;
+}
+
+const probeExited = (record: InternalActor): boolean => {
+  if (record.confirmedExited) return true;
+  try {
+    process.kill(record.pid, 0);
+    return false;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ESRCH") {
+      record.confirmedExited = true;
+      return true;
+    }
+    return false;
+  }
+};
+
 /**
  * A private loopback connection survives reparenting and detached process groups. When a case fails,
  * closing the lease ends its actors; when a worker dies, the OS closes its connections instead.
@@ -28,13 +59,18 @@ export interface ProcessLease {
  * No actor lifetime timer can masquerade as the subject's successful cleanup.
  * Actors must use this wrapper before starting children; wrap each long-lived child as well.
  */
-export async function createProcessLease(options: ProcessLeaseOptions = {}): Promise<ProcessLease> {
+export async function createProcessLease(): Promise<TrackedProcessLease>;
+export async function createProcessLease(options: ProcessLeaseOptions): Promise<ProcessLease>;
+export async function createProcessLease(options: ProcessLeaseOptions = {}): Promise<ProcessLease | TrackedProcessLease> {
   if (options.guardian !== undefined) {
     if (options.guardian !== "node") throw new RangeError("Unknown fixture lease guardian");
     return createGuardianLease((body, port, token) => workerMonitoredProgram(body, port, token, true));
   }
   const token = crypto.randomUUID();
   const sockets = new Set<Socket>();
+  const records = new Map<number, InternalActor>();
+  const bySocket = new Map<Socket, InternalActor>();
+  let nextId = 0;
   let closed = false;
   let closing: Promise<void> | undefined;
   const server = createServer(socket => {
@@ -44,12 +80,48 @@ export async function createProcessLease(options: ProcessLeaseOptions = {}): Pro
     }
     sockets.add(socket);
     socket.on("error", () => socket.destroy());
-    socket.on("close", () => sockets.delete(socket));
+    socket.on("close", () => {
+      sockets.delete(socket);
+      const record = bySocket.get(socket);
+      if (!record) return;
+      bySocket.delete(socket);
+      record.connected = false;
+      if (probeExited(record)) return;
+      let attempts = 0;
+      const timer = setInterval(() => {
+        if (probeExited(record) || ++attempts >= 50) clearInterval(timer);
+      }, 10);
+      timer.unref();
+    });
     let input = "";
+    let admitted = false;
     socket.on("data", chunk => {
       input += chunk.toString("utf8");
-      if (input === `${token}\n`) socket.write(input);
-      else if (input.length >= token.length + 1 || !`${token}\n`.startsWith(input)) socket.destroy();
+      if (admitted || input.length > token.length + 32) {
+        socket.destroy();
+        return;
+      }
+      const end = input.indexOf("\n");
+      if (end < 0) {
+        if (!input.startsWith(token.slice(0, Math.min(input.length, token.length)))) socket.destroy();
+        return;
+      }
+      if (end !== input.length - 1) {
+        socket.destroy();
+        return;
+      }
+      const frame = input.slice(0, end);
+      const sep = frame.lastIndexOf(":");
+      const pid = sep > 0 ? Number(frame.slice(sep + 1)) : NaN;
+      if (sep !== token.length || frame.slice(0, sep) !== token || !Number.isSafeInteger(pid) || pid <= 0) {
+        socket.destroy();
+        return;
+      }
+      admitted = true;
+      const record: InternalActor = { id: ++nextId, pid, connected: true, confirmedExited: false };
+      records.set(record.id, record);
+      bySocket.set(socket, record);
+      socket.write(`${token}\n`);
     });
   });
   await new Promise<void>((resolve, reject) => {
@@ -69,6 +141,10 @@ export async function createProcessLease(options: ProcessLeaseOptions = {}): Pro
     throw new Error("The fixture process owner has no loopback address");
   }
   const port = address.port;
+  const isAlive = (actor: LeasedActor): boolean => {
+    const record = records.get(actor.id);
+    return !!record && !probeExited(record);
+  };
   return {
     program(body, options) {
       if (options?.monitor === "worker") return workerMonitoredProgram(body, port, token);
@@ -83,7 +159,7 @@ export async function createProcessLease(options: ProcessLeaseOptions = {}): Pro
   await new Promise(resolve => {
     const timeout = setTimeout(ended, ${30_000 * SLOW});
     let answer = "";
-    connection.once("connect", () => connection.write(${JSON.stringify(`${token}\n`)}));
+    connection.once("connect", () => connection.write(${JSON.stringify(`${token}:`)} + process.pid + "\\n"));
     connection.on("data", chunk => {
       answer += chunk.toString("utf8");
       if (answer === ${JSON.stringify(`${token}\n`)}) { clearTimeout(timeout); resolve(); }
@@ -93,6 +169,14 @@ export async function createProcessLease(options: ProcessLeaseOptions = {}): Pro
   await (async () => { ${body}\n})();
   process.exit(0);
 })();`;
+    },
+    actors: () => [...records.values()].map(({ id, pid }) => ({ id, pid })),
+    isAlive,
+    isPidAlive(pid) {
+      for (const record of records.values()) {
+        if (record.pid === pid && !probeExited(record)) return true;
+      }
+      return false;
     },
     close() {
       return closing ??= new Promise<void>((resolve, reject) => {
@@ -122,7 +206,7 @@ connection.on("end", lost);
 connection.on("close", lost);
 const timeout = setTimeout(lost, ${30_000 * SLOW});
 let answer = "";
-connection.once("connect", () => connection.write(workerData.token + "\\n"));
+connection.once("connect", () => connection.write(workerData.token + ":" + process.pid + "\\n"));
 connection.on("data", chunk => {
   answer += chunk.toString("utf8");
   if (answer === workerData.token + "\\n" && !acknowledged) {

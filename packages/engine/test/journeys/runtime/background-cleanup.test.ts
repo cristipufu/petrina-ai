@@ -1,4 +1,4 @@
-import { shutdownActors, alive } from "../../fixtures/shutdown-actors.js";
+import { shutdownActors } from "../../fixtures/shutdown-actors.js";
 import { installPreparedProduct, acmeDemoProduct } from "../../fixtures/prepared-product.js";
 import { afterAll, describe, expect, it } from "bun:test";
 import { completeAll } from "@petrina/core";
@@ -37,7 +37,7 @@ it("cancels a running builder, waits for its background build, and removes any f
           engine.cancel(id);
           const task = await cleaned(engine, id);
           expect(task.state).toBe("cancelled");
-          expect(alive(pid)).toBe(false);
+          expect(actors.isPidAlive(pid)).toBe(false);
           await gone(w, task);
           expect(engine.getState().inbox.some((item) => item.taskId === id)).toBe(false);
           const count = texts(task).length;

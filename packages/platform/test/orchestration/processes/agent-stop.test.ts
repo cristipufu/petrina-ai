@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { stopAgentPrograms, type AgentStopTarget } from "../../../src/agent-stop.js";
+import { confirmStoppedProcesses, stopAgentPrograms, type AgentStopTarget } from "../../../src/agent-stop.js";
 import { AgentStopFixture } from "../../fixtures/agent-stop.js";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 
@@ -146,4 +146,26 @@ for (const list of ["defunct", "unreadable", "late", "throws", "running", "silen
     expect(fixture.notes[0]).toMatchObject({ stage: "forced", lists: ["read", "read"] });
     expect(fixture.notes[0]!.processes).toContainEqual({ pid: fixture.rootPid, state: ({ unreadable: "unknown", late: "unknown", throws: "unknown", running: "running", silent: "absent" } as const)[list], sources: ["target"] });
   }
+});
+
+it("still takes one bounded group snapshot when the first poll sleep stalls past the confirmation window", async () => {
+  let now = 0;
+  let reads = 0;
+  const result = await confirmStoppedProcesses([4242], 100, {
+    now: () => now,
+    async sleep() {
+      now += 160;
+    },
+    possiblyPresent: () => true,
+    selfPid: 1000,
+    async readGroups() {
+      reads++;
+      return "1000 1000 S\n4242 4242 Z\n";
+    },
+  });
+  expect(reads).toBe(1);
+  expect(result).toEqual({
+    ended: true,
+    processes: [{ pid: 4242, state: "finished", sources: ["target"] }],
+  });
 });

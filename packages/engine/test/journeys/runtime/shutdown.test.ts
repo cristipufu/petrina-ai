@@ -45,10 +45,10 @@ describe("Stopping during startup", () => {
 
     };
     const result = await setupWithCleanup(async () => {
-      await waitFor(() => pids().filter(alive).length === probeCount, "every startup probe");
+      await waitFor(() => pids().filter(actors.isPidAlive).length === probeCount, "every startup probe");
       await engine.shutdown();
       await checking;
-      expect(pids().filter(alive)).toEqual([]);
+      expect(pids().filter(actors.isPidAlive)).toEqual([]);
       // Nothing new starts after quitting, even if another check was requested meanwhile.
       await engine.checkTools();
       expect(pids()).toHaveLength(probeCount);
@@ -90,7 +90,7 @@ describe.concurrent("Quitting stops agents before the engine exits", () => {
       const productId = await engine.act("addProduct", await makeProduct(dir));
       await engine.act("addTask", { productId, title: "Work through a quit", description: "[no-check]" });
       await waitFor(async () => {
-        if (when === "starting") return pids().some(alive);
+        if (when === "starting") return pids().some(actors.isPidAlive);
         if (when === "working") return fakes.received("planner").length > 0;
         const state = await engine!.state();
         if (fakes.received("code reviewer").length >= 2 && state.tasks[0]!.helpers?.length) return true;
@@ -102,17 +102,21 @@ describe.concurrent("Quitting stops agents before the engine exits", () => {
         }
         return false;
       }, `agents ${when}`, 60_000);
-      const before = pids().filter(alive);
+      const before = actors.actors().filter(actors.isAlive);
+      const beforeIds = new Set(before.map((entry) => entry.id));
       expect(before.length).toBeGreaterThanOrEqual(when === "reviewing in parallel" ? 2 : 1);
       expect(await engine.quit()).toBeLessThan(10_000);
-      expect(before.filter(alive)).toEqual([]);
+      expect(before.filter(actors.isAlive)).toEqual([]);
       fakes.scenario({ controlled: true, builder: "plain" });
       engine = await owners.harness(home, fakes.dir, undefined, { extra: [`--agent-program=${actors.actor}`] });
-      await waitFor(() => pids().some((pid) => !before.includes(pid) && alive(pid)), "the restarted step's agent");
-      expect(before.filter(alive)).toEqual([]);
-      const next = pids().filter(alive);
+      await waitFor(() => {
+        const startedPids = new Set(pids());
+        return actors.actors().some((entry) => !beforeIds.has(entry.id) && startedPids.has(entry.pid) && actors.isAlive(entry));
+      }, "the restarted step's agent");
+      expect(before.filter(actors.isAlive)).toEqual([]);
+      const next = actors.actors().filter(actors.isAlive);
       await engine.quit();
-      expect(next.filter(alive)).toEqual([]);
+      expect(next.filter(actors.isAlive)).toEqual([]);
 
     }, cleanup);
     await cleanup();

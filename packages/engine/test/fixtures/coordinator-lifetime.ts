@@ -1,24 +1,27 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { createProcessLease, type ProcessLease, type ProcessLeaseProgramOptions } from "@petrina/test-support/process-lease";
+import { createProcessLease, type ProcessLeaseProgramOptions, type TrackedProcessLease } from "@petrina/test-support/process-lease";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { waitFor } from "@petrina/test-support/fixtures";
 import { engineProcesses, HARNESS, FAKE_AGENT, type EngineProcess } from "../support.js";
-import { pidsIn } from "./shutdown-actors.js";
-import { processAlive } from "../../src/instance.js";
 import type { EngineHarnessOptions } from "./engine-processes.js";
 
 /** Construct the case owner before asynchronous lease/setup work or any app generation. */
 export function coordinatorLifetime(root: string, resources?: { stopPeers(): void | Promise<void> }) {
-  let lease: ProcessLease | undefined, entry: string | undefined, actor: string | undefined;
+  let lease: TrackedProcessLease | undefined, entry: string | undefined, actor: string | undefined;
   const pids = join(root, "coordinator-actors"), programs = new Set<string>();
   let leaseStopRequested = false;
   const owners = engineProcesses(root, { async stopPeers() {
     let peers: Promise<void>;
     try { peers = Promise.resolve(resources?.stopPeers()); } catch (error) { peers = Promise.reject(error); }
     const leased = (async () => {
-      if (lease) { const stopping = lease.close(); leaseStopRequested = true; await stopping; }
-      await waitFor(() => !pidsIn(pids).some(processAlive), "all independently owned coordinator wrappers to exit", 5_000);
+      if (lease) {
+        const activeLease = lease;
+        const stopping = activeLease.close();
+        leaseStopRequested = true;
+        await stopping;
+        await waitFor(() => !activeLease.actors().some(item => activeLease.isAlive(item)), "all independently owned coordinator wrappers to exit", 5_000);
+      }
     })();
     const settled = await Promise.allSettled([peers, leased]);
     const errors = settled.flatMap(result => result.status === "rejected" ? [result.reason] : []);

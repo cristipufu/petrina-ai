@@ -120,5 +120,6 @@ export async function confirmStoppedProcesses(targets: readonly number[], ms: nu
   }
   const present = targets.filter(target => effects.possiblyPresent(target));
   if (!present.length) return { ended: true, processes: [] };
+  listing ??= readObservation(timeout => effects.readGroups(timeout), Math.max(POLL_INTERVAL_MS, end - effects.now()));
   return stoppedProcessStates(await listing, present, effects.selfPid);
 }
